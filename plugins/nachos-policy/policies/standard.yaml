@@ -1,0 +1,32 @@
+# nachos-policy — Hermes standard starter policy
+#
+# This file ships with the plugin.  It contains a single catch-all ALLOW rule
+# at priority 100 so that enabling the plugin does NOT break any existing
+# workflow.
+#
+# To harden your setup, ADD deny rules with HIGHER priority numbers above this
+# file (or in separate files) and they will take precedence.
+#
+# Rule evaluation order: highest priority number fires first.
+# First matching rule wins.  Default effect when no rule matches: DENY.
+
+version: '1.0'
+
+metadata:
+  name: 'Hermes Standard Starter Policy'
+  description: >
+    Permissive catch-all — allows every tool call.
+    Override by adding higher-priority deny rules in additional policy files.
+
+rules:
+  # -------------------------------------------------------------------------
+  # Allow all tool calls — explicit permissive default.
+  # Priority 100: intentionally low so custom deny rules placed at higher
+  # priorities (e.g. 500, 1000) will fire first.
+  # -------------------------------------------------------------------------
+  - id: 'standard-allow-all-tools'
+    description: 'Allow all tool calls (permissive default)'
+    priority: 100
+    match:
+      resource: 'tool'
+    effect: 'allow'

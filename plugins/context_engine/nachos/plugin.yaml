@@ -1,0 +1,3 @@
+name: nachos
+version: 0.3.0-alpha
+description: "Nachos context engine — zone-based pressure, tool-pair-preserving compaction, and snapshot lifecycle. Delegates to Hermes' built-in summarizer for red/critical zones."

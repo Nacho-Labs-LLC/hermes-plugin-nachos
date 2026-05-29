@@ -1,0 +1,9 @@
+name: nachos-policy
+version: 0.1.0
+description: "Nachos policy engine — default-deny tool gating with YAML rules and hot reload"
+author: "Nachos / Hermes port"
+hooks:
+  - pre_tool_call
+tools:
+  - nachos_policy_check
+requires: []

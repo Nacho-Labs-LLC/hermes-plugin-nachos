@@ -1,0 +1,6 @@
+name: nachos
+version: 0.2.0-alpha
+description: "Nachos — the context layer. Layered prompt assembly + memory manifest + LLM-driven fact extraction with PromptReport observability."
+hooks:
+  - on_pre_compress
+  - on_session_end
