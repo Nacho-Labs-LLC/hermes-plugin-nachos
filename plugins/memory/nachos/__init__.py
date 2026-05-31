@@ -44,7 +44,7 @@ import logging
 import sys
 import threading
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 
 # Make nachos_core + adapters importable when dropped in as a plugin
 _PLUGIN_ROOT = Path(__file__).resolve().parents[3]
@@ -68,6 +68,12 @@ from adapters.hermes_memory import HermesMemoryReader  # noqa: E402
 from adapters.hermes_extractor import (  # noqa: E402
     JsonlFactStore,
     make_hermes_llm_call,
+)
+from plugins.memory.nachos.migration import (  # noqa: E402
+    MigrationSourceError,
+    known_sources,
+    list_sources,
+    migrate_memories,
 )
 
 logger = logging.getLogger(__name__)
@@ -634,6 +640,91 @@ def _make_extract_handler(provider: NachosMemoryProvider):
     return _nachos_extract
 
 
+def _format_source_listing(provider: NachosMemoryProvider) -> str:
+    if provider._reader is None:
+        return "Nachos is not initialized in this session yet. Start a fresh session and try again."
+    statuses = list_sources(provider._reader.hermes_home)
+    lines = ["Nachos migration sources"]
+    for status in statuses:
+        state = "ready" if status.available else ("configured" if status.configured else "not configured")
+        implemented = "yes" if status.implemented else "no"
+        count = "?" if status.entry_count is None else str(status.entry_count)
+        lines.append(
+            f"- {status.name}: state={state}; implemented={implemented}; entries={count}; kind={status.kind}"
+        )
+        lines.append(f"  {status.summary}")
+        if status.setup_hint:
+            lines.append(f"  hint: {status.setup_hint}")
+    return "\n".join(lines)
+
+
+def _make_migrate_handler(provider: NachosMemoryProvider):
+    known = set(known_sources())
+
+    def _nachos_migrate(raw_args: str) -> str:
+        if provider._reader is None:
+            return "Nachos is not initialized in this session yet. Start a fresh session and try again."
+        if provider._llm_call is None:
+            return (
+                "Nachos extraction is unavailable in this session, so migration cannot run. "
+                "Set a working auxiliary provider/model and try again."
+            )
+
+        tokens = [token.strip() for token in (raw_args or "").split() if token.strip()]
+        if any(token.lower() in {"--list", "list", "--list-sources", "sources"} for token in tokens):
+            return _format_source_listing(provider)
+
+        source = "all"
+        target = "both"
+        dry_run = False
+        for token in tokens:
+            lower = token.lower()
+            if lower in known:
+                source = lower
+            elif lower in {"memory", "user", "both"}:
+                target = lower
+            elif lower in {"--dry-run", "dry-run", "dryrun"}:
+                dry_run = True
+            else:
+                return (
+                    "Usage: /nachos-migrate [all|builtin|holographic|byterover|hindsight|honcho|mem0|openviking|retaindb|supermemory] "
+                    "[memory|user|both] [--dry-run]\n"
+                    "Use /nachos-migrate --list to inspect source readiness.\n"
+                    f"Unrecognized argument: {token}"
+                )
+
+        try:
+            report = migrate_memories(
+                hermes_home=provider._reader.hermes_home,
+                source=source,
+                target=target,
+                dry_run=dry_run,
+            )
+        except MigrationSourceError as exc:
+            return str(exc)
+
+        provider._manifest_cache = ""
+        source_counts = cast(Dict[str, int], report.get("source_counts", {}))
+        source_counts_text = ", ".join(
+            f"{name}={count}" for name, count in sorted(source_counts.items())
+        ) or "-"
+        return (
+            "Nachos memory migration complete\n"
+            f"source         : {report['source']}\n"
+            f"target         : {report['target']}\n"
+            f"dry_run        : {'yes' if report['dry_run'] else 'no'}\n"
+            f"source_entries : {report['source_entry_count']}\n"
+            f"source_counts  : {source_counts_text}\n"
+            f"batches        : {report['batch_count']}\n"
+            f"candidate_facts: {report['candidate_fact_count']}\n"
+            f"inserted       : {report['inserted']}\n"
+            f"updated        : {report['updated']}\n"
+            f"report_path    : {report['report_path']}"
+        )
+
+    return _nachos_migrate
+
+
 # ---------------------------------------------------------------------------
 # Plugin entry point
 # ---------------------------------------------------------------------------
@@ -657,4 +748,10 @@ def register(ctx) -> None:
         "nachos-extract",
         _make_extract_handler(provider),
         "Info about Nachos fact extraction scheduling",
+    )
+    ctx.register_command(
+        "nachos-migrate",
+        _make_migrate_handler(provider),
+        "Import Hermes memories from built-in and provider backends into the Nachos fact store",
+        args_hint="[source] [memory|user|both] [--dry-run|--list]",
     )
