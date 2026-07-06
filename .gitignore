@@ -13,3 +13,5 @@ htmlcov/
 *.jsonl
 *.db
 snapshots/
+.cache/
+*.onnx

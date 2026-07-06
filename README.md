@@ -66,6 +66,13 @@ MCP, recommended), `sentence-transformers` (local), or `openai`
 (`text-embedding-3`). All backend imports are lazy — the package bundles
 no model and has no required dependency.
 
+> **Semantic install note:** the optional backend must be installed into
+> the venv that runs Hermes (the hermes-agent checkout's `.venv`), NOT the
+> plugin repo's venv — the provider executes under the host's interpreter.
+> `sentence-transformers` needs `<hermes-agent>/.venv/bin/pip install
+> sentence-transformers`. If the backend isn't importable there, prefetch
+> silently falls back to lexical (a WARNING is logged per prefetch).
+
 ### Config
 
 ```yaml
