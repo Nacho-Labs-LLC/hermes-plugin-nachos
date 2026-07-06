@@ -1,25 +1,7 @@
-# nachos_core — harness-agnostic context layer.
+# nachos_core — harness-agnostic context + memory-manifest layer.
 #
-# This package contains the Nachos system: layered prompt assembly,
-# memory manifest, fact extraction, and PromptReport observability.
-# It does NOT import from hermes_*. All Hermes wiring lives in adapters/.
-from .types import PromptSectionReport, PromptReport, MemoryFact, MemoryEntry
-from .assembler import PromptAssembler, AssembleParams
-from .manifest import build_manifest, render_manifest
-from .extractor import (
-    EXTRACTION_SYSTEM_PROMPT,
-    ExtractionConfig,
-    ExtractionResult,
-    LLMCall,
-    build_user_message,
-    extract_facts,
-)
-from .dedup import (
-    DedupResult,
-    deduplicate_facts,
-    is_exact_match,
-    merge_fact,
-)
+# Pure Python, stdlib only. Does NOT import from hermes_* / agent.*.
+# All host wiring lives in the plugin (plugins/memory/nachos, etc.).
 from .budget import (
     Action,
     Budget,
@@ -36,11 +18,15 @@ from .compactor import (
     is_safe_cut,
     slide_window,
 )
+from .prefetch import LexicalScorer, Scorer, get_scorer
 from .snapshots import (
     Snapshot,
     SnapshotMeta,
     SnapshotStore,
 )
+from .store import Entry, MDStore, MemoryStore, SqliteStore, get_store
+from .toc import build_toc, render_toc
+from .types import MemoryEntry, MemoryFact, PromptReport, PromptSectionReport
 
 __all__ = [
     # types
@@ -48,24 +34,6 @@ __all__ = [
     "PromptReport",
     "MemoryFact",
     "MemoryEntry",
-    # assembler
-    "PromptAssembler",
-    "AssembleParams",
-    # manifest
-    "build_manifest",
-    "render_manifest",
-    # extractor
-    "EXTRACTION_SYSTEM_PROMPT",
-    "ExtractionConfig",
-    "ExtractionResult",
-    "LLMCall",
-    "build_user_message",
-    "extract_facts",
-    # dedup
-    "DedupResult",
-    "deduplicate_facts",
-    "is_exact_match",
-    "merge_fact",
     # budget
     "Action",
     "Budget",
@@ -84,4 +52,17 @@ __all__ = [
     "Snapshot",
     "SnapshotMeta",
     "SnapshotStore",
+    # store seam
+    "MemoryStore",
+    "Entry",
+    "SqliteStore",
+    "MDStore",
+    "get_store",
+    # scorer seam
+    "Scorer",
+    "LexicalScorer",
+    "get_scorer",
+    # manifest
+    "build_toc",
+    "render_toc",
 ]

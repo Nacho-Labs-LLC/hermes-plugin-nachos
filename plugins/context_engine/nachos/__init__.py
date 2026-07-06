@@ -59,7 +59,7 @@ Slash commands registered by this plugin:
 
 from __future__ import annotations
 
-import hashlib
+import contextlib
 import logging
 import sys
 from pathlib import Path
@@ -175,7 +175,7 @@ class NachosContextEngine(ContextEngine):
 
     def _load_config(self) -> None:
         try:
-            from hermes_cli.config import load_config, cfg_get
+            from hermes_cli.config import cfg_get, load_config
             cfg = load_config()
 
             t = cfg_get(cfg, "nachos", "compaction", "thresholds") or {}
@@ -345,10 +345,8 @@ class NachosContextEngine(ContextEngine):
             base["nachos_last_action"] = self._last_action_taken
             base["nachos_last_decision_reason"] = self._last_decision.reason
         if self._snapshot_store:
-            try:
+            with contextlib.suppress(Exception):
                 base["nachos_snapshot_count"] = len(self._snapshot_store.list())
-            except Exception:
-                pass
         return base
 
     # -- Snapshot tools (exposed to agent) --------------------------------

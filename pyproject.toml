@@ -1,0 +1,20 @@
+[tool.ruff]
+# Python analog of a fallow/ESLint setup for this repo.
+target-version = "py39"
+line-length = 100
+extend-exclude = ["tests/test_engine.py"]  # legacy survivor, not restyled
+
+[tool.ruff.lint]
+# E/F pyflakes+pycodestyle, I import-sort, B bugbear, SIM simplify.
+# This is the "code smells / slop" net. UP (pyupgrade) is intentionally
+# NOT selected: this plugin targets a Python 3.9 runtime, so PEP-585/604
+# annotation rewrites (list[str], X | None) would be wrong here.
+select = ["E", "F", "I", "B", "SIM"]
+ignore = [
+    "E501",   # line length handled by formatter, not worth failing commits
+    "B008",   # dataclass/default-factory pattern used intentionally
+]
+
+[tool.ruff.lint.per-file-ignores]
+# ABC-override + slash-handler params are contract-mandated, not slop.
+"plugins/memory/nachos/__init__.py" = ["ARG002"]

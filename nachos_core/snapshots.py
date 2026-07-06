@@ -36,7 +36,6 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -75,7 +74,7 @@ class Snapshot:
         }
 
     @staticmethod
-    def from_dict(d: Dict[str, Any]) -> "Snapshot":
+    def from_dict(d: Dict[str, Any]) -> Snapshot:
         meta_d = d["meta"]
         meta = SnapshotMeta(
             id=meta_d["id"],

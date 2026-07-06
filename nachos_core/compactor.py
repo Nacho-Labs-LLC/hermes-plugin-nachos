@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set
 
 from .types import estimate_tokens
 
@@ -150,12 +150,10 @@ def drop_old_tool_results(messages: List[Dict[str, Any]],
 
     for idx in targets:
         original = result.messages[idx]
-        before_size = _msg_size_chars(original)
         # Build a stripped copy (don't mutate the input dict)
         stripped = dict(original)
         stripped["content"] = placeholder
         result.messages[idx] = stripped
-        after_size = _msg_size_chars(stripped)
         result.tokens_freed += estimate_tokens(
             original.get("content", "") if isinstance(original.get("content"), str)
             else _content_text(original.get("content"))

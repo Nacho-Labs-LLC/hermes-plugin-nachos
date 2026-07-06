@@ -1,132 +1,162 @@
-nachos-policy
-=============
+# nachos
 
-Hermes plugin that gates every tool call through a YAML-based policy engine
-ported from the Nachos Cheese security layer.  Default effect is deny, but
-the bundled standard.yaml ships with an explicit allow-all rule so enabling
-the plugin does not break your workflow.
+The context + prompt-optimization layer for [Hermes Agent](https://hermes-agent.nousresearch.com).
 
+Nachos is a plate: independent layers you turn on as you need them. You
+don't have to use all of them — they're there, easily activated, and not
+bloated. This repo currently ships three layers:
 
-Enabling the plugin
--------------------
+```
+┌───────────────────────────────────────────────────────────┐
+│  memory-manifest   3-tier assembly: manifest + prefetch +  │  MemoryProvider
+│                    recall. Kills the always-on injection    │
+│                    char ceiling. Store + scorer seams.      │
+├───────────────────────────────────────────────────────────┤
+│  context-engine    zone-based compaction, tool-pair-safe    │  ContextEngine
+│                    sliding, conversation snapshots.         │
+├───────────────────────────────────────────────────────────┤
+│  policy            YAML tool-gating with hot reload,        │  plugin + hook
+│                    failure-open.                            │
+└───────────────────────────────────────────────────────────┘
+```
 
-1. Copy (or symlink) this directory into your Hermes plugin path:
+Nachos does **not** compete on memory *storage* — the value is the
+assembly *shape* and the *choices* (which store, which recall strategy).
+Bring your own backend.
 
-     ~/.hermes/plugins/nachos-policy/
+---
 
-   or add the parent directory to your plugin search path in config.yaml.
+## Layer 1 — memory-manifest (`plugins/memory/nachos`)
 
-2. Add the opt-in flag to ~/.hermes/config.yaml:
+The built-in Hermes memory injects the full text of your memory files into
+every system prompt. That has a hard char ceiling: as knowledge grows you
+prune valuable facts to make room. Nachos replaces full injection with a
+bounded, scalable **3-tier assembly**:
 
-     nachos:
-       layers:
-         policy: true
+| Tier | When | What |
+|------|------|------|
+| **manifest** | every turn | A never-truncating table of contents — `title — summary`, grouped by category. Scales with entry *count* (one line each), not entry body *size*. The ceiling is gone. |
+| **prefetch** | every turn | The most relevant entry *bodies* for the incoming message, ranked and injected under a small budget. Marked `►` in the manifest. |
+| **recall** | on demand | `nachos_memory_recall` pulls any entry in full when you need it. |
 
-   Without this flag the plugin loads but registers nothing — zero overhead.
+You always see the full index; you fetch the drawer when the label
+matches. Curation stays manual (`nachos_memory_put` / `nachos_memory_remove`);
+summaries self-correct on edit. There is **no LLM call in the hot path** —
+periodic summary correction is a separate, opt-in cron.
 
-3. Optional config knobs (all under nachos.policy):
+### Two seams, lean defaults, no required deps
 
-     nachos:
-       layers:
-         policy: true
-       policy:
-         policies_dir: ~/.hermes/nachos/policies   # default
-         default_effect: deny                       # default
-         hot_reload: true                           # default
+**Store** — where entries live (local & enumerable only):
 
-4. On first run the engine loads every *.yaml / *.yml file from policies_dir.
-   The bundled standard.yaml is copied there automatically only if you do it
-   manually — the plugin does not auto-copy files to avoid surprises.
-   You should copy policies/standard.yaml yourself:
+| `nachos.memory.store` | Backend | Notes |
+|-----------------------|---------|-------|
+| `sqlite` (default) | stdlib `sqlite3` | fast, indexed, zero dep |
+| `flatfile` | titled-markdown | hand-editable, grep-able |
 
-     mkdir -p ~/.hermes/nachos/policies
-     cp plugins/nachos-policy/policies/standard.yaml ~/.hermes/nachos/policies/
+**Scorer** — how prefetch ranks:
 
+| `nachos.memory.scorer` | Strategy | Notes |
+|------------------------|----------|-------|
+| `lexical` (default) | hand-rolled TF-IDF | zero dep, synchronous |
+| `semantic` | embeddings (cosine) | opt-in; falls back to lexical if the backend is absent |
 
-How rules work
---------------
+Semantic is itself driver-agnostic via `nachos.memory.semantic_provider`:
+`nachos` (default — [nachos-embeddings](https://github.com/Nacho-Labs-LLC/nachos-embeddings)
+MCP, recommended), `sentence-transformers` (local), or `openai`
+(`text-embedding-3`). All backend imports are lazy — the package bundles
+no model and has no required dependency.
 
-A policy document is a YAML file with a version and a rules list.  Rules are
-evaluated in descending priority order — the first matching rule wins.
+### Config
 
-Rule schema:
+```yaml
+memory:
+  provider: nachos
+  memory_enabled: false   # disable built-in full injection — nachos owns it now
+nachos:
+  memory:
+    store: sqlite                 # sqlite | flatfile
+    scorer: lexical               # lexical | semantic
+    semantic_provider: nachos     # nachos | sentence-transformers | openai
+    prefetch_top_n: 5
+    prefetch_char_budget: 1500
+    manifest_char_budget: 1200
+```
 
-  - id: 'unique-rule-id'            # required, must be unique across all files
-    description: 'Human note'       # optional
-    priority: 500                   # required, integer >= 0, higher = evaluated first
-    match:
-      resource: 'tool'              # optional — 'tool' matches all Hermes tool calls
-      action: 'execute'             # optional — 'execute' or 'call' match tool calls
-      resourceId: 'terminal'        # optional — exact tool name, or list of names
-    conditions:                     # optional, all must match (AND)
-      - field: 'tool_name'
-        operator: 'equals'
-        value: 'terminal'
-    effect: 'allow'                 # required — 'allow' or 'deny'
-    reason: 'Human-readable why'    # shown to user on deny
+Slash commands: `/nachos-memory-status`, `/nachos-memory-list`.
 
-Condition operators:
-  equals, not_equals, in, not_in, contains, matches (regex), starts_with, ends_with
+Periodic summary self-correction (parked companion cron, out of the hot
+path — dry-run by default, prints + warns on expensive resolved models):
 
-Field paths available in conditions:
-  tool_name              — name of the tool being called
-  tool_args.<key>        — any top-level key in the tool's argument dict
-  metadata.<key>         — alias for tool_args.<key>
-  context.<key>          — extra context passed by the caller
+```bash
+python tools/correct_summaries.py            # dry-run
+python tools/correct_summaries.py --run      # write corrected summaries
+```
 
+---
 
-Example: deny the terminal tool
---------------------------------
+## Layer 2 — context-engine (`plugins/context_engine/nachos`)
 
-Create ~/.hermes/nachos/policies/deny-terminal.yaml:
+Zone-based context pressure instead of a single binary "compress?" check.
+Most turns are handled by cheap, LLM-free actions:
 
-  version: '1.0'
+| Zone | Action |
+|------|--------|
+| yellow | prune old tool results (no LLM) |
+| orange | sliding window, tool-pair preserving (no LLM) |
+| red | slide + delegate summary to Hermes' built-in compressor |
+| critical | aggressive slide + summary |
 
-  metadata:
-    name: 'Block raw terminal'
-    description: 'Require explicit approval before running shell commands'
+Before any destructive compaction it takes a gzipped **conversation
+snapshot** (Hermes' built-in checkpoints are filesystem-only). Enable with
+`context.engine: nachos`.
 
-  rules:
-    - id: 'deny-terminal-tool'
-      description: 'Block terminal / shell execution'
-      priority: 1000
-      match:
-        resource: 'tool'
-        resourceId:
-          - 'terminal'
-          - 'shell'
-          - 'bash'
-      effect: 'deny'
-      reason: >
-        Direct shell execution is blocked by policy.
-        Ask your administrator to allow specific commands.
+**Install note:** Hermes' context-engine loader scans the *bundled*
+`hermes-agent/plugins/context_engine/` directory only — not
+`~/.hermes/plugins/`. Symlink this layer into your hermes-agent checkout:
 
-This rule fires before standard-allow-all-tools (priority 100) and denies
-calls to terminal, shell, and bash unconditionally.
+```bash
+ln -sfn "$PWD/plugins/context_engine/nachos" \
+  <hermes-agent-repo>/plugins/context_engine/nachos
+```
 
+---
 
-Dry-run testing
----------------
+## Layer 3 — policy (`plugins/nachos-policy`)
 
-If the plugin registers the nachos_policy_check tool you can ask Hermes:
+YAML-based tool-call gating with priority-ordered rules, hot reload, and a
+failure-open guarantee (policy bugs never silently kill tool execution).
+Default-deny available; ships allow-all so enabling breaks nothing. See
+`plugins/nachos-policy/` for the rule schema and examples. Enable with
+`nachos.layers.policy: true`.
 
-  nachos_policy_check(tool_name='terminal', tool_args={'command': 'ls'})
+---
 
-Returns: { "allowed": bool, "reason": str, "stats": { ... } }
+## Install
 
+```bash
+git clone https://github.com/Nacho-Labs-LLC/hermes-plugin-nachos.git
+# memory provider — user plugin dir is scanned:
+ln -sfn "$PWD/hermes-plugin-nachos/plugins/memory/nachos" ~/.hermes/plugins/nachos
+# context engine — must live in the hermes-agent checkout (see Layer 2)
+```
 
-Hot reload
-----------
+Then set the config keys for whichever layers you want. Each layer is
+independent — activate one, two, or all three.
 
-The engine polls the policies directory every 5 seconds.  Edit a YAML file
-and it is picked up automatically.  If any file fails validation the entire
-reload is rejected and the previous valid ruleset is kept intact (atomic
-reload).  Validation errors are logged at ERROR level.
+## Design
 
+Full architecture, decision log, and the upstream roadmap live in
+[`docs/memory-manifest-spec.md`](docs/memory-manifest-spec.md).
 
-Failure-open guarantee
-----------------------
+## Tests
 
-If the policy engine itself throws an unexpected exception during evaluation
-(a bug, not a deny decision), it logs a WARNING and allows the tool call
-through.  Policy bugs never silently kill tool execution.
+```bash
+python -m pytest tests/ -q
+```
+
+Pure stdlib + pytest — `nachos_core` has no host or third-party
+dependency. Host wiring lives entirely in the plugin entry points.
+
+## License
+
+MIT

@@ -22,7 +22,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-
 Zone = Literal["green", "yellow", "orange", "red", "critical"]
 Action = Literal["none", "prune", "light", "aggressive", "emergency"]
 
