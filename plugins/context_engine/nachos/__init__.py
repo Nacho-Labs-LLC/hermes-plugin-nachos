@@ -65,12 +65,18 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-# Make nachos_core + adapters importable
+# Make nachos_core importable when dropped in as a plugin
 _PLUGIN_ROOT = Path(__file__).resolve().parents[3]
 if str(_PLUGIN_ROOT) not in sys.path:
     sys.path.insert(0, str(_PLUGIN_ROOT))
 
-from agent.context_engine import ContextEngine  # noqa: E402
+try:
+    from agent.context_engine import ContextEngine  # noqa: E402
+except ModuleNotFoundError:  # pragma: no cover - exercised outside Hermes
+    class ContextEngine:  # type: ignore[no-redef]
+        """Fallback base so the module can be imported outside Hermes."""
+
+        pass
 
 from nachos_core.budget import (  # noqa: E402
     BudgetThresholds,

@@ -26,10 +26,23 @@ from .snapshots import (
 )
 from .store import Entry, MDStore, MemoryStore, SqliteStore, get_store
 from .toc import build_toc, render_toc
-from .types import MemoryEntry, MemoryFact, PromptReport, PromptSectionReport
+from .types import (
+    ContextEntry,
+    DurableFact,
+    MemoryEntry,
+    MemoryFact,
+    PromptContribution,
+    PromptContributionReport,
+    PromptReport,
+    PromptSectionReport,
+)
 
 __all__ = [
     # types
+    "ContextEntry",
+    "DurableFact",
+    "PromptContribution",
+    "PromptContributionReport",
     "PromptSectionReport",
     "PromptReport",
     "MemoryFact",

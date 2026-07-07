@@ -11,11 +11,11 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 # ---------------------------------------------------------------------------
-# Memory model — typed triples + entries
+# Context model — durable facts + entries
 # ---------------------------------------------------------------------------
 
 @dataclass
-class MemoryFact:
+class DurableFact:
     """A durable, structured fact extracted from conversation.
 
     Triples are easier to dedup, easier to render in prompts, and easier
@@ -34,8 +34,14 @@ class MemoryFact:
 
 
 @dataclass
-class MemoryEntry:
-    """Free-form memory note (the existing Hermes built-in shape)."""
+class MemoryFact(DurableFact):
+    """Backward-compatible alias for the existing fact type name."""
+
+
+@dataclass
+class ContextEntry:
+    """Free-form context entry surfaced from a host source."""
+
     content: str
     kind: str = "note"             # 'note' | 'preference' | 'fact' | 'user'
     tags: List[str] = field(default_factory=list)
@@ -43,9 +49,23 @@ class MemoryEntry:
     created_at: str = field(default_factory=lambda: _utcnow())
 
 
+@dataclass
+class MemoryEntry(ContextEntry):
+    """Backward-compatible alias for the existing entry type name."""
+
+
 # ---------------------------------------------------------------------------
-# PromptReport — per-turn audit trail
+# Prompt contributions + PromptReport — per-turn audit trail
 # ---------------------------------------------------------------------------
+
+@dataclass
+class PromptContribution:
+    """A generic prompt contribution before it is rendered and reported."""
+
+    name: str
+    content: str
+    source: Optional[str] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
 @dataclass
 class PromptSectionReport:
@@ -54,6 +74,7 @@ class PromptSectionReport:
     size_tokens: Optional[int] = None
     hash: str = ""
     source: Optional[str] = None   # where this section came from
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -82,6 +103,7 @@ class PromptReport:
                     "size_tokens": s.size_tokens,
                     "hash": s.hash,
                     "source": s.source,
+                    "metadata": dict(s.metadata),
                 }
                 for s in self.sections
             ],
@@ -89,6 +111,9 @@ class PromptReport:
             "session_id": self.session_id,
             "turn": self.turn,
         }
+
+
+PromptContributionReport = PromptReport
 
 
 # ---------------------------------------------------------------------------

@@ -48,7 +48,13 @@ _PLUGIN_ROOT = Path(__file__).resolve().parents[3]
 if str(_PLUGIN_ROOT) not in sys.path:
     sys.path.insert(0, str(_PLUGIN_ROOT))
 
-from agent.memory_provider import MemoryProvider  # noqa: E402
+try:
+    from agent.memory_provider import MemoryProvider  # noqa: E402
+except ModuleNotFoundError:  # pragma: no cover - exercised outside Hermes
+    class MemoryProvider:  # type: ignore[no-redef]
+        """Fallback base so the module stays importable outside Hermes."""
+
+        pass
 
 from nachos_core.prefetch import get_scorer  # noqa: E402
 from nachos_core.store import get_store  # noqa: E402

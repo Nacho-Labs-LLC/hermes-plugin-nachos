@@ -1,6 +1,6 @@
 name: nachos-policy
 version: 0.1.0
-description: "Nachos policy engine — default-deny tool gating with YAML rules and hot reload"
+description: "Nachos policy plugin for Hermes — YAML allow/deny tool gating with hot reload and dry-run inspection."
 author: "Nachos / Hermes port"
 hooks:
   - pre_tool_call
