@@ -321,7 +321,13 @@ class NachosMemoryProvider(MemoryProvider):
             first = next((ln.strip() for ln in content.splitlines() if ln.strip()), "")
             title = first[:60] if first else "untitled"
             key = slugify(title)
-            category = f"builtin-{target}"
+            # Converge with the nachos-native write path (nachos_memory_put):
+            # use the target ("memory"/"user") directly as the category rather
+            # than a "builtin-" prefix, so both writers land in the same
+            # manifest groups and share the slug-of-first-line key convention.
+            # A "builtin-" prefix here forks the store into parallel category
+            # trees that never merge, reaccumulating dupes over time.
+            category = target or "memory"
             self._store.put(key, title=title, summary=first,
                             category=category, body=content)
         except Exception as e:
