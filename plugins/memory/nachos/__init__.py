@@ -276,18 +276,54 @@ class NachosMemoryProvider(MemoryProvider):
         if not self._store or not self._primary:
             return
         try:
+            meta = metadata or {}
             content = (content or "").strip()
+
+            if action == "remove":
+                # On remove the core passes content="" and puts the entry's
+                # identifying text in metadata["old_text"] (see memory_manager
+                # notify_memory_tool_write). The caller does NOT know nachos's
+                # key, and old_text is often a substring, not the full body.
+                # A naive slug-of-content remove() silently no-ops for any
+                # entry not written by this hook (e.g. seeded via
+                # nachos_memory_put), leaving a zombie that is recalled forever
+                # despite being "deleted". Resolve the real key by matching
+                # old_text against stored bodies.
+                old_text = str(meta.get("old_text") or content or "").strip()
+                if not old_text:
+                    return
+                target_key = None
+                # exact slug of the first line (fast path for hook-written entries)
+                first_ot = next((ln.strip() for ln in old_text.splitlines() if ln.strip()), "")
+                slug_key = slugify(first_ot[:60])
+                if self._store.get(slug_key) is not None:
+                    target_key = slug_key
+                else:
+                    # old_text may be a substring OR a superset of the stored
+                    # body (the built-in tool's match text and the stored body
+                    # can diverge in the tail). Anchor on a short stable prefix
+                    # of the first line — memory entries are stored body-first,
+                    # so the opening chars are the reliable discriminator.
+                    anchor = first_ot[:40]
+                    for cand in self._store.search(anchor):
+                        body = (self._store.get(cand) or "").strip()
+                        if anchor and (anchor in body or body[:40] == anchor):
+                            target_key = cand
+                            break
+                if target_key is not None:
+                    self._store.remove(target_key)
+                else:
+                    logger.debug("Nachos remove: no store entry matches %r", old_text[:40])
+                return
+
             if not content:
                 return
             first = next((ln.strip() for ln in content.splitlines() if ln.strip()), "")
             title = first[:60] if first else "untitled"
             key = slugify(title)
             category = f"builtin-{target}"
-            if action == "remove":
-                self._store.remove(key)
-            else:
-                self._store.put(key, title=title, summary=first,
-                                category=category, body=content)
+            self._store.put(key, title=title, summary=first,
+                            category=category, body=content)
         except Exception as e:
             logger.debug("Nachos on_memory_write mirror failed: %s", e)
 
