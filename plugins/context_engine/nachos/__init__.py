@@ -80,6 +80,7 @@ except ModuleNotFoundError:  # pragma: no cover - exercised outside Hermes
 
 from nachos_core.budget import (  # noqa: E402
     BudgetThresholds,
+    CompactionDecision,
     calc_budget,
     decide,
 )
@@ -106,6 +107,10 @@ class NachosContextEngine(ContextEngine):
         self.threshold_tokens = 0
         self.context_length = 0
         self.compression_count = 0
+        # Hermes owns both the active capacity and its compression trigger.
+        # ``context_length`` remains the host model's nominal window for status;
+        # this private value may be lowered for an auxiliary summarizer.
+        self._compression_context_limit: Optional[int] = None
 
         # Compaction params (override via config; sensible defaults)
         self._thresholds = BudgetThresholds()
@@ -151,7 +156,9 @@ class NachosContextEngine(ContextEngine):
                 model = kwargs.get("model") or ""
                 self._hermes_compressor = ContextCompressor(
                     model=model,
-                    threshold_percent=self._thresholds.light_compaction,
+                    # The delegate is immediately calibrated from Hermes'
+                    # budget below; Nachos' zone settings are not its trigger.
+                    threshold_percent=0.0,
                     protect_first_n=self._protect_first_n,
                     protect_last_n=max(self._protect_last_n, 20),
                     base_url=kwargs.get("base_url", ""),
@@ -160,10 +167,7 @@ class NachosContextEngine(ContextEngine):
                     api_mode=kwargs.get("api_mode", ""),
                     quiet_mode=True,
                 )
-                # Match our context_length so percentages stay aligned
-                if self._hermes_compressor.context_length:
-                    self.context_length = self._hermes_compressor.context_length
-                    self.threshold_tokens = self._hermes_compressor.threshold_tokens
+                self._sync_hermes_compressor_budget()
             except Exception as e:
                 logger.info(
                     "Nachos: Hermes compressor delegation disabled (%s); "
@@ -222,10 +226,11 @@ class NachosContextEngine(ContextEngine):
     def update_model(self, model: str, context_length: int,
                      base_url: str = "", api_key: str = "",
                      provider: str = "", api_mode: str = "") -> None:
+        """Mirror the nominal host model window; await its budget contract."""
         self.context_length = context_length
-        self.threshold_tokens = int(
-            context_length * self._thresholds.light_compaction
-        )
+        self._compression_context_limit = context_length or None
+        self.threshold_tokens = 0
+        self.threshold_percent = 0.0
         if self._hermes_compressor is not None:
             try:
                 self._hermes_compressor.update_model(
@@ -235,6 +240,76 @@ class NachosContextEngine(ContextEngine):
                 )
             except Exception as e:
                 logger.debug("Hermes compressor update_model failed: %s", e)
+
+    def set_compression_budget(
+        self,
+        context_limit: Optional[int],
+        trigger_tokens: Optional[int],
+        *,
+        reason: str = "",
+    ) -> None:
+        """Accept Hermes' authoritative working capacity and trigger.
+
+        Zone thresholds only select the action once this host-defined trigger
+        has fired; they never derive an alternate compression boundary.
+        """
+        try:
+            parsed_context = int(context_limit) if context_limit is not None else 0
+            parsed_trigger = int(trigger_tokens) if trigger_tokens is not None else 0
+        except (TypeError, ValueError):
+            parsed_context = parsed_trigger = 0
+        if parsed_context <= 0 or parsed_trigger <= 0:
+            logger.debug("Ignoring invalid Hermes compression budget: %r / %r", context_limit, trigger_tokens)
+            return
+        self._compression_context_limit = parsed_context
+        self.threshold_tokens = min(parsed_trigger, parsed_context)
+        self.threshold_percent = (
+            self.threshold_tokens / self.context_length
+            if self.context_length else 0.0
+        )
+        self._sync_hermes_compressor_budget()
+        logger.info(
+            "Nachos compression budget set to trigger %s within %s%s; nominal context remains %s",
+            f"{self.threshold_tokens:,}",
+            f"{self._compression_context_limit:,}",
+            f" ({reason})" if reason else "",
+            f"{self.context_length:,}",
+        )
+
+    def _effective_context_length(self) -> int:
+        return self._compression_context_limit or self.context_length
+
+    def _sync_hermes_compressor_budget(self) -> None:
+        """Calibrate the private delegate to the same host-owned budget."""
+        if self._hermes_compressor is None:
+            return
+        effective_context = self._effective_context_length()
+        if not effective_context or not self.threshold_tokens:
+            return
+        update_model = getattr(self._hermes_compressor, "update_model", None)
+        if callable(update_model):
+            update_model(
+                model=getattr(self._hermes_compressor, "model", ""),
+                context_length=effective_context,
+                base_url=getattr(self._hermes_compressor, "base_url", ""),
+                api_key=getattr(self._hermes_compressor, "api_key", ""),
+                provider=getattr(self._hermes_compressor, "provider", ""),
+                api_mode=getattr(self._hermes_compressor, "api_mode", ""),
+            )
+
+        self._hermes_compressor.threshold_tokens = self.threshold_tokens
+        self._hermes_compressor.threshold_percent = (
+            self.threshold_tokens / effective_context
+        )
+        summary_ratio = getattr(self._hermes_compressor, "summary_target_ratio", None)
+        if isinstance(summary_ratio, (int, float)):
+            self._hermes_compressor.tail_token_budget = int(
+                self.threshold_tokens * summary_ratio
+            )
+        if hasattr(self._hermes_compressor, "max_summary_tokens"):
+            self._hermes_compressor.max_summary_tokens = min(
+                int(effective_context * 0.05), 10_000
+            )
 
     def update_from_response(self, usage: Dict[str, Any]) -> None:
         if not isinstance(usage, dict):
@@ -248,13 +323,40 @@ class NachosContextEngine(ContextEngine):
 
     # -- Decide / compress -------------------------------------------------
 
+    def _decide_for_host_budget(self, tokens: int):
+        budget = calc_budget(
+            tokens,
+            self._effective_context_length(),
+            self._thresholds,
+        )
+        if not self.threshold_tokens or tokens < self.threshold_tokens:
+            return budget, CompactionDecision(
+                zone="green",
+                action="none",
+                reason="Below Hermes' compression trigger; no action needed.",
+                target_token_reduction=0,
+                snapshot_recommended=False,
+            )
+        decision = decide(budget)
+        if decision.action == "none":
+            # Hermes has declared pressure before Nachos' first zone. Retain
+            # the zone strategy for escalation, but start with its gentlest
+            # action rather than creating a second trigger boundary.
+            decision = CompactionDecision(
+                zone="yellow",
+                action="prune",
+                reason="Hermes compression trigger reached; pruning first.",
+                target_token_reduction=int(tokens * 0.15),
+                snapshot_recommended=False,
+            )
+        return budget, decision
+
     def should_compress(self, prompt_tokens: int = None) -> bool:
         tokens = (prompt_tokens if prompt_tokens is not None
                   else self.last_prompt_tokens)
-        if not self.context_length:
+        if not self.context_length or not self.threshold_tokens:
             return False
-        budget = calc_budget(tokens, self.context_length, self._thresholds)
-        decision = decide(budget)
+        _, decision = self._decide_for_host_budget(tokens)
         self._last_decision = decision
         return decision.action != "none"
 
@@ -268,14 +370,13 @@ class NachosContextEngine(ContextEngine):
         back to aggressive sliding when not.
         """
         tokens = current_tokens or self.last_prompt_tokens
-        budget = calc_budget(tokens, self.context_length, self._thresholds)
-        decision = decide(budget)
+        budget, decision = self._decide_for_host_budget(tokens)
         self._last_decision = decision
         self._last_action_taken = decision.action
 
         logger.info(
             "Nachos compact: zone=%s action=%s tokens=%d/%d (%.1f%%) target_drop=%d",
-            decision.zone, decision.action, tokens, self.context_length,
+            decision.zone, decision.action, tokens, self._effective_context_length(),
             budget.utilization_ratio * 100, decision.target_token_reduction,
         )
 
