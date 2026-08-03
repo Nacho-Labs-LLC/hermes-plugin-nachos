@@ -243,24 +243,30 @@ class NachosContextEngine(ContextEngine):
 
     def set_compression_budget(
         self,
-        context_limit: Optional[int],
+        context_capacity: Optional[int],
         trigger_tokens: Optional[int],
         *,
         reason: str = "",
-    ) -> None:
+    ) -> bool:
         """Accept Hermes' authoritative working capacity and trigger.
 
         Zone thresholds only select the action once this host-defined trigger
         has fired; they never derive an alternate compression boundary.
         """
         try:
-            parsed_context = int(context_limit) if context_limit is not None else 0
+            parsed_context = (
+                int(context_capacity) if context_capacity is not None else 0
+            )
             parsed_trigger = int(trigger_tokens) if trigger_tokens is not None else 0
         except (TypeError, ValueError):
             parsed_context = parsed_trigger = 0
         if parsed_context <= 0 or parsed_trigger <= 0:
-            logger.debug("Ignoring invalid Hermes compression budget: %r / %r", context_limit, trigger_tokens)
-            return
+            logger.debug(
+                "Ignoring invalid Hermes compression budget: %r / %r",
+                context_capacity,
+                trigger_tokens,
+            )
+            return False
         self._compression_context_limit = parsed_context
         self.threshold_tokens = min(parsed_trigger, parsed_context)
         self.threshold_percent = (
@@ -275,6 +281,7 @@ class NachosContextEngine(ContextEngine):
             f" ({reason})" if reason else "",
             f"{self.context_length:,}",
         )
+        return True
 
     def _effective_context_length(self) -> int:
         return self._compression_context_limit or self.context_length
