@@ -52,9 +52,30 @@ def test_invalid_host_budget_is_explicitly_rejected(monkeypatch):
     module = _load_engine_module(monkeypatch)
     engine = module.NachosContextEngine()
     engine.update_model("test-main", 1_000_000)
+    # Self-derived threshold from update_model() must survive a rejected
+    # host override, not silently drop back to zero.
+    pre_threshold = engine.threshold_tokens
 
     accepted = engine.set_compression_budget(0, 400_000, reason="bad-input")
 
     assert accepted is False
     assert engine._effective_context_length() == 1_000_000
-    assert engine.threshold_tokens == 0
+    assert engine.threshold_tokens == pre_threshold
+
+
+def test_update_model_self_derives_threshold_without_host_push(monkeypatch):
+    """Regression test for the zero-caller set_compression_budget bug.
+
+    Hermes core never calls set_compression_budget() (audited Aug 2026:
+    zero callers in agent/*.py). update_model() must produce a working,
+    nonzero threshold on its own so should_compress() isn't stuck reporting
+    zone=green/action=none for the life of the session.
+    """
+    module = _load_engine_module(monkeypatch)
+    engine = module.NachosContextEngine()
+    engine.update_model("test-main", 1_000_000)
+
+    assert engine.threshold_tokens > 0
+    assert engine.threshold_percent > 0.0
+    # Matches the light_compaction zone boundary (host default parity: 0.75).
+    assert engine.threshold_tokens == int(1_000_000 * engine._thresholds.light_compaction)

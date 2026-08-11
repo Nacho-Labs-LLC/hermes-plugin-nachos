@@ -226,11 +226,28 @@ class NachosContextEngine(ContextEngine):
     def update_model(self, model: str, context_length: int,
                      base_url: str = "", api_key: str = "",
                      provider: str = "", api_mode: str = "") -> None:
-        """Mirror the nominal host model window; await its budget contract."""
+        """Mirror the nominal host model window and self-derive a trigger.
+
+        Historically this zeroed threshold_tokens and waited for the host to
+        call set_compression_budget() with an authoritative capacity/trigger
+        pair. Hermes core never calls that hook (audited: zero callers in
+        agent/*.py as of Aug 2026) — so should_compress() always saw
+        threshold_tokens == 0, treated that as "no trigger yet", and silently
+        reported zone=green/action=none forever. Sessions grew unbounded
+        until the provider hard-rejected the request at its token ceiling.
+
+        Fix: derive threshold_tokens immediately from context_length using
+        the light_compaction zone boundary (0.75, matches Hermes' own
+        default) — the same "context_length * threshold_percent" contract
+        every other ContextEngine implements in the base class. This makes
+        the engine correct standalone. set_compression_budget() is kept below
+        as an optional override for if/when Hermes core ever adopts that
+        push-based hook; it is no longer the only path to a working trigger.
+        """
         self.context_length = context_length
         self._compression_context_limit = context_length or None
-        self.threshold_tokens = 0
-        self.threshold_percent = 0.0
+        self.threshold_percent = self._thresholds.light_compaction
+        self.threshold_tokens = int(context_length * self.threshold_percent)
         if self._hermes_compressor is not None:
             try:
                 self._hermes_compressor.update_model(
