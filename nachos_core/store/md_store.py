@@ -174,12 +174,22 @@ class MDStore(MemoryStore):
         category: str,
         body: str,
     ) -> None:
+        if "\n" in title or "\r" in title:
+            raise ValueError("Markdown injection detected: newlines not allowed in title")
+        if "\n" in category or "\r" in category:
+            raise ValueError("Markdown injection detected: newlines not allowed in category")
+
+        body = (body or "").strip()
         records = self._read()
         # summary is derived from the first body line on read; ensure the
         # body leads with the given summary so round-trips are stable.
-        body = (body or "").strip()
         if summary and _first_line(body) != summary.strip():
             body = summary.strip() + ("\n\n" + body if body else "")
+
+        for line in body.splitlines():
+            if _H1_RE.match(line) or _H2_RE.match(line):
+                raise ValueError("Markdown injection detected: headers not allowed in body")
+
         records[key] = _Record(
             key=key,
             title=title,

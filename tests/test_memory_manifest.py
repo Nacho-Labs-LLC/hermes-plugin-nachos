@@ -18,11 +18,10 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from nachos_core.store import SqliteStore, MDStore, get_store
-from nachos_core.store.md_store import slugify
 from nachos_core.prefetch import LexicalScorer, get_scorer
-from nachos_core.toc import render_toc, build_toc
-
+from nachos_core.store import MDStore, SqliteStore, get_store
+from nachos_core.store.md_store import slugify
+from nachos_core.toc import build_toc, render_toc
 
 # ---------------------------------------------------------------------------
 # Store — parametrized across both drivers
