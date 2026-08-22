@@ -257,7 +257,7 @@ class SnapshotStore:
             try:
                 tmp = self.index_file.with_suffix(self.index_file.suffix + ".tmp")
                 with tmp.open("w", encoding="utf-8") as f:
-                    for entry in self.list():  # filters present blobs
+                    for entry in entries:  # use already loaded entries
                         if entry["id"] in kept_ids:
                             f.write(json.dumps(entry) + "\n")
                 tmp.replace(self.index_file)
