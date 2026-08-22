@@ -95,6 +95,27 @@ class TestStoreContract:
         assert store.search("") == []
         assert store.search("   ") == []
 
+    def test_search_escapes_wildcards(self, store):
+        k1 = _put(store, "e1", "100%", "s", "c", "s\nb")
+        k2 = _put(store, "e2", "100 dollars", "s", "c", "s\nb")
+        k3 = _put(store, "e3", "a_b_c", "s", "c", "s\nb")
+        k4 = _put(store, "e4", "axbxc", "s", "c", "s\nb")
+        k5 = _put(store, "e5", "backslash \\ test", "s", "c", "s\nb")
+
+        # % should only match literal %
+        res1 = store.search("100%")
+        assert k1 in res1
+        assert k2 not in res1
+
+        # _ should only match literal _
+        res2 = store.search("a_b")
+        assert k3 in res2
+        assert k4 not in res2
+
+        # \\ should only match literal \\
+        res3 = store.search("\\")
+        assert k5 in res3
+
     def test_put_replaces(self, store):
         k = _put(store, "k", "Title", "old summary", "cat", "old summary\nold")
         _put(store, "k", "Title", "new summary", "cat", "new summary\nnew")
