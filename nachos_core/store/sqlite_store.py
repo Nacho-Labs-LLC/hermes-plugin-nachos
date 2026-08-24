@@ -66,10 +66,13 @@ class SqliteStore(MemoryStore):
         q = (query or "").strip()
         if not q:
             return []
-        like = f"%{q}%"
+        escaped_q = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        like = f"%{escaped_q}%"
         cur = self._conn.execute(
             "SELECT key FROM entries "
-            "WHERE title LIKE ? OR summary LIKE ? OR body LIKE ? "
+            "WHERE title LIKE ? ESCAPE '\\' "
+            "OR summary LIKE ? ESCAPE '\\' "
+            "OR body LIKE ? ESCAPE '\\' "
             "ORDER BY category ASC, title ASC",
             (like, like, like),
         )
