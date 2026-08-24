@@ -65,7 +65,7 @@ def main():
     print("=" * 70)
     print(f"total_chars:  {report.total_chars}")
     print(f"total_tokens: {report.total_tokens}")
-    print(f"sections:")
+    print("sections:")
     for s in report.sections:
         print(f"  • {s.name:25s} chars={s.size_chars:6d}  "
               f"tokens={s.size_tokens or 0:5d}  "
