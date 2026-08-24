@@ -277,6 +277,15 @@ class SnapshotStore:
                        for c in session_id)[:128]
 
 
+def _estimate_block_tokens(blk: Any) -> int:
+    """Estimate tokens for a single message block."""
+    if isinstance(blk, dict):
+        t = blk.get("text") or ""
+        if isinstance(t, str):
+            return len(t) // 4
+    return 0
+
+
 def _estimate_messages_tokens(messages: List[Dict[str, Any]]) -> int:
     """Rough estimate so the index doesn't lie about size."""
     total = 0
@@ -286,8 +295,5 @@ def _estimate_messages_tokens(messages: List[Dict[str, Any]]) -> int:
             total += len(c) // 4
         elif isinstance(c, list):
             for blk in c:
-                if isinstance(blk, dict):
-                    t = blk.get("text") or ""
-                    if isinstance(t, str):
-                        total += len(t) // 4
+                total += _estimate_block_tokens(blk)
     return total
