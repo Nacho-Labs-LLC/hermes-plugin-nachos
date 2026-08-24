@@ -170,8 +170,8 @@ class SnapshotStore:
 
     # -- List -----------------------------------------------------------
 
-    def list(self) -> List[Dict[str, Any]]:
-        """Return index entries newest-first."""
+    def _read_index(self) -> List[Dict[str, Any]]:
+        """Read index entries without checking blob existence."""
         if not self.index_file.exists():
             return []
         rows: List[Dict[str, Any]] = []
@@ -188,6 +188,11 @@ class SnapshotStore:
         except Exception as e:
             logger.debug("Snapshot index read failed: %s", e)
             return []
+        return rows
+
+    def list(self) -> List[Dict[str, Any]]:
+        """Return index entries newest-first."""
+        rows = self._read_index()
 
         # Filter to only entries whose blob still exists; sort newest first
         present = []
@@ -202,7 +207,7 @@ class SnapshotStore:
 
     def load(self, snap_id: str) -> Optional[Snapshot]:
         """Load a snapshot by id."""
-        for entry in self.list():
+        for entry in self._read_index():
             if entry.get("id") == snap_id:
                 blob = self.session_dir / entry["blob"]
                 try:
