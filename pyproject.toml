@@ -1,3 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hermes-plugin-nachos"
+version = "0.4.0"
+description = "Nachos durable-memory provider for Hermes Agent"
+readme = "README.md"
+requires-python = ">=3.9"
+license = "MIT"
+authors = [{name = "Nacho Labs"}]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.9",
+]
+
+[project.entry-points."hermes_agent.memory_providers"]
+nachos = "nachos_hermes.memory_provider:register"
+
+[tool.setuptools.packages.find]
+include = ["nachos_core*", "nachos_hermes*"]
+
 [tool.ruff]
 # Python analog of a fallow/ESLint setup for this repo.
 target-version = "py39"

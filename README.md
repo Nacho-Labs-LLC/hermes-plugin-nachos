@@ -140,6 +140,36 @@ Default-deny available; ships allow-all so enabling breaks nothing. See
 
 ## Install
 
+### Versioned package (recommended)
+
+Nachos memory is published as a standard Python package and discovered through
+the `hermes_agent.memory_providers` entry-point group. Install a tagged release
+or, for a reproducible deployment, an immutable commit:
+
+```bash
+# tagged release
+pip install "git+https://github.com/Nacho-Labs-LLC/hermes-plugin-nachos.git@v0.4.0"
+
+# exact commit pin (recommended for production profiles)
+pip install "git+https://github.com/Nacho-Labs-LLC/hermes-plugin-nachos.git@<full-40-char-commit>"
+```
+
+Configure the active profile with Hermes' supported config command:
+
+```bash
+hermes config set memory.provider nachos
+hermes config set memory.memory_enabled false
+```
+
+Restart the gateway or start a new session after changing providers. The prompt
+will always identify Nachos as the authoritative durable-memory backend and
+expose the `nachos_memory_*` tools.
+
+The context-engine and policy layers remain optional drop-in layers while their
+Hermes discovery APIs mature.
+
+### Development / drop-in install
+
 ```bash
 git clone https://github.com/Nacho-Labs-LLC/hermes-plugin-nachos.git
 # memory provider — user plugin dir is scanned:
