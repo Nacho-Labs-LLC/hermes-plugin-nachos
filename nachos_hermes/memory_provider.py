@@ -37,6 +37,7 @@ Slash commands:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from pathlib import Path
@@ -51,6 +52,7 @@ except ModuleNotFoundError:  # pragma: no cover - exercised outside Hermes
         pass
 
 from nachos_core.prefetch import get_scorer  # noqa: E402
+from nachos_core.snapshots import SnapshotStore  # noqa: E402
 from nachos_core.store import get_store  # noqa: E402
 from nachos_core.store.md_store import slugify  # noqa: E402
 from nachos_core.toc import render_toc  # noqa: E402
@@ -70,6 +72,8 @@ _DEFAULTS = {
 class NachosMemoryProvider(MemoryProvider):
     """3-tier manifest memory provider (manifest / prefetch / recall)."""
 
+    pre_compress_checkpoint_api_version = 2
+
     def __init__(self):
         self._store = None
         self._scorer = None
@@ -77,6 +81,8 @@ class NachosMemoryProvider(MemoryProvider):
         self._session_id = ""
         self._primary = True
         self._last_prefetched: List[str] = []
+        self._checkpoint_root: Optional[Path] = None
+        self._checkpoint_digests: Dict[str, str] = {}
 
     @property
     def name(self) -> str:
@@ -200,6 +206,26 @@ class NachosMemoryProvider(MemoryProvider):
     def queue_prefetch(self, query: str, *, session_id: str = "") -> None:
         # prefetch is cheap + synchronous; no background queue needed.
         return
+
+    def on_pre_compress(self, messages: List[Dict[str, Any]]) -> str:
+        """Checkpoint the transcript before a fail-closed compression pass."""
+        if not self._session_id:
+            raise RuntimeError("Nachos checkpoint requires a session id")
+        root = getattr(self, "_checkpoint_root", None)
+        if root is None:
+            raise RuntimeError("Nachos checkpoint store is not initialized")
+        digest = hashlib.sha256(
+            json.dumps(messages, sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest()
+        previous = self._checkpoint_digests.get(self._session_id)
+        if previous == digest:
+            return f"checkpoint: {digest[:12]}"
+        SnapshotStore(root, self._session_id).save(
+            messages=list(messages), reason="pre-compress-checkpoint",
+            notes=[f"sha256={digest}"],
+        )
+        self._checkpoint_digests[self._session_id] = digest
+        return f"checkpoint: {digest[:12]}"
 
     # -- TIER 3: recall + curation tools -----------------------------------
 
