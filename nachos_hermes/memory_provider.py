@@ -96,10 +96,14 @@ class NachosMemoryProvider(MemoryProvider):
     def initialize(self, session_id: str, **kwargs) -> None:
         self._session_id = session_id or ""
         self._primary = (kwargs.get("agent_context", "primary") == "primary")
-        self._load_config()
+        configured_home = kwargs.get("hermes_home")
+        if configured_home:
+            hermes_home = Path(configured_home)
+        else:
+            from hermes_constants import get_hermes_home  # type: ignore
 
-        from hermes_constants import get_hermes_home  # type: ignore
-        hermes_home = Path(kwargs.get("hermes_home") or get_hermes_home())
+            hermes_home = Path(get_hermes_home())
+        self._load_config(hermes_home)
         mem_dir = hermes_home / "nachos"
         mem_dir.mkdir(parents=True, exist_ok=True)
 
@@ -128,19 +132,68 @@ class NachosMemoryProvider(MemoryProvider):
             self._session_id, store_kind, self._cfg["scorer"], self._primary,
         )
 
-    def _load_config(self) -> None:
+    def _apply_config(self, values: Dict[str, Any]) -> None:
+        for key, default in _DEFAULTS.items():
+            value = values.get(key)
+            if isinstance(default, int) and isinstance(value, (int, float)):
+                self._cfg[key] = int(value)
+            elif isinstance(default, str) and isinstance(value, str) and value.strip():
+                self._cfg[key] = value.strip()
+
+    def _load_config(self, hermes_home: Path) -> None:
+        """Load legacy config.yaml settings, then profile-scoped setup values."""
         try:
             from hermes_cli.config import cfg_get, load_config
+
             cfg = load_config()
-            for key, default in _DEFAULTS.items():
-                v = cfg_get(cfg, "nachos", "memory", key)
-                if v is not None:
-                    if isinstance(default, int) and isinstance(v, (int, float)):
-                        self._cfg[key] = int(v)
-                    elif isinstance(default, str) and isinstance(v, str) and v.strip():
-                        self._cfg[key] = v.strip()
+            self._apply_config({
+                key: cfg_get(cfg, "nachos", "memory", key)
+                for key in _DEFAULTS
+            })
         except Exception as e:
             logger.debug("Nachos memory config load failed: %s", e)
+
+        config_path = hermes_home / "nachos" / "config.json"
+        try:
+            values = json.loads(config_path.read_text(encoding="utf-8"))
+            if isinstance(values, dict):
+                self._apply_config(values)
+        except FileNotFoundError:
+            pass
+        except (OSError, json.JSONDecodeError) as e:
+            logger.warning("Nachos setup config load failed: %s", e)
+
+    def get_config_schema(self) -> List[Dict[str, Any]]:
+        """Expose the local storage and prefetch settings to Hermes setup UIs."""
+        return [
+            {"key": "store", "description": "Durable memory store format.",
+             "default": _DEFAULTS["store"], "choices": ["sqlite", "flatfile"]},
+            {"key": "scorer", "description": "How Nachos ranks memory entries for prefetch.",
+             "default": _DEFAULTS["scorer"], "choices": ["lexical", "semantic"]},
+            {"key": "semantic_provider", "description": "Embedding backend when semantic scoring is selected.",
+             "default": _DEFAULTS["semantic_provider"],
+             "choices": ["nachos", "sentence-transformers", "openai"]},
+            {"key": "prefetch_top_n", "description": "Maximum memory entries prefetched for a turn.",
+             "default": _DEFAULTS["prefetch_top_n"], "type": "int"},
+            {"key": "prefetch_char_budget", "description": "Maximum characters injected by turn prefetch.",
+             "default": _DEFAULTS["prefetch_char_budget"], "type": "int"},
+            {"key": "manifest_char_budget", "description": "Maximum characters used by the durable-memory manifest.",
+             "default": _DEFAULTS["manifest_char_budget"], "type": "int"},
+        ]
+
+    def save_config(self, values: Dict[str, Any], hermes_home: str) -> None:
+        """Persist setup values under the active profile without touching config.yaml."""
+        selected = {key: values[key] for key in _DEFAULTS if key in values}
+        self._apply_config(selected)
+
+        config_path = Path(hermes_home) / "nachos" / "config.json"
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary_path = config_path.with_suffix(".json.tmp")
+        temporary_path.write_text(
+            json.dumps(self._cfg, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        temporary_path.replace(config_path)
 
     # -- TIER 1: manifest --------------------------------------------------
 
