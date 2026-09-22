@@ -9,14 +9,7 @@ Run:
     python -m pytest tests/test_memory_manifest.py -v
 """
 
-import sys
-from pathlib import Path
-
 import pytest
-
-ROOT = Path(__file__).resolve().parent.parent
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
 from nachos_core.prefetch import LexicalScorer, get_scorer
 from nachos_core.store import MDStore, SqliteStore, get_store
@@ -366,8 +359,8 @@ class TestRenderToc:
     def test_prefetch_marker(self):
         entries = [("a", "Alpha", "sa", "c"), ("b", "Beta", "sb", "c")]
         out = render_toc(entries, prefetched={"a"})
-        alpha_line = [l for l in out.splitlines() if "Alpha" in l][0]
-        beta_line = [l for l in out.splitlines() if "Beta" in l][0]
+        alpha_line = [line for line in out.splitlines() if "Alpha" in line][0]
+        beta_line = [line for line in out.splitlines() if "Beta" in line][0]
         assert "\u25ba" in alpha_line
         assert "\u25ba" not in beta_line
 

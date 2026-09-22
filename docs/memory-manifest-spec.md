@@ -199,8 +199,8 @@ ALREADY stopped being perfect the moment we started pruning at the ceiling.
    manifest render. Unit tests, no host imports.
 3. SemanticScorer adapter (delegates to MCP; nachos-embeddings default).
 4. Rebuild plugins/memory/nachos as the 3-tier MemoryProvider.
-5. Live-wire against real ~/.hermes (symlink → discover → load → init →
-   exercise; verify RESOLVED config; disable built-in injection surgically;
+5. Live-wire against a profile-scoped Hermes home (package install → entry-point discovery → load → init →
+   exercise; verify resolved config; disable built-in injection surgically;
    confirm rollback).
 6. Migrate existing MEMORY.md/USER.md into the store; dogfood.
 7. Write parked correct_summaries.py companion cron.

@@ -1,198 +1,82 @@
-# nachos
+# Nachos for Hermes Agent
 
-The context + prompt-optimization layer for [Hermes Agent](https://hermes-agent.nousresearch.com).
+Nachos is a durable-memory provider for [Hermes Agent](https://hermes-agent.nousresearch.com). It replaces full-file memory injection with a bounded, three-tier assembly:
 
-Nachos is a plate: independent layers you turn on as you need them. You
-don't have to use all of them — they're there, easily activated, and not
-bloated. This repo currently ships three layers:
+1. **Manifest** — a compact table of contents is present every turn.
+2. **Prefetch** — relevant entry bodies are ranked and injected within a bounded budget.
+3. **Recall** — the agent retrieves full entries only when needed.
 
-```
-┌───────────────────────────────────────────────────────────┐
-│  memory-manifest   3-tier assembly: manifest + prefetch +  │  MemoryProvider
-│                    recall. Kills the always-on injection    │
-│                    char ceiling. Store + scorer seams.      │
-├───────────────────────────────────────────────────────────┤
-│  context-engine    zone-based compaction, tool-pair-safe    │  ContextEngine
-│                    sliding, conversation snapshots.         │
-├───────────────────────────────────────────────────────────┤
-│  policy            YAML tool-gating with hot reload,        │  plugin + hook
-│                    failure-open.                            │
-└───────────────────────────────────────────────────────────┘
-```
-
-Nachos does **not** compete on memory *storage* — the value is the
-assembly *shape* and the *choices* (which store, which recall strategy).
-Bring your own backend.
-
----
-
-## Layer 1 — memory-manifest (`plugins/memory/nachos`)
-
-The built-in Hermes memory injects the full text of your memory files into
-every system prompt. That has a hard char ceiling: as knowledge grows you
-prune valuable facts to make room. Nachos replaces full injection with a
-bounded, scalable **3-tier assembly**:
-
-| Tier | When | What |
-|------|------|------|
-| **manifest** | every turn | A never-truncating table of contents — `title — summary`, grouped by category. Scales with entry *count* (one line each), not entry body *size*. The ceiling is gone. |
-| **prefetch** | every turn | The most relevant entry *bodies* for the incoming message, ranked and injected under a small budget. Marked `►` in the manifest. |
-| **recall** | on demand | `nachos_memory_recall` pulls any entry in full when you need it. |
-
-You always see the full index; you fetch the drawer when the label
-matches. Curation stays manual (`nachos_memory_put` / `nachos_memory_remove`);
-summaries self-correct on edit. There is **no LLM call in the hot path** —
-periodic summary correction is a separate, opt-in cron.
-
-### Two seams, lean defaults, no required deps
-
-**Store** — where entries live (local & enumerable only):
-
-| `nachos.memory.store` | Backend | Notes |
-|-----------------------|---------|-------|
-| `sqlite` (default) | stdlib `sqlite3` | fast, indexed, zero dep |
-| `flatfile` | titled-markdown | hand-editable, grep-able |
-
-**Scorer** — how prefetch ranks:
-
-| `nachos.memory.scorer` | Strategy | Notes |
-|------------------------|----------|-------|
-| `lexical` (default) | hand-rolled TF-IDF | zero dep, synchronous |
-| `semantic` | embeddings (cosine) | opt-in; falls back to lexical if the backend is absent |
-
-Semantic is itself driver-agnostic via `nachos.memory.semantic_provider`:
-`nachos` (default — [nachos-embeddings](https://github.com/Nacho-Labs-LLC/nachos-embeddings)
-MCP, recommended), `sentence-transformers` (local), or `openai`
-(`text-embedding-3`). All backend imports are lazy — the package bundles
-no model and has no required dependency.
-
-> **Semantic install note:** the optional backend must be installed into
-> the venv that runs Hermes (the hermes-agent checkout's `.venv`), NOT the
-> plugin repo's venv — the provider executes under the host's interpreter.
-> `sentence-transformers` needs `<hermes-agent>/.venv/bin/pip install
-> sentence-transformers`. If the backend isn't importable there, prefetch
-> silently falls back to lexical (a WARNING is logged per prefetch).
-
-### Config
-
-```yaml
-memory:
-  provider: nachos
-  memory_enabled: false   # disable built-in full injection — nachos owns it now
-nachos:
-  memory:
-    store: sqlite                 # sqlite | flatfile
-    scorer: lexical               # lexical | semantic
-    semantic_provider: nachos     # nachos | sentence-transformers | openai
-    prefetch_top_n: 5
-    prefetch_char_budget: 1500
-    manifest_char_budget: 1200
-```
-
-Slash commands: `/nachos-memory-status`, `/nachos-memory-list`.
-
-Periodic summary self-correction (parked companion cron, out of the hot
-path — dry-run by default, prints + warns on expensive resolved models):
-
-```bash
-python tools/correct_summaries.py            # dry-run
-python tools/correct_summaries.py --run      # write corrected summaries
-```
-
----
-
-## Layer 2 — context-engine (`plugins/context_engine/nachos`)
-
-Zone-based context pressure instead of a single binary "compress?" check.
-Most turns are handled by cheap, LLM-free actions:
-
-| Zone | Action |
-|------|--------|
-| yellow | prune old tool results (no LLM) |
-| orange | sliding window, tool-pair preserving (no LLM) |
-| red | slide + delegate summary to Hermes' built-in compressor |
-| critical | aggressive slide + summary |
-
-Before any destructive compaction it takes a gzipped **conversation
-snapshot** (Hermes' built-in checkpoints are filesystem-only). Enable with
-`context.engine: nachos`.
-
-**Install note:** Hermes' context-engine loader scans the *bundled*
-`hermes-agent/plugins/context_engine/` directory only — not
-`~/.hermes/plugins/`. Symlink this layer into your hermes-agent checkout:
-
-```bash
-ln -sfn "$PWD/plugins/context_engine/nachos" \
-  <hermes-agent-repo>/plugins/context_engine/nachos
-```
-
----
-
-## Layer 3 — policy (`plugins/nachos-policy`)
-
-YAML-based tool-call gating with priority-ordered rules, hot reload, and a
-failure-open guarantee (policy bugs never silently kill tool execution).
-Default-deny available; ships allow-all so enabling breaks nothing. See
-`plugins/nachos-policy/` for the rule schema and examples. Enable with
-`nachos.layers.policy: true`.
-
----
+The package is local-first: SQLite and flat-file stores use the standard library, lexical ranking is the default, and no LLM call occurs in the hot path.
 
 ## Install
 
-### Versioned package (recommended)
-
-Nachos memory is published as a standard Python package and discovered through
-the `hermes_agent.memory_providers` entry-point group. Install a tagged release
-or, for a reproducible deployment, an immutable commit:
+Install Nachos into the same Python environment that runs Hermes:
 
 ```bash
-# tagged release
-pip install "git+https://github.com/Nacho-Labs-LLC/hermes-plugin-nachos.git@v0.4.0"
-
-# exact commit pin (recommended for production profiles)
-pip install "git+https://github.com/Nacho-Labs-LLC/hermes-plugin-nachos.git@<full-40-char-commit>"
+python -m pip install "git+https://github.com/Nacho-Labs-LLC/hermes-plugin-nachos.git@v0.5.0"
 ```
 
-Configure the active profile with Hermes' supported config command:
+For a reproducible production deployment, pin a full 40-character commit SHA instead of a tag.
+
+Select Nachos for the active Hermes profile:
 
 ```bash
 hermes config set memory.provider nachos
 hermes config set memory.memory_enabled false
 ```
 
-Restart the gateway or start a new session after changing providers. The prompt
-will always identify Nachos as the authoritative durable-memory backend and
-expose the `nachos_memory_*` tools.
+Start a new session or restart the profile gateway after switching providers. Nachos injects an explicit durable-memory contract that directs the agent to `nachos_memory_recall`, `nachos_memory_put`, and `nachos_memory_remove`.
 
-The context-engine and policy layers remain optional drop-in layers while their
-Hermes discovery APIs mature.
+## Configuration
 
-### Development / drop-in install
+Run `hermes memory setup` to configure the packaged provider. Settings are stored at `$HERMES_HOME/nachos/config.json`, so each Hermes profile remains isolated.
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `store` | `sqlite` | Local durable store: `sqlite` or hand-editable `flatfile`. |
+| `scorer` | `lexical` | Ranking method: `lexical` or optional `semantic`. |
+| `semantic_provider` | `nachos` | Optional semantic backend: `nachos`, `sentence-transformers`, or `openai`. |
+| `prefetch_top_n` | `5` | Maximum entries preloaded for a turn. |
+| `prefetch_char_budget` | `1500` | Maximum characters injected by prefetch. |
+| `manifest_char_budget` | `1200` | Target budget for the always-on manifest. |
+
+Existing `nachos.memory` values in `config.yaml` remain supported for backwards compatibility. Profile-scoped setup values take precedence.
+
+## Tools
+
+- `nachos_memory_recall` — fetch an entry by key or search matching entries.
+- `nachos_memory_put` — add or update an entry.
+- `nachos_memory_remove` — delete an entry.
+- `/nachos-memory-status` — display provider status.
+- `/nachos-memory-list` — render the current manifest.
+
+## Development
 
 ```bash
-git clone https://github.com/Nacho-Labs-LLC/hermes-plugin-nachos.git
-# memory provider — user plugin dir is scanned:
-ln -sfn "$PWD/hermes-plugin-nachos/plugins/memory/nachos" ~/.hermes/plugins/nachos
-# context engine — must live in the hermes-agent checkout (see Layer 2)
+uv sync --group dev
+.venv/Scripts/python.exe -m pytest tests -q  # Windows
+.venv/Scripts/python.exe -m ruff check .
+.venv/Scripts/python.exe -m build
 ```
 
-Then set the config keys for whichever layers you want. Each layer is
-independent — activate one, two, or all three.
+The release gate builds a wheel, installs it into a clean environment, loads the `hermes_agent.memory_providers` entry point, and exercises provider registration.
 
-## Design
+## Nachos Context Engine
 
-Full architecture, decision log, and the upstream roadmap live in
-[`docs/memory-manifest-spec.md`](docs/memory-manifest-spec.md).
+Nachos Context is a supported, dogfooded context engine that applies zone-based compaction, preserves tool-call/result pairs, and captures conversation snapshots before aggressive compaction. The same package installs its `nachos-context` Hermes plugin entry point.
 
-## Tests
+Enable it for the active profile, then select it:
 
 ```bash
-python -m pytest tests/ -q
+hermes plugins enable nachos-context
+hermes config set context.engine nachos
 ```
 
-Pure stdlib + pytest — `nachos_core` has no host or third-party
-dependency. Host wiring lives entirely in the plugin entry points.
+Start a new session after enabling it. Context settings remain under the existing `nachos.compaction` and `nachos.snapshots` configuration sections.
+
+## Experimental policy layer
+
+The YAML policy layer is still experimental. It is not yet a supported installation artifact because it needs profile-safe configuration and packaging before it can be recommended to others.
 
 ## License
 

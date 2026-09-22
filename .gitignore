@@ -5,6 +5,8 @@ dist/
 build/
 .eggs/
 .venv/
+.wheel-verify/
+release-artifacts/
 venv/
 .pytest_cache/
 .coverage

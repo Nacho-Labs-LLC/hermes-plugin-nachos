@@ -4,21 +4,35 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hermes-plugin-nachos"
-version = "0.4.0"
+version = "0.5.0"
 description = "Nachos durable-memory provider for Hermes Agent"
 readme = "README.md"
 requires-python = ">=3.9"
 license = "MIT"
 authors = [{name = "Nacho Labs"}]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: Python :: 3.9",
 ]
 
+[project.urls]
+Homepage = "https://github.com/Nacho-Labs-LLC/hermes-plugin-nachos"
+Issues = "https://github.com/Nacho-Labs-LLC/hermes-plugin-nachos/issues"
+
 [project.entry-points."hermes_agent.memory_providers"]
 nachos = "nachos_hermes.memory_provider:register"
+
+[project.entry-points."hermes_agent.plugins"]
+nachos-context = "nachos_hermes.context_engine:register"
+
+[dependency-groups]
+dev = [
+    "build>=1.2,<2",
+    "pytest>=8,<9",
+    "ruff>=0.8,<1",
+]
 
 [tool.setuptools.packages.find]
 include = ["nachos_core*", "nachos_hermes*"]
@@ -27,7 +41,7 @@ include = ["nachos_core*", "nachos_hermes*"]
 # Python analog of a fallow/ESLint setup for this repo.
 target-version = "py39"
 line-length = 100
-extend-exclude = ["tests/test_engine.py"]  # legacy survivor, not restyled
+extend-exclude = ["tests/test_engine.py", "tests/smoke_engine.py", "tests/smoke_real_memory.py"]
 
 [tool.ruff.lint]
 # E/F pyflakes+pycodestyle, I import-sort, B bugbear, SIM simplify.
