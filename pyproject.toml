@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hermes-plugin-nachos"
-version = "0.5.0"
+version = "0.5.1"
 description = "Nachos durable-memory provider for Hermes Agent"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -25,7 +25,7 @@ Issues = "https://github.com/Nacho-Labs-LLC/hermes-plugin-nachos/issues"
 nachos = "nachos_hermes.memory_provider:register"
 
 [project.entry-points."hermes_agent.plugins"]
-nachos-context = "nachos_hermes.context_engine:register"
+nachos-context = "nachos_hermes.context_engine"
 
 [dependency-groups]
 dev = [

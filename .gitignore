@@ -5,6 +5,9 @@ dist/
 build/
 .eggs/
 .venv/
+.release-vet/
+.release-vet-uv/
+release-vet/
 .wheel-verify/
 release-artifacts/
 venv/
