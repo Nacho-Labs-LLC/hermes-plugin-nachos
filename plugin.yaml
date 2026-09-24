@@ -1,0 +1,10 @@
+manifest_version: 2
+name: nachos
+version: 0.5.2
+description: "Durable memory and context compression for Hermes Agent."
+author: "Nacho Labs LLC"
+license: MIT
+homepage: "https://github.com/Nacho-Labs-LLC/hermes-plugin-nachos"
+requires_hermes: ">=0.21"
+provides_tools: []
+provides_hooks: []

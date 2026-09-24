@@ -13,7 +13,7 @@ The package is local-first: SQLite and flat-file stores use the standard library
 Install Nachos into the same Python environment that runs Hermes:
 
 ```bash
-python -m pip install "git+https://github.com/Nacho-Labs-LLC/hermes-plugin-nachos.git@v0.5.1"
+python -m pip install "git+https://github.com/Nacho-Labs-LLC/hermes-plugin-nachos.git@v0.5.2"
 ```
 
 For a reproducible production deployment, pin a full 40-character commit SHA instead of a tag.
