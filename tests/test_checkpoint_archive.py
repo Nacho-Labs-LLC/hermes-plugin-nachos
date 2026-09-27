@@ -27,3 +27,15 @@ def test_pre_compress_checkpoint_archives_once_for_identical_transcript(tmp_path
 
 def test_pre_compress_checkpoint_contract_is_fail_closed_v2():
     assert NachosMemoryProvider.pre_compress_checkpoint_api_version == 2
+
+
+def test_initialize_configures_checkpoint_store(tmp_path: Path):
+    """A normally initialized provider can checkpoint before compression."""
+    provider = NachosMemoryProvider()
+    provider.initialize("session-1", hermes_home=str(tmp_path))
+
+    provider.on_pre_compress([{"role": "user", "content": "Keep this evidence."}])
+
+    snapshots = SnapshotStore(tmp_path / "nachos" / "snapshots", "session-1").list()
+    assert len(snapshots) == 1
+    assert snapshots[0]["reason"] == "pre-compress-checkpoint"
