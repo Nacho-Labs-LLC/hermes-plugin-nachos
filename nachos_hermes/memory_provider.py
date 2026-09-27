@@ -106,6 +106,7 @@ class NachosMemoryProvider(MemoryProvider):
         self._load_config(hermes_home)
         mem_dir = hermes_home / "nachos"
         mem_dir.mkdir(parents=True, exist_ok=True)
+        self._checkpoint_root = mem_dir / "snapshots"
 
         store_kind = self._cfg["store"]
         path = mem_dir / ("memory.md" if store_kind == "flatfile" else "memory.db")

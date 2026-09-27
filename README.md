@@ -13,7 +13,7 @@ The package is local-first: SQLite and flat-file stores use the standard library
 Install Nachos into the same Python environment that runs Hermes:
 
 ```bash
-python -m pip install "git+https://github.com/Nacho-Labs-LLC/hermes-plugin-nachos.git@v0.5.2"
+python -m pip install "git+https://github.com/Nacho-Labs-LLC/hermes-plugin-nachos.git@v0.5.3"
 ```
 
 For a reproducible production deployment, pin a full 40-character commit SHA instead of a tag.
@@ -42,6 +42,10 @@ Run `hermes memory setup` to configure the packaged provider. Settings are store
 
 Existing `nachos.memory` values in `config.yaml` remain supported for backwards compatibility. Profile-scoped setup values take precedence.
 
+## Privacy and network behavior
+
+Nachos stores its SQLite database, flat-file memory, and snapshots locally under `$HERMES_HOME/nachos/`. The default `lexical` scorer makes no network requests. Selecting `scorer: semantic` is opt-in: the `nachos` backend invokes a separately installed `nachos-embeddings` CLI with fixed arguments, while the `openai` backend sends embedding inputs (the turn query and candidate memory titles/summaries) to `api.openai.com` using `OPENAI_API_KEY`.
+
 ## Tools
 
 - `nachos_memory_recall` — fetch an entry by key or search matching entries.
@@ -65,7 +69,7 @@ The release gate builds a wheel, installs it into a clean environment, loads the
 
 Nachos Context is a supported, dogfooded context engine that applies zone-based compaction, preserves tool-call/result pairs, and captures conversation snapshots before aggressive compaction. The same package installs its `nachos-context` Hermes plugin entry point.
 
-Enable it for the active profile, then select it:
+Enable it for the active profile, then select it. This replaces Hermes' selected context engine only while `context.engine` is set to `nachos`:
 
 ```bash
 hermes plugins enable nachos-context
