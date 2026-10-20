@@ -27,6 +27,19 @@ hermes config set memory.memory_enabled false
 
 Start a new session or restart the profile gateway after switching providers. Nachos injects an explicit durable-memory contract that directs the agent to `nachos_memory_recall`, `nachos_memory_put`, and `nachos_memory_remove`.
 
+### Catalog / directory installs
+
+When installing from the Hermes catalog, keep the complete repository root at
+`$HERMES_HOME/plugins/nachos/` (including `plugin.yaml`, `__init__.py`,
+`nachos_core/`, and `nachos_hermes/`). Unlike the pip installation above, this
+single directory exposes both the memory provider and context engine; it does
+not use the pip-only `nachos-context` entry-point name.
+
+Select `memory.provider: nachos` as above. For Nachos Context, set
+`context.engine: nachos`; no `hermes plugins enable nachos-context` command is
+needed for this directory-install path. Start a new session after installation
+or configuration changes.
+
 ## Configuration
 
 Run `hermes memory setup` to configure the packaged provider. Settings are stored at `$HERMES_HOME/nachos/config.json`, so each Hermes profile remains isolated.
