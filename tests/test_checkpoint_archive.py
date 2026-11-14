@@ -19,7 +19,8 @@ def test_pre_compress_checkpoint_archives_once_for_identical_transcript(tmp_path
     second = provider.on_pre_compress(messages)
 
     snapshots = SnapshotStore(tmp_path, "session-1").list()
-    assert first.startswith("checkpoint:")
+    assert snapshots[0]["id"] in first
+    assert "nachos_history_search" in first
     assert second == first
     assert len(snapshots) == 1
     assert snapshots[0]["reason"] == "pre-compress-checkpoint"

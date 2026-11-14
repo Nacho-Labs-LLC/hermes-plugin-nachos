@@ -1,6 +1,5 @@
-"""Versioned Hermes integration package for Nachos."""
+"""Hermes adapter for Nachos durable memory."""
 
-from .context_engine import NachosContextEngine
-from .memory_provider import NachosMemoryProvider, register
+from .memory_provider import NachosMemoryProvider
 
-__all__ = ["NachosContextEngine", "NachosMemoryProvider", "register"]
+__all__ = ["NachosMemoryProvider"]

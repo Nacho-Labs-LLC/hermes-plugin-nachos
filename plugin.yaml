@@ -1,7 +1,7 @@
 manifest_version: 2
 name: nachos
-version: 0.5.4
-description: "Durable memory and context compression for Hermes Agent."
+version: 0.6.0
+description: "Local-first durable memory for Hermes Agent: always-on manifest, semantic recall, duplicate flagging and transcript history search."
 author: "Nacho Labs LLC"
 license: MIT
 homepage: "https://github.com/Nacho-Labs-LLC/hermes-plugin-nachos"

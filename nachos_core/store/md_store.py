@@ -30,9 +30,10 @@ programmatic edits round-trip through the same representation.
 
 from __future__ import annotations
 
+import builtins
+import os
 import re
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 from .base import Entry, MemoryStore
 
@@ -58,7 +59,7 @@ def _first_line(body: str) -> str:
 class _Record:
     __slots__ = ("body", "category", "key", "summary", "title")
 
-    def __init__(self, key, title, summary, category, body):
+    def __init__(self, key: str, title: str, summary: str, category: str, body: str) -> None:
         self.key = key
         self.title = title
         self.summary = summary
@@ -67,24 +68,24 @@ class _Record:
 
 
 class MDStore(MemoryStore):
-    def __init__(self, path):
+    def __init__(self, path: str | os.PathLike[str]) -> None:
         self._path = Path(str(path))
         self._path.parent.mkdir(parents=True, exist_ok=True)
 
     # -- parsing -----------------------------------------------------------
 
-    def _read(self) -> Dict[str, _Record]:
+    def _read(self) -> dict[str, _Record]:
         """Parse the file into {key: _Record}. Missing file -> empty."""
-        records: Dict[str, _Record] = {}
+        records: dict[str, _Record] = {}
         if not self._path.exists():
             return records
         text = self._path.read_text(encoding="utf-8")
 
         category = _DEFAULT_CATEGORY
-        title: Optional[str] = None
-        body_lines: List[str] = []
+        title: str | None = None
+        body_lines: list[str] = []
 
-        def _flush():
+        def _flush() -> None:
             if title is None:
                 return
             body = "\n".join(body_lines).strip()
@@ -118,13 +119,13 @@ class MDStore(MemoryStore):
 
     # -- serialization -----------------------------------------------------
 
-    def _write(self, records: Dict[str, _Record]) -> None:
+    def _write(self, records: dict[str, _Record]) -> None:
         # group by category, ordered (category, title)
-        by_cat: Dict[str, List[_Record]] = {}
+        by_cat: dict[str, list[_Record]] = {}
         for rec in records.values():
             by_cat.setdefault(rec.category, []).append(rec)
 
-        out: List[str] = []
+        out: list[str] = []
         for cat in sorted(by_cat.keys()):
             out.append(f"# {cat}")
             out.append("")
@@ -139,24 +140,24 @@ class MDStore(MemoryStore):
 
     # -- interface ---------------------------------------------------------
 
-    def list(self) -> List[Entry]:
+    def list(self) -> builtins.list[Entry]:
         records = self._read()
-        rows: List[Entry] = [
-            (r.key, r.title, r.summary, r.category)
-            for r in records.values()
-        ]
+        rows: list[Entry] = [(r.key, r.title, r.summary, r.category) for r in records.values()]
         rows.sort(key=lambda t: (t[3].lower(), t[1].lower()))
         return rows
 
-    def get(self, key: str) -> Optional[str]:
+    def get(self, key: str) -> str | None:
         rec = self._read().get(key)
         return rec.body if rec else None
 
-    def search(self, query: str) -> List[str]:
+    def bodies(self) -> dict[str, str]:
+        return {key: rec.body for key, rec in self._read().items()}
+
+    def search(self, query: str) -> builtins.list[str]:
         q = (query or "").strip().lower()
         if not q:
             return []
-        hits: List[Tuple[str, str]] = []  # (key, sort_key)
+        hits: list[tuple[str, str]] = []  # (key, sort_key)
         for r in self._read().values():
             hay = f"{r.title}\n{r.summary}\n{r.body}".lower()
             if q in hay:
