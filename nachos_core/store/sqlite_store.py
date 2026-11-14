@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import builtins
 import contextlib
+import os
 import sqlite3
 from pathlib import Path
-from typing import List, Optional
 
 from .base import Entry, MemoryStore
 
@@ -18,11 +19,11 @@ class SqliteStore(MemoryStore):
     semantic ranking is the Scorer's job, not the store's.
     """
 
-    def __init__(self, path):
+    def __init__(self, path: str | os.PathLike[str]) -> None:
         self._path = str(path)
         if self._path != ":memory:":
             Path(self._path).parent.mkdir(parents=True, exist_ok=True)
-        # check_same_thread=False so the provider's background prefetch
+        # check_same_thread=False so callers from different host threads
         # thread can share the connection; access stays serialized by the
         # GIL for our tiny workloads.
         self._conn = sqlite3.connect(self._path, check_same_thread=False)
@@ -45,24 +46,21 @@ class SqliteStore(MemoryStore):
         )
         self._conn.commit()
 
-    def list(self) -> List[Entry]:
+    def list(self) -> builtins.list[Entry]:
         cur = self._conn.execute(
-            "SELECT key, title, summary, category FROM entries "
-            "ORDER BY category ASC, title ASC"
+            "SELECT key, title, summary, category FROM entries ORDER BY category ASC, title ASC"
         )
-        return [
-            (r["key"], r["title"], r["summary"], r["category"])
-            for r in cur.fetchall()
-        ]
+        return [(r["key"], r["title"], r["summary"], r["category"]) for r in cur.fetchall()]
 
-    def get(self, key: str) -> Optional[str]:
-        cur = self._conn.execute(
-            "SELECT body FROM entries WHERE key = ?", (key,)
-        )
+    def get(self, key: str) -> str | None:
+        cur = self._conn.execute("SELECT body FROM entries WHERE key = ?", (key,))
         row = cur.fetchone()
         return row["body"] if row else None
 
-    def search(self, query: str) -> List[str]:
+    def bodies(self) -> dict[str, str]:
+        return {r["key"]: r["body"] for r in self._conn.execute("SELECT key, body FROM entries")}
+
+    def search(self, query: str) -> builtins.list[str]:
         q = (query or "").strip()
         if not q:
             return []

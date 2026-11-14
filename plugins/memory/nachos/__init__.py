@@ -10,7 +10,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from nachos_hermes.memory_provider import (  # noqa: E402, F401
+from nachos_hermes.memory_provider import (
     NachosMemoryProvider,
     register,
 )

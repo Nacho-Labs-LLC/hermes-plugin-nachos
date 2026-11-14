@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hermes-plugin-nachos"
-version = "0.5.4"
-description = "Nachos durable-memory provider for Hermes Agent"
+version = "0.6.0"
+description = "Nachos local-first durable-memory provider for Hermes Agent"
 readme = "README.md"
 requires-python = ">=3.9"
 license = "MIT"
@@ -24,36 +24,113 @@ Issues = "https://github.com/Nacho-Labs-LLC/hermes-plugin-nachos/issues"
 [project.entry-points."hermes_agent.memory_providers"]
 nachos = "nachos_hermes.memory_provider:register"
 
-[project.entry-points."hermes_agent.plugins"]
-nachos-context = "nachos_hermes.context_engine"
-
 [dependency-groups]
 dev = [
-    "build>=1.2,<2",
+    "build==1.6.1",
+    # Range (not a pin): catalog installs must stay compatible with Hermes' pytest 9;
+    # see tests/test_catalog_wrapper.py. CI pins pytest==8.4.2 explicitly.
     "pytest>=8,<10",
-    "ruff>=0.8,<1",
+    "ruff==0.16.8",
+    "vulture==2.16",
+    "radon==6.0.1",
+    "xenon==0.9.3",
+    "pylint==4.1.3",
+    # mypy 1.19.x is the last line that still accepts python_version = "3.9" (the runtime
+    # target); mypy >= 1.20 requires 3.10+. Keep CI's pip install in release-gate.yml in sync.
+    "mypy==1.19.1",
 ]
 
 [tool.setuptools.packages.find]
 include = ["nachos_core*", "nachos_hermes*"]
 
 [tool.ruff]
-# Python analog of a fallow/ESLint setup for this repo.
 target-version = "py39"
 line-length = 100
-extend-exclude = ["tests/test_engine.py", "tests/smoke_engine.py", "tests/smoke_real_memory.py"]
+extend-exclude = [".vulture_allowlist.py", "tests/test_engine.py", "tests/smoke_engine.py", "tests/smoke_real_memory.py"]
 
 [tool.ruff.lint]
-# E/F pyflakes+pycodestyle, I import-sort, B bugbear, SIM simplify.
-# This is the "code smells / slop" net. UP (pyupgrade) is intentionally
-# NOT selected: this plugin targets a Python 3.9 runtime, so PEP-585/604
-# annotation rewrites (list[str], X | None) would be wrong here.
-select = ["E", "F", "I", "B", "SIM"]
+# E/F pycodestyle+pyflakes, I isort, B bugbear, SIM simplify, C90 mccabe,
+# PL pylint subset, UP pyupgrade, S bandit, RUF, PERF, RET, ARG, PIE, PT.
+# UP is safe here: with target-version py39 ruff will not rewrite annotations
+# to PEP 604 (`X | Y`) unless `from __future__ import annotations` is present.
+select = ["E", "F", "I", "B", "SIM", "C90", "PL", "UP", "S", "RUF", "PERF", "RET", "ARG", "PIE", "PT"]
 ignore = [
-    "E501",   # line length handled by formatter, not worth failing commits
-    "B008",   # dataclass/default-factory pattern used intentionally
+    "E501",     # line length is the formatter's job
+    "B008",     # dataclass/default-factory pattern used intentionally
+    "PLR2004",  # magic-value comparisons: thresholds read better inline
+    "PLR0913",  # arg count: dataclass-like service/ctor signatures are deliberate
+    "PLR0917",  # positional arg count: same reasoning as PLR0913
 ]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 12
 
 [tool.ruff.lint.per-file-ignores]
 # ABC-override + slash-handler params are contract-mandated, not slop.
-"plugins/memory/nachos/__init__.py" = ["ARG002"]
+# Every interpolated SQL fragment is a class constant (column lists) or an internal column
+# name; all values go through bound parameters.
+"nachos_core/index.py" = ["S608"]
+"tests/*" = ["S101", "S603"]  # S101: assert is pytest style; S603: tests spawn fixed argv  # assert is how pytest tests work
+# Catalog wrapper: the sys.path bootstrap must run before the package import, and the
+# imports are a deliberate re-export (Hermes' directory scan looks for the class name).
+"__init__.py" = ["E402", "F401"]
+"plugins/memory/nachos/__init__.py" = ["E402", "F401", "ARG002"]
+# Hermes-host modules (hermes_constants, hermes_cli, agent.*) exist only inside a Hermes
+# process, so the adapter imports them lazily to stay importable (and testable) outside it.
+"nachos_hermes/*.py" = ["PLC0415"]
+# MemoryProvider hooks are called by Hermes with a fixed signature (**kwargs, rewound).
+"nachos_hermes/memory_provider.py" = ["ARG002", "PLC0415"]
+# Standalone scripts and the tests that import them bootstrap sys.path first.
+# (PLC0415: hermes_constants / auxiliary client exist only inside a Hermes host, so import lazily.)
+"tools/*.py" = ["E402", "PLC0415"]
+"tests/test_correct_summaries.py" = ["E402"]
+"tests/test_import_memories.py" = ["E402"]
+"tests/test_memory_audit.py" = ["E402"]
+
+[tool.vulture]
+paths = ["nachos_core", "nachos_hermes", "plugins/memory/nachos/__init__.py", "tools", ".vulture_allowlist.py"]
+min_confidence = 80
+
+[tool.pylint.main]
+jobs = 1
+py-version = "3.9"
+
+[tool.pylint.similarities]
+min-similarity-lines = 6
+ignore-comments = true
+ignore-docstrings = true
+ignore-imports = true
+
+[tool.mypy]
+# Gate: `bash scripts/check.sh` runs `python -m mypy` (config here). nachos_core is fully
+# annotated (disallow_untyped_defs); adapter and tools are checked (check_untyped_defs) but
+# may keep unannotated defs. Tests are excluded: they are not part of the shipped surface.
+python_version = "3.9"
+files = ["nachos_core", "nachos_hermes", "tools"]
+mypy_path = "$MYPY_CONFIG_FILE_DIR:$MYPY_CONFIG_FILE_DIR/tools"
+explicit_package_bases = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+warn_return_any = true
+no_implicit_optional = true
+check_untyped_defs = true
+warn_unused_configs = true
+
+[[tool.mypy.overrides]]
+module = ["nachos_core", "nachos_core.*"]
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+
+# Hermes-only modules: exist only inside a Hermes host process, no stubs.
+[[tool.mypy.overrides]]
+module = ["agent", "agent.*", "hermes_constants", "hermes_cli", "hermes_cli.*"]
+ignore_missing_imports = true
+
+# Optional third-party dependency, not installed in the dev environment.
+[[tool.mypy.overrides]]
+module = ["sentence_transformers", "sentence_transformers.*"]
+ignore_missing_imports = true
+
+[tool.uv]
+# The dev tool pins (build, pylint, ...) need Python >= 3.10; the plugin itself still supports 3.9.
+environments = ["python_full_version >= '3.10'"]

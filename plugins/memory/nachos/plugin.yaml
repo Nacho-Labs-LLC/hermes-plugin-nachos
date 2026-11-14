@@ -1,5 +1,3 @@
 name: nachos
-version: 0.4.0
-description: "Nachos memory — 3-tier manifest assembly (bounded always-on manifest + relevance prefetch + on-demand recall). Store seam (sqlite/flatfile), scorer seam (lexical/semantic). No char ceiling, no LLM in the hot path."
-hooks:
-  - on_memory_write
+version: 0.6.0
+description: "Nachos memory: always-on manifest, hybrid lexical and semantic recall, duplicate flagging, review-inbox capture and history search. No LLM in the hot path."

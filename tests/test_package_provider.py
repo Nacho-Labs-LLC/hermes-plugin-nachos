@@ -10,3 +10,7 @@ def test_system_prompt_always_declares_nachos_memory_contract():
     assert "Nachos is the active, authoritative durable-memory provider" in prompt
     assert "nachos_memory_recall" in prompt
     assert "memory.memory_enabled: false" in prompt
+    assert 'target: "user"' in prompt
+    assert "nachos_memory_put" in prompt
+    assert 'Never use the built-in `memory` tool with `target: "memory"`' in prompt
+    assert "SOUL.md" in prompt

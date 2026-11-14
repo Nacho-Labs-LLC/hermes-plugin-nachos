@@ -1,6 +1,6 @@
 """Nachos memory store seam — 5-method synchronous local interface.
 
-The manifest / prefetch / recall tiers sit ABOVE this interface and do
+The manifest and recall layers sit ABOVE this interface and do
 not care which driver is underneath. Two drivers ship in v1:
 
   * SqliteStore (default) — stdlib sqlite3, fast indexed local store.
@@ -21,6 +21,8 @@ Entry shape everywhere: a 4-tuple (key, title, summary, category).
 
 from __future__ import annotations
 
+import os
+
 from .base import Entry, MemoryStore
 from .md_store import MDStore
 from .sqlite_store import SqliteStore
@@ -28,7 +30,7 @@ from .sqlite_store import SqliteStore
 __all__ = ["Entry", "MDStore", "MemoryStore", "SqliteStore", "get_store"]
 
 
-def get_store(kind: str, path):
+def get_store(kind: str, path: str | os.PathLike[str]) -> MemoryStore:
     """Factory: return a store driver by name.
 
     kind: 'sqlite' (default) | 'flatfile'
@@ -39,6 +41,4 @@ def get_store(kind: str, path):
         return SqliteStore(path)
     if k in ("flatfile", "md", "markdown"):
         return MDStore(path)
-    raise ValueError(
-        f"Unknown store kind {kind!r}. Use 'sqlite' or 'flatfile'."
-    )
+    raise ValueError(f"Unknown store kind {kind!r}. Use 'sqlite' or 'flatfile'.")

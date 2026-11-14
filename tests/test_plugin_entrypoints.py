@@ -3,14 +3,11 @@
 import importlib.metadata
 
 
-def test_context_entry_point_loads_a_module_with_register():
-    """Hermes' generic plugin loader imports a module then resolves register()."""
+def test_memory_entry_point_loads_a_callable():
     entry_point = next(
         item
-        for item in importlib.metadata.entry_points(group="hermes_agent.plugins")
-        if item.name == "nachos-context"
+        for item in importlib.metadata.entry_points(group="hermes_agent.memory_providers")
+        if item.name == "nachos"
     )
 
-    module = entry_point.load()
-
-    assert callable(getattr(module, "register", None))
+    assert callable(entry_point.load())

@@ -6,11 +6,11 @@ synchronous and local — see package docstring.
 
 from __future__ import annotations
 
+import builtins
 from abc import ABC, abstractmethod
-from typing import List, Optional, Tuple
 
 # (key, title, summary, category)
-Entry = Tuple[str, str, str, str]
+Entry = tuple[str, str, str, str]
 
 
 class MemoryStore(ABC):
@@ -22,24 +22,24 @@ class MemoryStore(ABC):
     """
 
     @abstractmethod
-    def list(self) -> List[Entry]:
+    def list(self) -> builtins.list[Entry]:
         """Return ALL entries as (key, title, summary, category) tuples.
 
-        Must be cheap — the manifest tier calls this every turn and
+        Must be cheap — the manifest calls this every turn and
         renders every entry. Ordering is (category, title) for stable
         manifest output.
         """
 
     @abstractmethod
-    def get(self, key: str) -> Optional[str]:
+    def get(self, key: str) -> str | None:
         """Return the full body for ``key``, or None if absent."""
 
     @abstractmethod
-    def search(self, query: str) -> List[str]:
+    def search(self, query: str) -> builtins.list[str]:
         """Return candidate keys matching ``query`` (substring/lexical).
 
-        This is coarse candidate generation for the prefetch tier — the
-        Scorer does the fine ranking. Empty query -> empty list.
+        Used by nachos_memory_recall's query mode for fuzzy lookup.
+        Empty query -> empty list.
         """
 
     @abstractmethod
@@ -57,3 +57,16 @@ class MemoryStore(ABC):
     @abstractmethod
     def remove(self, key: str) -> None:
         """Delete the entry identified by ``key`` (no-op if absent)."""
+
+    def bodies(self) -> dict[str, str]:
+        """Return {key: body} for every entry in one pass.
+
+        Default implementation calls get() per entry; drivers override it
+        when a bulk read is cheaper (e.g. the flat file parses once).
+        """
+        out: dict[str, str] = {}
+        for key, *_rest in self.list():
+            body = self.get(key)
+            if body is not None:
+                out[key] = body
+        return out
