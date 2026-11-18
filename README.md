@@ -24,6 +24,8 @@ python -m pip install "git+https://github.com/Nacho-Labs-LLC/hermes-plugin-nacho
 
 Catalog alternative: keep the repository root at `$HERMES_HOME/plugins/nachos/`.
 
+The fixes in this checkout are the **unreleased 0.6.1 candidate**; the command above installs the last published release, 0.6.0, not these fixes. The candidate requires **Hermes >=0.21.6** (the minimum verified baseline for profile-scoped credentials and catalog discovery).
+
 ## Enable
 
 ```bash
@@ -49,7 +51,7 @@ Run `hermes memory setup` or edit `$HERMES_HOME/nachos/config.json`. Settings ar
 | `embedding_model` | blank | Model id (blank = backend default). |
 | `embedding_dtype` | blank | Precision for the `nachos` backend, e.g. `q8` (about 3x faster, cosine about 0.99 vs fp32). Blank = backend default. Changing it re-embeds. |
 | `embedding_base_url` | blank | OpenAI-compatible base URL. |
-| `embedding_api_key_env` | blank | Name of the env var holding the API key. |
+| `embedding_api_key_env` | blank | Name of the API key resolved through Hermes' active profile secret scope; never a key value. |
 | `duplicate_threshold` | `0.65` | Similarity (0-1) above which a new entry is flagged as a likely duplicate. |
 | `shared_store` | `off` | `on` adds a memory scope shared by every profile on the machine. |
 | `shared_store_path` | blank | Shared store directory (blank = `<hermes root>/nachos-shared`). |
@@ -74,7 +76,7 @@ npm i -g @nacho-labs/nachos-embeddings   # local model, found on PATH by `auto`
   "embedding_model": "nomic-embed-text" }
 ```
 
-Any OpenAI-compatible `/embeddings` endpoint works (Ollama above); for a hosted one also set `embedding_api_key_env`. `{ "embeddings": "off" }` disables semantic recall.
+Any OpenAI-compatible `/embeddings` endpoint works (Ollama above); for a hosted one also set `embedding_api_key_env`. Credentials are resolved at request time through Hermes' `agent.secret_scope.get_secret`, not read directly from process environment or credential files by Nachos. A configured but unavailable key prevents the embedding request; the memory service falls back to lexical matching. A blank key name permits unauthenticated local endpoints. `{ "embeddings": "off" }` disables semantic recall.
 
 ## Tools
 
@@ -100,7 +102,9 @@ With `shared_store: on`, recall, put and remove also take `scope: "shared"`; the
 
 ## Session capture
 
-With `capture: review`, a finished session (3+ user messages, enough text) queues a trimmed transcript in `$HERMES_HOME/nachos/inbox/pending/`; no LLM runs at exit. A background worker later asks an auxiliary LLM for up to 5 durable facts, applies the quality gate and redaction, and stores them as suggestions. Nothing enters memory until you run `/nachos-memory-inbox approve`; the agent is told how many await review but cannot approve them.
+With `capture: review` (the default), a finished session (3+ user messages, enough text) queues a trimmed transcript in `$HERMES_HOME/nachos/inbox/pending/`; no LLM runs at exit. A background worker later sends that transcript, up to 200 existing memory titles/summaries and up to 100 entries read from `memories/USER.md` to Hermes' configured auxiliary LLM. Existing memories and user facts are included to avoid duplicate or misplaced suggestions; USER.md is read, not modified. This is an outbound model call when the configured provider is remote.
+
+The worker asks for up to 5 durable facts, applies the quality gate and redaction, and stores them as suggestions. Nothing enters memory until you run `/nachos-memory-inbox approve`; the agent is told how many await review but cannot approve them. **Approval gates insertion into memory, not transmission to the model.** Set `capture: off` to disable session capture and its model calls.
 
 The model comes from `auxiliary.nachos_capture.model` in `config.yaml`. **Cost warning:** if it is unset, Hermes may fall back to your main model, so pin a cheap one. If the call fails, jobs stay queued (dropped after 5 consecutive failures, or one retry on malformed output).
 
@@ -108,13 +112,15 @@ The model comes from `auxiliary.nachos_capture.model` in `config.yaml`. **Cost w
 
 Scripts take `--store {sqlite,flatfile}` and `--path` (default `$HERMES_HOME/nachos/memory.db`).
 
-- `tools/memory_audit.py` (`--embeddings`, `--json`): `duplicates`, `unused [--days N]`, `purge-category NAME`, `history [--key K] [--limit N]`, `revert ID`. Read-only unless `--run`.
+- `tools/memory_audit.py` (`--embeddings`, `--embedding-api-key-env NAME`, `--json`): `duplicates`, `unused [--days N]`, `purge-category NAME`, `history [--key K] [--limit N]`, `revert ID`. Read-only unless `--run`; authenticated embeddings use the same Hermes profile-secret resolver as recall.
 - `tools/correct_summaries.py [--limit N] [--run]`: rewrites low-quality summaries with the model in `auxiliary.nachos_summary.model`; dry-run by default.
 - The change log (previous content of every create, update, remove and revert; newest 1000 kept) lives in the sidecar `memory.index.db`.
 
 ## Privacy
 
 Data lives under `$HERMES_HOME/nachos/` (store, `memory.index.db`, `snapshots/`, `inbox/`). Memory writes are redacted; checkpoints are raw transcripts, like Hermes' own session DB. With `shared_store: on` and a path outside `$HERMES_HOME`, `hermes backup` includes the shared store.
+
+Optional OpenAI-compatible embeddings send recall queries and memory titles, summaries and body excerpts to the configured endpoint. The local CLI backend spawns a separately installed `nachos-embeddings` worker; sentence-transformers can load/download its model. Session capture sends the additional inputs described above to the auxiliary LLM before human review. Nachos injects a manifest and tool-use contract into the system prompt, but provides no context engine and does not modify USER.md or SOUL.md.
 
 ## Development
 

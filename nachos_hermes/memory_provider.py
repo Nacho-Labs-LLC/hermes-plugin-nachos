@@ -66,6 +66,7 @@ from .config import (
     DEFAULTS,
     apply_config,
     backup_paths,
+    hermes_credential,
     hermes_redactor,
     shared_dir,
     store_file,
@@ -198,6 +199,7 @@ class NachosMemoryProvider(MemoryProvider):
                 dtype=self._cfg["embedding_dtype"],
                 base_url=self._cfg["embedding_base_url"],
                 api_key_env=self._cfg["embedding_api_key_env"],
+                credential_resolver=hermes_credential,
             )
         except Exception as e:
             logger.warning("Nachos embeddings unavailable (%s); using lexical recall.", e)

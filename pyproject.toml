@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hermes-plugin-nachos"
-version = "0.6.0"
+version = "0.6.1"
 description = "Nachos local-first durable-memory provider for Hermes Agent"
 readme = "README.md"
 requires-python = ">=3.9"
