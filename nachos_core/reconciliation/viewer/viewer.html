@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="@@CSP@@">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nachos reconciliation viewer (offline)</title>
+<style>@@STYLE@@</style>
+</head>
+<body>
+<div id="app" data-testid="app">
+<header>
+  <h1>Nachos reconciliation review</h1>
+  <p class="note">Offline, local only. Approval and hashes are integrity-bound, not authenticated. No source is modified and nothing is executed.</p>
+  <div class="bar">
+    <label for="file-input">Open packet or session JSON</label>
+    <input type="file" id="file-input" data-testid="file-input" accept=".json,application/json">
+    <button type="button" data-action="save-session" data-testid="save-session" disabled>Save session</button>
+    <button type="button" data-action="export-plan" data-testid="export-plan" disabled>Export plan</button>
+  </div>
+  <div id="context" data-testid="context" class="note">No document loaded.</div>
+  <div id="status" data-testid="status" role="status" aria-live="polite"></div>
+  <div id="error" data-testid="error" role="alert"></div>
+</header>
+<main>
+  <section id="queue-pane" aria-labelledby="queue-h">
+    <h2 id="queue-h">Proposals</h2>
+    <div class="filters">
+      <label for="filter-kind">Kind</label>
+      <select id="filter-kind" data-testid="filter-kind"></select>
+      <label for="filter-finding">Finding</label>
+      <select id="filter-finding" data-testid="filter-finding"></select>
+      <label for="filter-decision">Decision</label>
+      <select id="filter-decision" data-testid="filter-decision"></select>
+      <button type="button" data-action="reset-filters" data-testid="reset-filters">Reset filters</button>
+    </div>
+    <div id="counts" data-testid="counts"></div>
+    <ul id="queue" data-testid="queue"></ul>
+  </section>
+  <section id="detail" data-testid="detail" aria-label="Proposal detail" tabindex="-1">
+    <p>Open a packet or session to begin.</p>
+  </section>
+</main>
+</div>
+<div id="modal" class="modal" hidden>
+  <div role="alertdialog" aria-modal="true" aria-labelledby="modal-title" aria-describedby="modal-body" class="dialog">
+    <h2 id="modal-title"></h2>
+    <div id="modal-body"></div>
+    <div class="row">
+      <button type="button" id="modal-ok" data-testid="modal-ok"></button>
+      <button type="button" id="modal-cancel" data-testid="modal-cancel">Cancel</button>
+    </div>
+  </div>
+</div>
+<script>@@SCRIPT@@</script>
+</body>
+</html>

@@ -23,6 +23,7 @@ Issues = "https://github.com/Nacho-Labs-LLC/hermes-plugin-nachos/issues"
 
 [project.scripts]
 nachos-maintain = "nachos_hermes.maintenance:main"
+nachos-reconcile = "nachos_hermes.reconcile_cli:main"
 
 [project.entry-points."hermes_agent.memory_providers"]
 nachos = "nachos_hermes.memory_provider:register"
@@ -42,9 +43,19 @@ dev = [
     # target); mypy >= 1.20 requires 3.10+. Keep CI's pip install in release-gate.yml in sync.
     "mypy==1.19.1",
 ]
+# Real-browser gate for the reconciliation viewer (scripts/browser_gate.sh). Kept out of `dev`
+# so the default check stays dependency-light. After installing, run
+# `python -m playwright install chromium`. Keep the pin in sync with release-gate.yml.
+browser = [
+    "playwright==1.58.0",
+]
 
 [tool.setuptools.packages.find]
 include = ["nachos_core*", "nachos_hermes*"]
+
+[tool.setuptools.package-data]
+"nachos_hermes" = ["skills/reconcile/SKILL.md"]
+"nachos_core" = ["reconciliation/viewer/*.js", "reconciliation/viewer/*.css", "reconciliation/viewer/*.html"]
 
 [tool.ruff]
 target-version = "py39"
@@ -93,6 +104,9 @@ max-complexity = 12
 [tool.pytest.ini_options]
 # `bench` (the recall benchmark harness) sits at the repo root, outside the installed packages.
 pythonpath = ["."]
+markers = [
+    "no_browser_needed: lives under tests/browser but needs no browser (skips the browser gate)",
+]
 
 [tool.vulture]
 paths = ["nachos_core", "nachos_hermes", "plugins/memory/nachos/__init__.py", "tools", ".vulture_allowlist.py"]
