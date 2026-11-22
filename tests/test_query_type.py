@@ -2,7 +2,7 @@
 
 from bench.recall import build_service
 from nachos_core.embeddings import Embedder
-from nachos_core.memory import _MIN_LEXICAL_COVERAGE
+from nachos_core.recall import MIN_LEXICAL_COVERAGE as _MIN_LEXICAL_COVERAGE
 from nachos_hermes.config import DEFAULTS, apply_config
 
 

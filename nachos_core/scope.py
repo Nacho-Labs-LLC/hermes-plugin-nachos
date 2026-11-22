@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import contextlib
+import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import Any
 
 from .index import MemoryIndex
 from .lexical import LexicalIndex
 from .store.base import EntryMeta, MemoryStore
+
+logger = logging.getLogger(__name__)
 
 PROFILE = "profile"
 SHARED = "shared"
@@ -19,6 +23,14 @@ class Scope:
     name: str
     store: MemoryStore
     index: MemoryIndex
+
+    def provenance(self, keys: list[str]) -> dict[str, dict[str, Any]]:
+        """Where entries came from; advisory, so a failed read yields nothing instead of raising."""
+        try:
+            return self.index.get_provenance_many(keys)
+        except Exception as e:
+            logger.debug("Nachos provenance read failed: %s", e)
+            return {}
 
     def close(self) -> None:
         for part in (self.store, self.index):

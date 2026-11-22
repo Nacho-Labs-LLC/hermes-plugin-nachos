@@ -33,7 +33,7 @@ from __future__ import annotations
 import contextlib
 import logging
 from collections import OrderedDict
-from collections.abc import Iterator, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -45,13 +45,10 @@ from .chunking import (
     embed_chunks,
     embed_text,
 )
-from .embeddings import QUERY, Embedder
+from .embeddings import Embedder
 from .graph import ScopeGraph
 from .lexical import LexicalIndex
 from .linked import (
-    attach_related,
-    entity_matches,
-    entity_rows,
     link_fields,
     link_hints,
     link_report,
@@ -61,25 +58,15 @@ from .provenance import MANUAL, MAX_QUOTE_CHARS, source_view
 from .quality import low_signal_reason
 from .ranking import (
     DEFAULT_BLEND,
-    build_confidence_response,
-    duplicate_threshold_for,
-    find_duplicate_pairs,
-    find_similar_entries,
-    fuse_multi_query,
-    hydrate_ranked,
-    normalize_queries,
-    rerank_rows,
-    scope_ranked_hits,
     update_threshold_for,
 )
+from .recall import CHUNK_PENALTY, Recall, RecallTuning
 from .reindex import DEFAULT_BUDGET_S, SemanticRuntime
 from .scope import PROFILE, SHARED, Scope, ScopeCaches, select_scopes
 from .store.base import Entry, EntryMeta
 from .store.md_store import slugify
 from .support import same_content, snapshot
 from .validity import (
-    RECENCY_MIN_GAP_SECONDS,
-    RECENCY_TIE_EPS,
     backfill_scope_timestamps,
     entry_payload,
     format_put_result,
@@ -89,7 +76,6 @@ from .validity import (
     resolve_successor,
     restore_from_change,
     scope_status,
-    select_ranked,
     superseded_entries,
     suspicious_supersedes,
     unused_entries,
@@ -110,18 +96,6 @@ __all__ = [
 ]
 
 logger = logging.getLogger(__name__)
-
-_RRF_K = 60
-# Body chunks score their cosine minus this, so a chunk must beat the head by a margin; 0.05 won
-# paraphrase hit@1 back without hurting long-body on bench/ (0.12 starts to; see docs/benchmark.md).
-CHUNK_PENALTY = 0.05
-# Hybrid recall only: a lexical hit must match at least this IDF-weighted share of the query's
-# terms to take part in fusion. Weak partial matches ("service", "internal") are noise next to
-# a semantic list, and RRF would otherwise let them displace or double-count real answers.
-# Model-independent, unlike an absolute cosine floor (which only suited MiniLM's score range);
-# 0.35-0.45 is a plateau on bench/ (see docs/benchmark.md).
-_MIN_LEXICAL_COVERAGE = 0.4
-_LEXICAL_DUP_THRESHOLD = 0.6
 
 
 @dataclass
@@ -192,7 +166,7 @@ class MemoryService:
             )
             for name, s in scopes.items()
         }
-        self._rerank_error: str | None = None
+        self._recall = Recall(self.scopes, self._graphs, self._caches, self._semantic, self._tuning)
         self.session_id: str = ""
         self._seen_keys: dict[str, frozenset] = {}
         for scope in self.scopes.values():
@@ -312,42 +286,15 @@ class MemoryService:
                 continue
             s.index.record_recall(key)
             payload = entry_payload(key, s.name, body, s.store.get_meta(key) or EntryMeta())
-            source = source_view(self._provenance(s, [key]).get(key), evidence=True)
+            source = source_view(s.provenance([key]).get(key), evidence=True)
             if source:
                 payload["source"] = source
             payload.update(link_fields(self._graphs[s.name], key))
             return payload
         return None
 
-    @staticmethod
-    def _provenance(scope: Scope, keys: list[str]) -> dict[str, dict[str, Any]]:
-        try:
-            return scope.index.get_provenance_many(keys)
-        except Exception as e:  # provenance is advisory; never break a read
-            logger.debug("Nachos provenance read failed: %s", e)
-            return {}
-
     def _lexical(self, scope: Scope, query: str, min_coverage: float = 0.0) -> list[str]:
         return self._caches.lexical(scope).search(query, min_coverage=min_coverage)
-
-    def _select_ranked(
-        self,
-        fused: dict[tuple[str, str], dict[str, Any]],
-        *,
-        limit: int,
-        include_superseded: bool,
-    ) -> list[tuple[tuple[str, str], dict[str, Any]]]:
-        """Filter superseded entries (unless requested) and apply recency tie-breaking."""
-        scope_names = {scope_name for scope_name, _key in fused}
-        metas_by_scope = {name: self._caches.meta(self.scopes[name]) for name in scope_names}
-        return select_ranked(
-            fused,
-            metas_by_scope,
-            limit=limit,
-            include_superseded=include_superseded,
-            eps=RECENCY_TIE_EPS,
-            min_gap_seconds=RECENCY_MIN_GAP_SECONDS,
-        )
 
     def search(
         self,
@@ -360,7 +307,7 @@ class MemoryService:
         entity: str | None = None,
     ) -> list[dict[str, Any]]:
         """Hybrid recall; ``entity`` keeps only entries that mention it (query may be empty)."""
-        results, _query_list, _stats, _chunks = self._run_search(
+        return self._recall.search(
             query,
             queries=queries,
             limit=limit,
@@ -368,7 +315,6 @@ class MemoryService:
             include_superseded=include_superseded,
             entity=entity,
         )
-        return results
 
     def search_with_confidence(
         self,
@@ -382,183 +328,15 @@ class MemoryService:
         mode: str = "on",
     ) -> dict[str, Any]:
         """Search and attach a per-query confidence assessment + explicit abstention signal."""
-        entity_clean = (entity or "").strip()
-        results, query_list, stats, chunks = self._run_search(
+        return self._recall.search_with_confidence(
             query,
             queries=queries,
             limit=limit,
             scope=scope,
             include_superseded=include_superseded,
-            entity=entity_clean or None,
-            collect_stats=True,
-        )
-        if not query_list and entity_clean:
-            confident = bool(results)
-            payload: dict[str, Any] = {
-                "query": "",
-                "entity": entity_clean,
-                "confident": confident,
-                "confidence": "high" if confident else "none",
-                "confidence_score": 1.0 if confident else 0.0,
-                "signals": {"entity": entity_clean},
-                "count": len(results),
-                "results": results,
-            }
-            if not confident:
-                payload["no_confident_match"] = True
-                payload["note"] = "No matching memory found."
-            return payload
-        payload, error = build_confidence_response(
-            query_list,
-            results,
-            stats,
-            self.scopes,
-            chunks=chunks,
-            lexical_fn=self._caches.lexical,
-            meta_fn=self._caches.meta,
-            embedder=self._semantic.active(),
-            rerank_borderline=self.rerank_borderline and self._reranking(),
+            entity=entity,
             mode=mode,
         )
-        if entity_clean:
-            payload["entity"] = entity_clean
-        if error is not None:
-            self._rerank_error = error
-        return payload
-
-    def _run_search(
-        self,
-        query: str = "",
-        *,
-        queries: Sequence[str] | None = None,
-        limit: int = 10,
-        scope: str | None = None,
-        include_superseded: bool = False,
-        entity: str | None = None,
-        collect_stats: bool = False,
-    ) -> tuple[
-        list[dict[str, Any]],
-        list[str],
-        list[dict[str, list[float]]],
-        dict[tuple[str, str], int],
-    ]:
-        query_list = normalize_queries(query, queries)
-        entity_clean = (entity or "").strip()
-        targets = self._scopes(scope)
-        allowed = (
-            entity_matches([self._graphs[t.name] for t in targets], entity_clean)
-            if entity_clean
-            else None
-        )
-        if not query_list:
-            if allowed is None:
-                return [], [], [], {}
-            rows = entity_rows(allowed, self._graphs, include_superseded=include_superseded)
-            hydrated = hydrate_ranked(
-                rows[:limit], self.scopes, self._caches.meta, self._provenance
-            )
-            return self._related(hydrated), [], [], {}
-        qvecs = self._query_vectors(targets, query_list)
-        depth = limit if allowed is None else limit * 5
-        fused, stats_list = fuse_multi_query(
-            query_list,
-            qvecs,
-            targets,
-            self._ranked_hits,
-            limit=depth,
-            include_superseded=include_superseded,
-            collect_stats=collect_stats,
-            rrf_k=_RRF_K,
-        )
-        if allowed is not None:
-            fused = {k: v for k, v in fused.items() if k in allowed}
-        reranking = self._reranking() and not self.rerank_borderline
-        pool_limit = max(limit, self.rerank_candidates) if reranking else limit
-        ranked = self._select_ranked(fused, limit=pool_limit, include_superseded=include_superseded)
-        if reranking:
-            ranked = self._rerank(query_list, ranked, limit)
-        chunks = {pair: int(row.get("chunk", 0)) for pair, row in ranked}
-        results = self._related(
-            hydrate_ranked(ranked, self.scopes, self._caches.meta, self._provenance)
-        )
-        return results, query_list, stats_list, chunks
-
-    def _related(self, results: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        return attach_related(results, self._graphs, self.related_per_hit, self.related_max)
-
-    def _reranking(self) -> bool:
-        embedder = self._semantic.active()
-        return embedder is not None and embedder.supports_rerank and self._rerank_error is None
-
-    def _rerank(
-        self,
-        queries: Sequence[str],
-        ranked: list[tuple[tuple[str, str], dict[str, Any]]],
-        limit: int,
-    ) -> list[tuple[tuple[str, str], dict[str, Any]]]:
-        """Reorder the top fused candidates with the embedder's cross-encoder (best effort)."""
-        embedder = self._semantic.active()
-        if embedder is None:
-            return ranked[:limit]
-        out, error = rerank_rows(
-            embedder,
-            queries,
-            ranked,
-            self.scopes,
-            limit=limit,
-            rerank_candidates=self.rerank_candidates,
-            rerank_mode=self.rerank_mode,
-        )
-        if error is not None:
-            self._rerank_error = error
-            logger.warning("Nachos reranking disabled for this session (%s).", self._rerank_error)
-        return out
-
-    def _query_vectors(
-        self, targets: list[Scope], query_list: list[str]
-    ) -> list[list[float]] | None:
-        """Batched query embeddings (after syncing target indexes), or None if lexical-only."""
-        if not self.semantic_enabled or not query_list:
-            return None
-        for s in targets:
-            self.sync_index(s)
-        if self.reindexing:
-            return None  # mid-switch: lexical only until every entry has the new model's vectors
-        vectors = self._semantic.embed(query_list, QUERY)
-        return vectors if vectors and len(vectors) == len(query_list) else None
-
-    def _ranked_hits(
-        self,
-        s: Scope,
-        query: str,
-        qvec: list[float] | None,
-        limit: int,
-        *,
-        include_superseded: bool = False,
-        stats: dict[str, list[float]] | None = None,
-    ) -> Iterator[tuple[str, int, str, float | None, int]]:
-        """(key, rank, how, similarity, best chunk_no) hits for one scope, lexical then semantic."""
-        embedder = self._semantic.active()
-        return scope_ranked_hits(
-            self._caches.lexical(s),
-            s.index,
-            None if include_superseded else self._caches.meta(s),
-            query,
-            qvec,
-            embedder.model_id if embedder is not None else None,
-            limit=limit,
-            min_lexical_coverage=_MIN_LEXICAL_COVERAGE,
-            chunk_penalty=self.chunk_penalty,
-            similarity_floor=self.similarity_floor,
-            stats=stats,
-        )
-
-    def _duplicate_threshold_for(self, s: Scope, model_id: str) -> float:
-        return duplicate_threshold_for(
-            s.index, model_id, self.duplicate_threshold, calibrate=self.calibrate_duplicates
-        )
-
-    # -- duplicates --------------------------------------------------------
 
     def find_similar(
         self,
@@ -570,28 +348,8 @@ class MemoryService:
         limit: int = 3,
     ) -> list[dict[str, Any]]:
         """Existing entries that look like the same memory, most similar first."""
-        embedder = self._semantic.active()
-        model_id = embedder.model_id if embedder is not None else None
-        scope_map = {
-            s.name: (
-                self._caches.lexical(s),
-                s.index,
-                self._caches.meta(s),
-                self._duplicate_threshold_for(s, model_id)
-                if model_id is not None
-                else self.duplicate_threshold,
-            )
-            for s in self.scopes.values()
-        }
-        return find_similar_entries(
-            scope_map,
-            title,
-            summary,
-            exclude=exclude,
-            vector=vector,
-            model_id=model_id,
-            lexical_threshold=_LEXICAL_DUP_THRESHOLD,
-            limit=limit,
+        return self._recall.find_similar(
+            title, summary, exclude=exclude, vector=vector, limit=limit
         )
 
     def duplicate_pairs(self, *, sync: bool = True) -> list[dict[str, Any]]:
@@ -600,21 +358,22 @@ class MemoryService:
         Offline lexical audits use ``sync=False`` with no embedder. Normal callers
         retain lazy reconciliation of vectors and removed-entry telemetry.
         """
-        if sync:
-            for s in self.scopes.values():
-                self.sync_index(s)
-        embedder = self._semantic.active()
-        model_id = embedder.model_id if embedder is not None else None
-        threshold = self.duplicate_threshold
-        if model_id is not None:
-            for s in self.scopes.values():
-                threshold = max(threshold, self._duplicate_threshold_for(s, model_id))
-        scope_map = {s.name: (s.store, s.index, self._caches.meta(s)) for s in self.scopes.values()}
-        return find_duplicate_pairs(
-            scope_map,
-            model_id=model_id,
-            duplicate_threshold=threshold,
-            lexical_threshold=_LEXICAL_DUP_THRESHOLD,
+        return self._recall.duplicate_pairs(sync=sync)
+
+    def _duplicate_threshold_for(self, scope: Scope, model_id: str) -> float:
+        return self._recall.duplicate_threshold_for_scope(scope, model_id)
+
+    def _tuning(self) -> RecallTuning:
+        return RecallTuning(
+            duplicate_threshold=self.duplicate_threshold,
+            calibrate_duplicates=self.calibrate_duplicates,
+            chunk_penalty=self.chunk_penalty,
+            similarity_floor=self.similarity_floor,
+            rerank_candidates=self.rerank_candidates,
+            rerank_mode=self.rerank_mode,
+            rerank_borderline=self.rerank_borderline,
+            related_per_hit=self.related_per_hit,
+            related_max=self.related_max,
         )
 
     # -- change log --------------------------------------------------------
