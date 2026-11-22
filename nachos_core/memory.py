@@ -45,9 +45,8 @@ from .chunking import (
     embed_chunks,
     embed_text,
 )
-from .embeddings import DOCUMENT, QUERY, Embedder
+from .embeddings import QUERY, Embedder
 from .graph import ScopeGraph
-from .index import MemoryIndex
 from .lexical import LexicalIndex
 from .linked import (
     attach_related,
@@ -73,10 +72,11 @@ from .ranking import (
     scope_ranked_hits,
     update_threshold_for,
 )
-from .reindex import DEFAULT_BUDGET_S, embed_stale, finish, scope_models
-from .store.base import Entry, EntryMeta, MemoryStore
+from .reindex import DEFAULT_BUDGET_S, SemanticRuntime
+from .scope import PROFILE, SHARED, Scope, ScopeCaches, select_scopes
+from .store.base import Entry, EntryMeta
 from .store.md_store import slugify
-from .support import refresh_after_put, same_content, snapshot
+from .support import same_content, snapshot
 from .validity import (
     RECENCY_MIN_GAP_SECONDS,
     RECENCY_TIE_EPS,
@@ -111,9 +111,6 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
-PROFILE = "profile"
-SHARED = "shared"
-
 _RRF_K = 60
 # Body chunks score their cosine minus this, so a chunk must beat the head by a margin; 0.05 won
 # paraphrase hit@1 back without hurting long-body on bench/ (0.12 starts to; see docs/benchmark.md).
@@ -125,8 +122,6 @@ CHUNK_PENALTY = 0.05
 # 0.35-0.45 is a plateau on bench/ (see docs/benchmark.md).
 _MIN_LEXICAL_COVERAGE = 0.4
 _LEXICAL_DUP_THRESHOLD = 0.6
-_RECENCY_TIE_EPS = RECENCY_TIE_EPS
-_RECENCY_MIN_GAP_SECONDS = RECENCY_MIN_GAP_SECONDS
 
 
 @dataclass
@@ -140,20 +135,6 @@ class Draft:
     key: str
     scope: str
     error: str | None = None
-
-
-@dataclass
-class Scope:
-    name: str
-    store: MemoryStore
-    index: MemoryIndex
-
-    def close(self) -> None:
-        for part in (self.store, self.index):
-            close = getattr(part, "close", None)
-            if callable(close):
-                with contextlib.suppress(Exception):
-                    close()
 
 
 class MemoryService:
@@ -178,7 +159,6 @@ class MemoryService:
         if PROFILE not in scopes:
             raise ValueError("a 'profile' scope is required")
         self.scopes = scopes
-        self.embedder = embedder
         self.duplicate_threshold = duplicate_threshold
         self.redact = redact or (lambda text: text)
         #: Subtracted from body-chunk similarities so a chunk must beat the head by this much.
@@ -199,27 +179,22 @@ class MemoryService:
         #: ``related`` entries attached to each result (0 disables), and over the whole result list.
         self.related_per_hit = related_per_hit
         self.related_max = related_max
+        self._caches = ScopeCaches()
+        self._semantic = SemanticRuntime(embedder, reindex_budget_s)
         self._graphs = {
             name: ScopeGraph(
                 name,
                 s.store,
                 s.index,
-                lambda s=s: self._scope_meta(s),  # type: ignore[misc]
-                lambda s=s: self._titles(s),  # type: ignore[misc]
-                lambda s=s: self._lexical_index(s),  # type: ignore[misc]
+                lambda s=s: self._caches.meta(s),  # type: ignore[misc]
+                lambda s=s: self._caches.titles(s),  # type: ignore[misc]
+                lambda s=s: self._caches.lexical(s),  # type: ignore[misc]
             )
             for name, s in scopes.items()
         }
         self._rerank_error: str | None = None
-        #: Seconds one recall or write may spend advancing a bulk re-embed (see ``reindex``).
-        self.reindex_budget_s = reindex_budget_s
-        #: Stale entries left per scope after the last sync; non-zero = semantic recall is paused.
-        self._reindex_remaining: dict[str, int] = {}
-        self.embedder_error: str | None = None
         self.session_id: str = ""
         self._seen_keys: dict[str, frozenset] = {}
-        self._lexical_cache: dict[str, tuple[object, LexicalIndex]] = {}
-        self._meta_cache: dict[str, tuple[object, dict[str, EntryMeta]]] = {}
         for scope in self.scopes.values():
             backfill_scope_timestamps(scope.store, scope.index)
 
@@ -228,8 +203,7 @@ class MemoryService:
         return self.scopes[PROFILE]
 
     def close(self) -> None:
-        self._lexical_cache.clear()
-        self._meta_cache.clear()
+        self._caches.clear()
         self._graphs.clear()
         for scope in self.scopes.values():
             scope.close()
@@ -240,70 +214,33 @@ class MemoryService:
     # -- embeddings --------------------------------------------------------
 
     @property
+    def embedder(self) -> Embedder | None:
+        return self._semantic.embedder
+
+    @embedder.setter
+    def embedder(self, embedder: Embedder | None) -> None:
+        self._semantic.embedder = embedder
+
+    @property
+    def embedder_error(self) -> str | None:
+        return self._semantic.error
+
+    @property
     def semantic_enabled(self) -> bool:
-        return self.embedder is not None and self.embedder_error is None
+        return self._semantic.enabled
 
     @property
     def reindexing(self) -> bool:
         """True while a model switch is still re-embedding entries (recall is lexical meanwhile)."""
-        return any(self._reindex_remaining.values())
+        return self._semantic.reindexing
 
-    def _active_embedder(self) -> Embedder | None:
-        """The embedder when semantic search is usable right now, else None.
-
-        None also while a model switch is mid-way: vectors of two models must not be mixed, so
-        recall, duplicate checks and update hints fall back to lexical matching until done.
-        """
-        return self.embedder if self.semantic_enabled and not self.reindexing else None
-
-    def _embed(self, texts: list[str], input_type: str = DOCUMENT) -> list[list[float]] | None:
-        embedder = self.embedder if self.semantic_enabled else None
-        if embedder is None or not texts:
-            return None
-        try:
-            return embedder.embed(texts, input_type)
-        except Exception as e:  # any backend failure degrades to lexical
-            self.embedder_error = f"{type(e).__name__}: {e}"[:300]
-            logger.warning(
-                "Nachos embeddings disabled for this session (%s); recall falls "
-                "back to lexical matching.",
-                self.embedder_error,
-            )
-            return None
+    @property
+    def reindex_budget_s(self) -> float:
+        return self._semantic.reindex_budget_s
 
     def sync_index(self, scope: Scope, *, budget_s: float | None = None) -> int:
-        """Embed entries that are new, edited, or embedded with another model.
-
-        A handful of stale entries are embedded inline. More than ``reindex.BULK_ENTRIES``
-        (a model switch, a first run on an existing store) is re-embedded in small batches
-        under ``budget_s`` (default ``reindex_budget_s``) per call: see :mod:`nachos_core.reindex`.
-        """
-        entries = scope.store.list()
-        scope.index.retain(key for key, *_ in entries)
-        embedder = self.embedder if self.semantic_enabled else None
-        if embedder is None:
-            return 0
-        embedder.warm_up()  # may refine model_id (e.g. CLI pooling/prefix) before it is compared
-        bodies = scope.store.bodies()
-        docs = {
-            key: embed_chunks(title, summary, bodies.get(key, ""))
-            for key, title, summary, _category in entries
-        }
-        stale = scope.index.stale_keys(docs, embedder.model_id)
-        done = embed_stale(
-            lambda texts: self._embed(texts, DOCUMENT),
-            scope.index,
-            embedder.model_id,
-            docs,
-            stale,
-            budget_s=self.reindex_budget_s if budget_s is None else budget_s,
-            bulk=self._reindex_remaining.get(scope.name, 0) > 0,
-        )
-        remaining = len(stale) - done
-        self._reindex_remaining[scope.name] = remaining
-        if remaining == 0:
-            finish(scope.index, embedder.model_id)
-        return done
+        """Embed entries that are new, edited, or embedded with another model (see ``reindex``)."""
+        return self._semantic.sync(scope, budget_s=budget_s)
 
     def reindex(self, *, scope: str | None = None) -> dict[str, Any]:
         """Re-embed every stale entry now (no time budget); returns the model status.
@@ -311,34 +248,13 @@ class MemoryService:
         For the explicit ``python -m nachos_hermes.models reindex`` command; normal recall
         advances the work in bounded steps instead.
         """
-        for s in self._scopes_for(scope):
-            self.sync_index(s, budget_s=float("inf"))
+        for s in select_scopes(self.scopes, scope):
+            self._semantic.sync(s, budget_s=float("inf"))
         return self.model_status()
 
     def model_status(self) -> dict[str, Any]:
         """Configured embedding model, per-scope coverage, kept old models and calibration."""
-        embedder = self.embedder
-        model_id = embedder.model_id if embedder else None
-        if embedder is None:
-            state = "off"
-        elif self.embedder_error:
-            state = "error"
-        else:
-            state = "reindexing" if self.reindexing else "ready"
-        return {
-            "model": model_id,
-            "state": state,
-            "error": self.embedder_error,
-            "scopes": {
-                s.name: scope_models(
-                    s.index,
-                    model_id,
-                    len(s.store.list()),
-                    self._reindex_remaining.get(s.name, 0),
-                )
-                for s in self.scopes.values()
-            },
-        }
+        return self._semantic.status(self.scopes)
 
     # -- manifest ----------------------------------------------------------
 
@@ -346,7 +262,7 @@ class MemoryService:
         rows: list[Entry] = []
         for scope in self.scopes.values():
             entries = scope.store.list()
-            metas = self._scope_meta(scope)
+            metas = self._caches.meta(scope)
             if not include_superseded:
                 entries = [
                     e for e in entries if not (metas.get(e[0]) and metas[e[0]].superseded_by)
@@ -366,22 +282,22 @@ class MemoryService:
         return sum(
             1
             for scope in self.scopes.values()
-            for meta in self._scope_meta(scope).values()
+            for meta in self._caches.meta(scope).values()
             if meta.superseded_by
         )
 
     # -- recall ------------------------------------------------------------
 
-    def _scopes_for(self, scope: str | None) -> list[Scope]:
-        if scope:
-            if scope not in self.scopes:
-                raise KeyError(scope)
-            return [self.scopes[scope]]
-        return list(self.scopes.values())
+    @property
+    def _lexical_cache(self) -> dict[str, tuple[object, LexicalIndex]]:
+        return self._caches.lexical_cache
+
+    def _scopes(self, scope: str | None) -> list[Scope]:
+        return select_scopes(self.scopes, scope)
 
     def get(self, key: str, scope: str | None = None) -> tuple[str, str] | None:
         """Return (scope_name, body) for an exact key, profile scope first."""
-        for s in self._scopes_for(scope):
+        for s in self._scopes(scope):
             body = s.store.get(key)
             if body is not None:
                 s.index.record_recall(key)
@@ -390,7 +306,7 @@ class MemoryService:
 
     def get_entry(self, key: str, scope: str | None = None) -> dict[str, Any] | None:
         """Return full dict for an exact key, including a superseded_by pointer when superseded."""
-        for s in self._scopes_for(scope):
+        for s in self._scopes(scope):
             body = s.store.get(key)
             if body is None:
                 continue
@@ -411,37 +327,8 @@ class MemoryService:
             logger.debug("Nachos provenance read failed: %s", e)
             return {}
 
-    def _titles(self, s: Scope) -> dict[str, str]:
-        return {key: doc.title for key, doc in self._lexical_index(s).docs.items()}
-
-    def _invalidate_lexical(self, scope_name: str) -> None:
-        self._lexical_cache.pop(scope_name, None)
-        self._meta_cache.pop(scope_name, None)
-
-    def _scope_meta(self, scope: Scope) -> dict[str, EntryMeta]:
-        fp = scope.store.fingerprint()
-        if fp is not None:
-            cached = self._meta_cache.get(scope.name)
-            if cached is not None and cached[0] == fp:
-                return cached[1]
-        metas = scope.store.all_meta()
-        if fp is not None:
-            self._meta_cache[scope.name] = (fp, metas)
-        return metas
-
-    def _lexical_index(self, scope: Scope) -> LexicalIndex:
-        fp = scope.store.fingerprint()
-        if fp is not None:
-            cached = self._lexical_cache.get(scope.name)
-            if cached is not None and cached[0] == fp:
-                return cached[1]
-        index = LexicalIndex.build(scope.store.list(), scope.store.bodies())
-        if fp is not None:
-            self._lexical_cache[scope.name] = (fp, index)
-        return index
-
     def _lexical(self, scope: Scope, query: str, min_coverage: float = 0.0) -> list[str]:
-        return self._lexical_index(scope).search(query, min_coverage=min_coverage)
+        return self._caches.lexical(scope).search(query, min_coverage=min_coverage)
 
     def _select_ranked(
         self,
@@ -452,14 +339,14 @@ class MemoryService:
     ) -> list[tuple[tuple[str, str], dict[str, Any]]]:
         """Filter superseded entries (unless requested) and apply recency tie-breaking."""
         scope_names = {scope_name for scope_name, _key in fused}
-        metas_by_scope = {name: self._scope_meta(self.scopes[name]) for name in scope_names}
+        metas_by_scope = {name: self._caches.meta(self.scopes[name]) for name in scope_names}
         return select_ranked(
             fused,
             metas_by_scope,
             limit=limit,
             include_superseded=include_superseded,
-            eps=_RECENCY_TIE_EPS,
-            min_gap_seconds=_RECENCY_MIN_GAP_SECONDS,
+            eps=RECENCY_TIE_EPS,
+            min_gap_seconds=RECENCY_MIN_GAP_SECONDS,
         )
 
     def search(
@@ -527,9 +414,9 @@ class MemoryService:
             stats,
             self.scopes,
             chunks=chunks,
-            lexical_fn=self._lexical_index,
-            meta_fn=self._scope_meta,
-            embedder=self._active_embedder(),
+            lexical_fn=self._caches.lexical,
+            meta_fn=self._caches.meta,
+            embedder=self._semantic.active(),
             rerank_borderline=self.rerank_borderline and self._reranking(),
             mode=mode,
         )
@@ -557,7 +444,7 @@ class MemoryService:
     ]:
         query_list = normalize_queries(query, queries)
         entity_clean = (entity or "").strip()
-        targets = self._scopes_for(scope)
+        targets = self._scopes(scope)
         allowed = (
             entity_matches([self._graphs[t.name] for t in targets], entity_clean)
             if entity_clean
@@ -567,7 +454,9 @@ class MemoryService:
             if allowed is None:
                 return [], [], [], {}
             rows = entity_rows(allowed, self._graphs, include_superseded=include_superseded)
-            hydrated = hydrate_ranked(rows[:limit], self.scopes, self._scope_meta, self._provenance)
+            hydrated = hydrate_ranked(
+                rows[:limit], self.scopes, self._caches.meta, self._provenance
+            )
             return self._related(hydrated), [], [], {}
         qvecs = self._query_vectors(targets, query_list)
         depth = limit if allowed is None else limit * 5
@@ -590,7 +479,7 @@ class MemoryService:
             ranked = self._rerank(query_list, ranked, limit)
         chunks = {pair: int(row.get("chunk", 0)) for pair, row in ranked}
         results = self._related(
-            hydrate_ranked(ranked, self.scopes, self._scope_meta, self._provenance)
+            hydrate_ranked(ranked, self.scopes, self._caches.meta, self._provenance)
         )
         return results, query_list, stats_list, chunks
 
@@ -598,7 +487,7 @@ class MemoryService:
         return attach_related(results, self._graphs, self.related_per_hit, self.related_max)
 
     def _reranking(self) -> bool:
-        embedder = self._active_embedder()
+        embedder = self._semantic.active()
         return embedder is not None and embedder.supports_rerank and self._rerank_error is None
 
     def _rerank(
@@ -608,7 +497,7 @@ class MemoryService:
         limit: int,
     ) -> list[tuple[tuple[str, str], dict[str, Any]]]:
         """Reorder the top fused candidates with the embedder's cross-encoder (best effort)."""
-        embedder = self._active_embedder()
+        embedder = self._semantic.active()
         if embedder is None:
             return ranked[:limit]
         out, error = rerank_rows(
@@ -635,7 +524,7 @@ class MemoryService:
             self.sync_index(s)
         if self.reindexing:
             return None  # mid-switch: lexical only until every entry has the new model's vectors
-        vectors = self._embed(query_list, QUERY)
+        vectors = self._semantic.embed(query_list, QUERY)
         return vectors if vectors and len(vectors) == len(query_list) else None
 
     def _ranked_hits(
@@ -649,11 +538,11 @@ class MemoryService:
         stats: dict[str, list[float]] | None = None,
     ) -> Iterator[tuple[str, int, str, float | None, int]]:
         """(key, rank, how, similarity, best chunk_no) hits for one scope, lexical then semantic."""
-        embedder = self._active_embedder()
+        embedder = self._semantic.active()
         return scope_ranked_hits(
-            self._lexical_index(s),
+            self._caches.lexical(s),
             s.index,
-            None if include_superseded else self._scope_meta(s),
+            None if include_superseded else self._caches.meta(s),
             query,
             qvec,
             embedder.model_id if embedder is not None else None,
@@ -681,13 +570,13 @@ class MemoryService:
         limit: int = 3,
     ) -> list[dict[str, Any]]:
         """Existing entries that look like the same memory, most similar first."""
-        embedder = self._active_embedder()
+        embedder = self._semantic.active()
         model_id = embedder.model_id if embedder is not None else None
         scope_map = {
             s.name: (
-                self._lexical_index(s),
+                self._caches.lexical(s),
                 s.index,
-                self._scope_meta(s),
+                self._caches.meta(s),
                 self._duplicate_threshold_for(s, model_id)
                 if model_id is not None
                 else self.duplicate_threshold,
@@ -714,13 +603,13 @@ class MemoryService:
         if sync:
             for s in self.scopes.values():
                 self.sync_index(s)
-        embedder = self._active_embedder()
+        embedder = self._semantic.active()
         model_id = embedder.model_id if embedder is not None else None
         threshold = self.duplicate_threshold
         if model_id is not None:
             for s in self.scopes.values():
                 threshold = max(threshold, self._duplicate_threshold_for(s, model_id))
-        scope_map = {s.name: (s.store, s.index, self._scope_meta(s)) for s in self.scopes.values()}
+        scope_map = {s.name: (s.store, s.index, self._caches.meta(s)) for s in self.scopes.values()}
         return find_duplicate_pairs(
             scope_map,
             model_id=model_id,
@@ -749,9 +638,7 @@ class MemoryService:
         self, key: str | None = None, scope: str | None = None, limit: int = 20
     ) -> list[dict[str, Any]]:
         """Recent memory changes across scopes, newest first."""
-        return history_rows(
-            {s.name: s.index for s in self._scopes_for(scope)}, key=key, limit=limit
-        )
+        return history_rows({s.name: s.index for s in self._scopes(scope)}, key=key, limit=limit)
 
     def revert(self, change_id: int, scope: str = PROFILE) -> dict[str, Any]:
         """Restore the state an entry had before change ``change_id``."""
@@ -770,7 +657,7 @@ class MemoryService:
         cur_superseded = cur_meta.superseded_by if cur_meta is not None else None
         fp_before = target.store.fingerprint()
         restored = restore_from_change(target.store, target.index, change, current is not None)
-        self._invalidate_lexical(target.name)
+        self._caches.invalidate(target.name)
         self._graphs[target.name].after_write(fp_before, key)
         self._log(target, key, "revert", current, prev_superseded_by=cur_superseded)
         return {
@@ -852,7 +739,7 @@ class MemoryService:
             if scope.store.set_superseded_by(old_key, new_key):
                 applied.append(old_key)
         if applied:
-            self._invalidate_lexical(scope.name)
+            self._caches.invalidate(scope.name)
         return applied
 
     def put(
@@ -890,7 +777,7 @@ class MemoryService:
             for s in self.scopes.values():
                 self.sync_index(s)
             if not self.reindexing:  # mid-switch writes are picked up by the re-embed
-                chunk_vectors = self._embed(chunks, DOCUMENT)
+                chunk_vectors = self._semantic.embed(chunks)
                 vector = chunk_vectors[0] if chunk_vectors else None
         similar = self.find_similar(title, summary, exclude=(scope, key), vector=vector)
 
@@ -907,20 +794,11 @@ class MemoryService:
             )
         fp_before = target.store.fingerprint()
         target.store.put(key, title=title, summary=summary, category=category, body=body)
-        if not refresh_after_put(
-            self._lexical_cache,
-            self._meta_cache,
-            target.store,
-            scope,
-            fp_before,
-            key,
-            title=title,
-            summary=summary,
-            category=category,
-        ):
-            self._invalidate_lexical(scope)
+        self._caches.refresh_after_put(
+            target, fp_before, key, title=title, summary=summary, category=category
+        )
         self._graphs[scope].after_write(fp_before, key, summary)
-        embedder = self._active_embedder()
+        embedder = self._semantic.active()
         if chunk_vectors is not None and embedder is not None:
             target.index.upsert_chunks(key, chunks, embedder.model_id, chunk_vectors)
         target.index.record_seen([key])
@@ -941,9 +819,9 @@ class MemoryService:
         )
         possible = possible_updates_for(
             target.store,
-            self._lexical_index(target),
+            self._caches.lexical(target),
             target.index,
-            self._scope_meta(target),
+            self._caches.meta(target),
             model_id=embedder.model_id if (vector is not None and embedder is not None) else None,
             vector=vector,
             self_key=key,
@@ -996,7 +874,7 @@ class MemoryService:
 
     def remove(self, key: str, scope: str | None = None) -> str | None:
         """Remove ``key``; returns the scope it was removed from, or None."""
-        for s in self._scopes_for(scope):
+        for s in self._scopes(scope):
             if s.store.get(key) is not None:
                 meta = s.store.get_meta(key)
                 self._log(
@@ -1008,7 +886,7 @@ class MemoryService:
                 )
                 fp_before = s.store.fingerprint()
                 s.store.remove(key)
-                self._invalidate_lexical(s.name)
+                self._caches.invalidate(s.name)
                 s.index.delete(key)
                 self._graphs[s.name].after_write(fp_before, key)
                 return s.name
@@ -1039,7 +917,7 @@ class MemoryService:
             error = "both entries must exist"
         elif old_meta is not None and old_meta.superseded_by:
             error = f"{old_key!r} is already superseded by {old_meta.superseded_by!r}"
-        elif resolve_successor(new_key, self._scope_meta(target)) in (None, old_key):
+        elif resolve_successor(new_key, self._caches.meta(target)) in (None, old_key):
             # new_key's chain must end at an active entry that is not old_key (no cycles)
             error = f"{new_key!r} is superseded back to {old_key!r} or has no active successor"
         if error:
@@ -1061,7 +939,7 @@ class MemoryService:
         self._log(target, key, "supersede", prev, prev_superseded_by=current)
         fp_before = target.store.fingerprint()
         target.store.set_superseded_by(key, None)
-        self._invalidate_lexical(target.name)
+        self._caches.invalidate(target.name)
         self._graphs[target.name].after_write(fp_before, key)
         return {"unlinked": key, "was": current}
 
@@ -1069,29 +947,29 @@ class MemoryService:
 
     def unused(self, older_than_days: float, now: float | None = None) -> list[dict[str, Any]]:
         """Entries older than N days (first seen) never recalled or returned."""
-        scope_map = {s.name: (s.store, s.index, self._scope_meta(s)) for s in self.scopes.values()}
+        scope_map = {s.name: (s.store, s.index, self._caches.meta(s)) for s in self.scopes.values()}
         return unused_entries(scope_map, older_than_days=older_than_days, now=now)
 
     def superseded(
         self, older_than_days: float = 30, now: float | None = None
     ) -> list[dict[str, Any]]:
         """Superseded entries older than N days (candidates for removal)."""
-        scope_map = {s.name: (s.store, self._scope_meta(s)) for s in self.scopes.values()}
+        scope_map = {s.name: (s.store, self._caches.meta(s)) for s in self.scopes.values()}
         return superseded_entries(scope_map, older_than_days=older_than_days, now=now)
 
     def suspicious_supersedes(self) -> list[dict[str, Any]]:
         """Superseded links whose old and new entries differ in a facet qualifier."""
-        scope_map = {s.name: (s.store, self._scope_meta(s)) for s in self.scopes.values()}
+        scope_map = {s.name: (s.store, self._caches.meta(s)) for s in self.scopes.values()}
         return suspicious_supersedes(scope_map)
 
     def status(self) -> dict[str, Any]:
         model_id = self.embedder.model_id if self.embedder else None
         return {
             "embeddings": model_id or "off",
-            "embeddings_error": self.embedder_error,
+            "embeddings_error": self._semantic.error,
             "model_state": self.model_status()["state"],
             "scopes": {
-                s.name: scope_status(s.store, s.index, self._scope_meta(s), model_id)
+                s.name: scope_status(s.store, s.index, self._caches.meta(s), model_id)
                 for s in self.scopes.values()
             },
         }
