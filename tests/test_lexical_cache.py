@@ -452,3 +452,63 @@ class TestHydrateBatching:
             assert shared_usage["deploy-shared"]["hit_count"] == 1
         finally:
             svc.close()
+
+
+class TestTelemetryDurability:
+    def test_usage_counts_survive_normal_close(self, tmp_path: Path) -> None:
+        svc = _make_service(tmp_path)
+        svc.put(
+            title="Release checklist",
+            summary="Production deploy verification steps",
+            body="Verify migrations and canary health checks before rollout.",
+        )
+        svc.get("release-checklist")
+        svc.search("canary migrations")
+        svc.search("release checklist")
+        svc.close()
+
+        reopened = MemoryIndex(tmp_path / PROFILE / "memory.index.db")
+        try:
+            usage = reopened.usage()["release-checklist"]
+            assert usage["first_seen"] > 0
+            assert usage["recall_count"] == 1
+            assert usage["hit_count"] == 2
+        finally:
+            reopened.close()
+
+    def test_change_log_rows_are_committed_immediately(self, tmp_path: Path) -> None:
+        svc = _make_service(tmp_path)
+        index_db = tmp_path / PROFILE / "memory.index.db"
+        try:
+            svc.put(
+                title="Billing retry",
+                summary="Webhook retry backoff schedule",
+                body="Retry failed billing webhooks exponentially up to 24 hours.",
+            )
+            svc.put(
+                title="Billing retry",
+                summary="Webhook retry backoff schedule v2",
+                body="Retry failed billing webhooks exponentially up to 48 hours.",
+            )
+            svc.remove("billing-retry")
+
+            # Verify WAL + NORMAL stayed restored on the live index connection.
+            mode = svc.profile.index._conn.execute("PRAGMA journal_mode").fetchone()[0]
+            sync = svc.profile.index._conn.execute("PRAGMA synchronous").fetchone()[0]
+            assert str(mode).lower() == "wal"
+            assert int(sync) == 1  # NORMAL
+
+            # Separate read-only connection sees every change-log row before close().
+            reader = sqlite3.connect(f"file:{index_db}?mode=ro", uri=True)
+            try:
+                actions = [
+                    row[0]
+                    for row in reader.execute(
+                        "SELECT action FROM changes ORDER BY id ASC"
+                    ).fetchall()
+                ]
+            finally:
+                reader.close()
+            assert actions == ["create", "update", "remove"]
+        finally:
+            svc.close()

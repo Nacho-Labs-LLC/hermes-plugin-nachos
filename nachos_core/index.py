@@ -63,6 +63,9 @@ class MemoryIndex:
         if self._path != ":memory:":
             Path(self._path).parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(self._path, check_same_thread=False)
+        if self._path != ":memory:":
+            self._conn.execute("PRAGMA journal_mode=WAL")
+            self._conn.execute("PRAGMA synchronous=NORMAL")
         self._conn.executescript(
             """
             CREATE TABLE IF NOT EXISTS vectors (
@@ -235,12 +238,18 @@ class MemoryIndex:
         """Log a change. ``prev`` is (title, summary, category, body) as it was
         BEFORE the change, or None when the entry did not exist."""
         title, summary, category, body = prev if prev is not None else (None,) * 4
-        cur = self._conn.execute(
-            "INSERT INTO changes (ts, key, action, session_id, prev_title, "
-            "prev_summary, prev_category, prev_body) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (time.time(), key, action, session_id or "", title, summary, category, body),
-        )
-        self._conn.commit()
+        if self._path != ":memory:":
+            self._conn.execute("PRAGMA synchronous=FULL")
+        try:
+            cur = self._conn.execute(
+                "INSERT INTO changes (ts, key, action, session_id, prev_title, "
+                "prev_summary, prev_category, prev_body) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (time.time(), key, action, session_id or "", title, summary, category, body),
+            )
+            self._conn.commit()
+        finally:
+            if self._path != ":memory:":
+                self._conn.execute("PRAGMA synchronous=NORMAL")
         change_id = int(cur.lastrowid or 0)
         if change_id % 100 == 0:
             self.trim_changes()
@@ -383,5 +392,8 @@ class MemoryIndex:
         return cur.rowcount
 
     def close(self) -> None:
+        if self._path != ":memory:":
+            with contextlib.suppress(Exception):
+                self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         with contextlib.suppress(Exception):
             self._conn.close()
