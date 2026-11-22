@@ -208,3 +208,33 @@ class TestRunner:
     def test_cli_rejects_unknown_backend(self):
         with pytest.raises(SystemExit):
             recall.parse_args(["--embeddings", "bogus"])
+
+
+class TestAlternateDataDir:
+    ADV = recall.DATA_DIR / "adversarial"
+
+    def test_default_data_dir_is_unchanged(self):
+        assert recall.parse_args([]).data_dir == recall.DATA_DIR
+
+    def test_updates_are_appended_with_supersedes_by_label(self):
+        memories, queries = recall.load_dataset(self.ADV)
+        updates = json.loads((self.ADV / "updates.json").read_text(encoding="utf-8"))
+        base = json.loads((self.ADV / "memories.json").read_text(encoding="utf-8"))
+        assert len(memories) == len(base) + len(updates)
+        keys = {slugify(m["title"]) for m in memories}
+        linked = [m for m in memories if m.get("supersedes")]
+        assert len(linked) == sum(1 for u in updates if u["update_of"])
+        assert all(k in keys for m in linked for k in m["supersedes"])
+        assert all(k in keys for q in queries for k in q["expect"])
+
+    def test_suggest_eval_reports_by_case(self, capsys):
+        args = ["--data-dir", str(self.ADV), "--suggest-eval", "--json", "-"]
+        assert recall.main(args) == 0
+        run = json.loads(capsys.readouterr().out)["runs"][0]
+        assert run["by_case"]["update-nocue"]["n"] >= 1
+
+    def test_no_answer_queries_are_reported_apart(self):
+        memories, queries = recall.load_dataset(self.ADV)
+        run = recall.run_backend("off", _opts(), memories, queries[-20:])
+        assert run["no_answer"]["n"] == 15
+        assert run["overall"]["n"] == 5

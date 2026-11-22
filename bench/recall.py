@@ -60,9 +60,21 @@ CATEGORIES = (
 def load_dataset(
     data_dir: Path = DATA_DIR,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """(memories, queries) from ``memories.json`` and ``queries.json``."""
+    """(memories, queries) from ``memories.json`` and ``queries.json``.
+
+    An optional ``updates.json`` (follow-up puts, applied in order after the base entries)
+    is appended; an entry with ``update_of`` becomes ``supersedes: [update_of]`` and one
+    with ``update_of: null`` is a distinct entry with no link.
+    """
     memories = json.loads((data_dir / "memories.json").read_text(encoding="utf-8"))
     queries = json.loads((data_dir / "queries.json").read_text(encoding="utf-8"))
+    updates_path = data_dir / "updates.json"
+    if updates_path.exists():
+        for upd in json.loads(updates_path.read_text(encoding="utf-8")):
+            mem = {k: v for k, v in upd.items() if k not in ("update_of", "reason")}
+            if upd.get("update_of"):
+                mem["supersedes"] = [upd["update_of"]]
+            memories.append(mem)
     return memories, queries
 
 
@@ -143,10 +155,17 @@ def summarize(ranks: list[int | None], latencies_ms: list[float]) -> dict[str, A
 
 def aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
     """Overall and per-category summaries of per-query ``rows`` (rank, ms, category)."""
+    blank = [r for r in rows if not r.get("expect", True)]
+    rows = [r for r in rows if r.get("expect", True)]
     out: dict[str, Any] = {
         "overall": summarize([r["rank"] for r in rows], [r["ms"] for r in rows]),
         "by_category": {},
     }
+    if blank:  # queries with no answer in memory: hit metrics do not apply
+        out["no_answer"] = {
+            "n": len(blank),
+            "returned_results": sum(1 for r in blank if r.get("n_results")),
+        }
     present = {r["category"] for r in rows}
     for cat in [c for c in CATEGORIES if c in present] + sorted(present - set(CATEGORIES)):
         sel = [r for r in rows if r["category"] == cat]
@@ -224,6 +243,7 @@ def run_queries(
                 "query": q["query"],
                 "expect": q["expect"],
                 "rank": rank_of(q["expect"], keys, q.get("match", "any")),
+                "n_results": len(keys),
                 "ms": percentile(timings, 50),
                 "top": keys[:3],
             }
@@ -386,7 +406,23 @@ def format_report(report: dict[str, Any]) -> str:
             _table(["category", "n", "hit@1", "hit@5", "MRR@10", "p50 ms", "p95 ms"], cat_rows),
             "",
         ]
+        if "no_answer" in run:
+            na = run["no_answer"]
+            lines += [
+                f"no-answer queries: {na['returned_results']}/{na['n']} still returned results",
+                "",
+            ]
     return "\n".join(lines)
+
+
+def _case_table(by_case: dict[str, dict[str, int]]) -> str:
+    rows = []
+    for case, c in sorted(by_case.items()):
+        tp, fp, fn = c["tp"], c["fp"], c["fn"]
+        prec = f"{tp / (tp + fp):.2f}" if tp + fp else "-"
+        rec = f"{tp / (tp + fn):.2f}" if tp + fn else "-"
+        rows.append([case, str(c["n"]), str(tp), str(fp), str(fn), prec, rec])
+    return _table(["case", "n", "TP", "FP", "FN", "precision", "recall"], rows)
 
 
 def _score_suggestions(
@@ -409,6 +445,7 @@ def _score_suggestions(
     }
     misses: list[dict[str, Any]] = []
     false_positives: list[dict[str, Any]] = []
+    by_case: dict[str, dict[str, int]] = {}
     for mem in memories:
         key = slugify(mem["title"])
         res = svc.put(
@@ -421,6 +458,13 @@ def _score_suggestions(
         sug = set(res.get("suggested_supersedes") or [])
         expected = gt.get(key, set())
         split = "tune" if key in tune_keys else "hold"
+        case = None
+        if mem.get("case"):
+            case = by_case.setdefault(mem["case"], dict.fromkeys(("n", "tp", "fp", "fn"), 0))
+            case["n"] += 1
+            case["tp"] += len(sug & expected)
+            case["fp"] += len(sug - expected)
+            case["fn"] += len(expected - sug)
         for s_key in sorted(sug):
             if s_key in expected:
                 counts["tp"] += 1
@@ -467,6 +511,7 @@ def _score_suggestions(
         "heldout_recall": round(recall_hold, 4),
         "misses": misses,
         "false_positives": false_positives,
+        **({"by_case": by_case} if by_case else {}),
     }
 
 
@@ -546,6 +591,9 @@ def format_suggest_report(report: dict[str, Any]) -> str:
             ]
         )
     lines += [_table(head, rows), *skipped, ""] if rows else [*skipped, ""]
+    for run in report["runs"]:
+        if run["status"] == "ok" and run.get("by_case"):
+            lines += [f"{run['backend']} by case", _case_table(run["by_case"]), ""]
     return "\n".join(lines)
 
 
@@ -576,6 +624,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--suggest-eval",
         action="store_true",
         help="evaluate put() suggested_supersedes precision/recall on the fixture",
+    )
+    ap.add_argument(
+        "--data-dir",
+        type=Path,
+        default=DATA_DIR,
+        help="directory with memories.json, queries.json and optional updates.json "
+        "(default: bench/data; e.g. bench/data/adversarial)",
     )
     ap.add_argument(
         "--label", default="", help="name for this run in the report (default: backend)"
@@ -616,7 +671,7 @@ def _emit_report(report: dict[str, Any], opts: argparse.Namespace, text: str) ->
 
 def main(argv: list[str] | None = None) -> int:
     opts = parse_args(argv)
-    memories, queries = load_dataset()
+    memories, queries = load_dataset(opts.data_dir)
     if opts.synthetic:
         memories = expand_synthetic_memories(memories, opts.synthetic)
     if opts.category:
