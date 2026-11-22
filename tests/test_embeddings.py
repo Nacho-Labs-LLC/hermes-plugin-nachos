@@ -42,7 +42,11 @@ ready = {{"ready": True, "model": "fake"}}
 if os.environ.get("FAKE_DIM"):
     ready["dimension"] = int(os.environ["FAKE_DIM"])
 if os.environ.get("FAKE_TYPED"):
-    ready.update(pooling="mean", queryPrefix="", documentPrefix="")
+    ready.update(
+        pooling=os.environ.get("FAKE_POOLING", "mean"),
+        queryPrefix="",
+        documentPrefix=os.environ.get("FAKE_DOCPREFIX", ""),
+    )
 print(json.dumps(ready), flush=True)
 args = sys.argv[2:]
 if os.environ.get("FAKE_ARGS"):
@@ -357,4 +361,32 @@ def test_nachos_backend_ignores_client_prefixes(fake_serve_cli):
     path, _ = fake_serve_cli
     embedder = make_embedder("nachos", command=str(path), query_prefix="query: ")
     assert embedder.query_prefix == ""
+    assert embedder.model_id == "nachos:default"
+
+
+@pytest.mark.parametrize(
+    ("env", "suffix"),
+    [
+        ({}, ""),  # 0.6.0 CLI: no type fields at all
+        ({"FAKE_TYPED": "1"}, ""),  # type-aware but mean pooling, no prefix: vectors unchanged
+        ({"FAKE_TYPED": "1", "FAKE_POOLING": "cls"}, ":pooling=cls"),
+        ({"FAKE_TYPED": "1", "FAKE_DOCPREFIX": "passage: "}, ":dp='passage: '"),
+    ],
+)
+def test_model_id_reflects_settings_that_change_stored_vectors(
+    fake_serve_cli, monkeypatch, env, suffix
+):
+    path, _ = fake_serve_cli
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    embedder = CliEmbedder(str(path), "m", dtype="q8")
+    assert embedder.model_id == "nachos:m:q8"  # before the worker is up
+    embedder.warm_up()
+    assert embedder.model_id == "nachos:m:q8" + suffix
+    embedder.close()
+
+
+def test_warm_up_without_a_working_cli_does_not_raise(tmp_path):
+    embedder = CliEmbedder(str(tmp_path / "missing-cli"))
+    embedder.warm_up()
     assert embedder.model_id == "nachos:default"

@@ -51,7 +51,12 @@ PROFILE = "profile"
 SHARED = "shared"
 
 _RRF_K = 60
-_MIN_VECTOR_SCORE = 0.30
+# Hybrid recall only: a lexical hit must match at least this IDF-weighted share of the query's
+# terms to take part in fusion. Weak partial matches ("service", "internal") are noise next to
+# a semantic list, and RRF would otherwise let them displace or double-count real answers.
+# Model-independent, unlike an absolute cosine floor (which only suited MiniLM's score range);
+# 0.35-0.45 is a plateau on bench/ (see docs/benchmark.md).
+_MIN_LEXICAL_COVERAGE = 0.4
 _LEXICAL_DUP_THRESHOLD = 0.6
 
 
@@ -149,6 +154,7 @@ class MemoryService:
         embedder = self._active_embedder()
         if embedder is None:
             return 0
+        embedder.warm_up()  # may refine model_id (e.g. CLI pooling/prefix) before it is compared
         bodies = scope.store.bodies()
         docs = {
             key: embed_text(title, summary, bodies.get(key, ""))
@@ -198,7 +204,7 @@ class MemoryService:
                 return s.name, body
         return None
 
-    def _lexical(self, scope: Scope, query: str) -> list[str]:
+    def _lexical(self, scope: Scope, query: str, min_coverage: float = 0.0) -> list[str]:
         raw, terms = query_terms(query)
         candidates = set(scope.store.search(query))
         for term in sorted(raw | set(terms)):
@@ -211,8 +217,12 @@ class MemoryService:
         doc_words = {k: label_words[k] | tokens(bodies.get(k) or "") for k in labels}
         weights = idf_weights(terms, doc_words)
         needle = query.lower()
+        total_weight = sum(weights.values()) or 1.0
         scored = []
         for key in candidates & doc_words.keys():
+            matched = sum(w for t, w in weights.items() if t in doc_words[key])
+            if matched / total_weight < min_coverage:
+                continue
             haystack = f"{labels[key][0]}\n{labels[key][1]}\n{bodies.get(key) or ''}".lower()
             score = score_document(weights, doc_words[key], label_words[key], needle in haystack)
             if score > 0:
@@ -259,12 +269,13 @@ class MemoryService:
         # With an embedder, lexical sits half a step below semantic so a
         # lexical-only rank-0 hit does not tie a semantic-only rank-0 hit.
         offset = 1 if qvec is not None else 0
-        for rank, key in enumerate(self._lexical(s, query)[: limit * 3]):
+        min_coverage = _MIN_LEXICAL_COVERAGE if qvec is not None else 0.0
+        for rank, key in enumerate(self._lexical(s, query, min_coverage)[: limit * 3]):
             yield key, rank + offset, "lexical", None
         embedder = self._active_embedder()
         if qvec is not None and embedder is not None:
             hits = s.index.search(qvec, embedder.model_id, top_k=limit * 3)
-            for rank, (key, sim) in enumerate(h for h in hits if h[1] >= _MIN_VECTOR_SCORE):
+            for rank, (key, sim) in enumerate(hits):
                 yield key, rank, "semantic", sim
 
     def _hydrate(

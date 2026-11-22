@@ -70,6 +70,9 @@ class Embedder(ABC):
         del input_type  # no native type: prefixes were applied by embed()
         return self._embed_batch(texts)
 
+    def warm_up(self) -> None:  # noqa: B027 - optional hook, deliberately not abstract
+        """Learn anything that changes ``model_id`` (e.g. start a worker). Best effort, never raises."""
+
     def close(self) -> None:  # noqa: B027 - optional hook, deliberately not abstract
         """Release any resources (worker processes). No-op by default."""
 
@@ -184,7 +187,8 @@ class CliEmbedder(Embedder):
         # First run downloads the model (~25MB), so allow a generous timeout.
         self.timeout = timeout
         self.request_timeout = request_timeout
-        self.model_id = f"nachos:{model or 'default'}" + (f":{dtype}" if dtype else "")
+        self._base_id = f"nachos:{model or 'default'}" + (f":{dtype}" if dtype else "")
+        self.model_id = self._base_id
         self._lock = threading.Lock()
         self._worker: _Worker | None = None
         self._serve_disabled = False
@@ -218,22 +222,37 @@ class CliEmbedder(Embedder):
         return worker
 
     def _adopt_ready(self, msg: dict[str, Any]) -> None:
-        """Take the dimension and type support from the ready line (absent on older CLIs).
+        """Take the dimension, type support and vector-affecting settings from the ready line.
 
-        ``model_id`` stays the deterministic ``nachos:<model>[:<dtype>]`` because
-        the memory service reads it before the worker has started; adopting the
-        ready line's id later would make the same index look stale on every run.
+        ``model_id`` is ``nachos:<model>[:<dtype>]`` plus a suffix only when the CLI embeds
+        documents differently from a 0.6.0 CLI (non-mean pooling or a document prefix), so an
+        upgrade re-embeds exactly the models whose stored vectors changed and leaves MiniLM
+        alone. The id is complete only after the worker has started (see :meth:`warm_up`); the
+        ready line's own ``model`` string is not adopted because it would vary run to run.
         """
         dim = msg.get("dimension")
         if isinstance(dim, int) and not isinstance(dim, bool) and dim > 0:
             self.dimension = dim
         # Type support shipped together with these fields; older CLIs lack all of them.
         self.supports_type = any(k in msg for k in ("pooling", "queryPrefix", "documentPrefix"))
+        pooling = msg.get("pooling") if isinstance(msg.get("pooling"), str) else "mean"
+        doc_prefix = msg.get("documentPrefix") if isinstance(msg.get("documentPrefix"), str) else ""
+        suffix = f":pooling={pooling}" if pooling != "mean" else ""
+        suffix += f":dp={doc_prefix!r}" if doc_prefix else ""
+        self.model_id = self._base_id + suffix
 
     def _drop_worker(self) -> None:
         worker, self._worker = self._worker, None
         if worker is not None:
             worker.stop()
+
+    def warm_up(self) -> None:
+        with self._lock:
+            if self._worker is None and not self._serve_disabled:
+                try:
+                    self._worker = self._start_worker()
+                except (_WorkerError, OSError):
+                    self._serve_disabled = True  # embed() will use the one-shot path
 
     def close(self) -> None:
         with self._lock:
