@@ -19,23 +19,18 @@ import json
 import math
 import os
 import random
-import shutil
 import sqlite3
 import statistics
 import tempfile
-import time
 from array import array
 from collections.abc import Iterable, Mapping
 from pathlib import Path
-from typing import Any
 
 from .calibration import CALIBRATION_MIN_HEADS, blend_profiles, prior_profile
+from .index_records import RecordTables
+from .index_schema import create_and_migrate, existing_inbox_cols, table_columns
+from .sqlite_util import close_sqlite, open_read_only_sqlite
 
-_SQLITE_MAGIC = b"SQLite format 3\x00"
-_SNAPSHOT_ATTEMPTS = 4  # initial attempt + 3 retries
-
-
-_CALIBRATION_MIN_HEADS = CALIBRATION_MIN_HEADS
 _CALIBRATION_DRIFT = 0.2  # re-sample once the head count moves this far from the last sample
 _CALIBRATION_PAIRS = 4000
 _PROFILE_PERCENTILES = (50, 75, 80, 85, 90, 95, 99, 99.5)
@@ -94,108 +89,7 @@ def dot(a: list[float], b: list[float]) -> float:
     return sum(x * y for x, y in zip(a, b))
 
 
-def _needs_wal_snapshot(path: Path) -> bool:
-    """True when opening ``path`` directly with ``mode=ro`` could create/mutate WAL sidecars."""
-    if any(os.path.lexists(f"{path}{suffix}") for suffix in ("-wal", "-shm")):
-        return True
-    with path.open("rb") as fh:
-        header = fh.read(20)
-    return (
-        len(header) == 20 and header[:16] == _SQLITE_MAGIC and (header[18] == 2 or header[19] == 2)
-    )
-
-
-def _stat_sig(path: Path, *, required: bool = False) -> tuple[int, int] | None:
-    if not required and not os.path.lexists(path):
-        return None
-    st = path.stat()
-    return st.st_size, st.st_mtime_ns
-
-
-def _copy_wal_snapshot(resolved: Path) -> tuple[Path, tempfile.TemporaryDirectory[str]]:
-    """Copy a WAL database and its ``-wal`` sidecar into a private temp dir consistently.
-
-    Records ``(size, mtime_ns)`` of both files before and after copying and retries if either
-    changes mid-copy (for example due to a concurrent write or checkpoint). Fails closed if the
-    sources do not stabilise.
-    """
-    wal_src = Path(f"{resolved}-wal")
-    for _ in range(_SNAPSHOT_ATTEMPTS):
-        before = (_stat_sig(resolved, required=True), _stat_sig(wal_src))
-        temp_dir = tempfile.TemporaryDirectory(prefix="nachos-ro-")
-        try:
-            target = Path(temp_dir.name) / resolved.name
-            shutil.copyfile(resolved, target)
-            if before[1] is not None:
-                shutil.copyfile(wal_src, Path(f"{target}-wal"))
-            after = (_stat_sig(resolved, required=True), _stat_sig(wal_src))
-            if after == before:
-                return target, temp_dir
-        except FileNotFoundError:
-            if not os.path.lexists(resolved) or os.path.lexists(wal_src):
-                temp_dir.cleanup()
-                raise
-        except Exception:
-            temp_dir.cleanup()
-            raise
-        temp_dir.cleanup()
-    raise OSError(
-        f"SQLite WAL snapshot did not stabilise after {_SNAPSHOT_ATTEMPTS} attempts: {resolved}"
-    )
-
-
-def _verify_sqlite_copy(conn: sqlite3.Connection, source: Path) -> None:
-    rows = [str(row[0]) for row in conn.execute("PRAGMA quick_check").fetchall()]
-    if rows != ["ok"]:
-        detail = "; ".join(rows) or "empty quick_check result"
-        raise sqlite3.DatabaseError(f"SQLite snapshot failed quick_check for {source}: {detail}")
-
-
-def open_read_only_sqlite(
-    path: str | os.PathLike[str],
-) -> tuple[sqlite3.Connection, tempfile.TemporaryDirectory[str] | None]:
-    """Open a SQLite file read-only without creating, checkpointing, or modifying source files.
-
-    Rollback-mode databases are opened directly with ``mode=ro`` and ``PRAGMA query_only = ON``.
-    WAL-mode databases (header version 2 or existing ``-wal``/``-shm`` sidecars) are copied along
-    with any ``-wal`` file into a private temporary directory with stability retries and verified
-    via ``PRAGMA quick_check`` so SQLite can rebuild its transient ``-shm`` index there without
-    touching the original files or directory.
-    """
-    resolved = Path(path).resolve()
-    temp_dir: tempfile.TemporaryDirectory[str] | None = None
-    target = resolved
-    try:
-        if _needs_wal_snapshot(resolved):
-            target, temp_dir = _copy_wal_snapshot(resolved)
-        conn = sqlite3.connect(f"{target.as_uri()}?mode=ro", uri=True, check_same_thread=False)
-        try:
-            conn.execute("PRAGMA query_only = ON")
-            conn.execute("PRAGMA schema_version").fetchone()
-            if temp_dir is not None:
-                _verify_sqlite_copy(conn, resolved)
-        except Exception:
-            conn.close()
-            raise
-    except Exception:
-        if temp_dir is not None:
-            temp_dir.cleanup()
-        raise
-    return conn, temp_dir
-
-
-def close_sqlite(
-    conn: sqlite3.Connection, temp_dir: tempfile.TemporaryDirectory[str] | None
-) -> None:
-    """Close a SQLite connection and clean up any read-only snapshot temp directory."""
-    with contextlib.suppress(Exception):
-        conn.close()
-    if temp_dir is not None:
-        with contextlib.suppress(Exception):
-            temp_dir.cleanup()
-
-
-class MemoryIndex:
+class MemoryIndex(RecordTables):
     def __init__(self, path: str | os.PathLike[str], *, read_only: bool = False) -> None:
         self._path = str(path)
         self._read_only = read_only
@@ -203,9 +97,10 @@ class MemoryIndex:
         self._temp_dir: tempfile.TemporaryDirectory[str] | None = None
         if read_only:
             self._conn, self._temp_dir = open_read_only_sqlite(path)
-            self._chunked = "chunk_no" in self._table_columns("vectors")
-            self._has_prev_superseded = "prev_superseded_by" in self._table_columns("changes")
-            self._inbox_cols = self._existing_inbox_cols()
+            # An index written by an older release may lack these columns.
+            self._chunked = "chunk_no" in table_columns(self._conn, "vectors")
+            self._has_prev_superseded = "prev_superseded_by" in table_columns(self._conn, "changes")
+            self._inbox_cols = existing_inbox_cols(self._conn)
             return
         if self._path != ":memory:":
             Path(self._path).parent.mkdir(parents=True, exist_ok=True)
@@ -213,155 +108,14 @@ class MemoryIndex:
         if self._path != ":memory:":
             self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.execute("PRAGMA synchronous=NORMAL")
-        self._conn.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS vectors (
-                key          TEXT NOT NULL,
-                chunk_no     INTEGER NOT NULL DEFAULT 0,
-                content_hash TEXT NOT NULL,
-                model        TEXT NOT NULL,
-                vec          BLOB NOT NULL,
-                PRIMARY KEY (key, chunk_no, model)
-            );
-            CREATE TABLE IF NOT EXISTS usage (
-                key          TEXT PRIMARY KEY,
-                first_seen   REAL NOT NULL,
-                recall_count INTEGER NOT NULL DEFAULT 0,
-                hit_count    INTEGER NOT NULL DEFAULT 0,
-                last_used    REAL
-            );
-            CREATE TABLE IF NOT EXISTS changes (
-                id                 INTEGER PRIMARY KEY AUTOINCREMENT,
-                ts                 REAL NOT NULL,
-                key                TEXT NOT NULL,
-                action             TEXT NOT NULL,
-                session_id         TEXT,
-                prev_title         TEXT,
-                prev_summary       TEXT,
-                prev_category      TEXT,
-                prev_body          TEXT,
-                prev_superseded_by TEXT
-            );
-            CREATE INDEX IF NOT EXISTS changes_key ON changes (key);
-            CREATE TABLE IF NOT EXISTS calibration (
-                model      TEXT PRIMARY KEY,
-                head_count INTEGER NOT NULL,
-                profile    TEXT NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS links (
-                src TEXT NOT NULL,
-                dst TEXT NOT NULL,
-                pos INTEGER NOT NULL,
-                PRIMARY KEY (src, dst)
-            );
-            CREATE INDEX IF NOT EXISTS links_dst ON links (dst);
-            CREATE TABLE IF NOT EXISTS inbox (
-                id              INTEGER PRIMARY KEY AUTOINCREMENT,
-                created_ts      REAL NOT NULL,
-                session_id      TEXT,
-                title           TEXT NOT NULL,
-                summary         TEXT NOT NULL,
-                category        TEXT NOT NULL,
-                body            TEXT NOT NULL,
-                reason          TEXT,
-                duplicates_json TEXT NOT NULL DEFAULT '[]',
-                status          TEXT NOT NULL DEFAULT 'pending'
-            );
-            CREATE TABLE IF NOT EXISTS provenance (
-                key           TEXT PRIMARY KEY,
-                session_id    TEXT NOT NULL DEFAULT '',
-                captured_at   REAL NOT NULL,
-                source        TEXT NOT NULL DEFAULT 'manual',
-                checkpoint_id TEXT,
-                message_index INTEGER,
-                quote         TEXT,
-                grounded      INTEGER
-            );
-            """
-        )
-        self._conn.commit()
-        self._migrate_vectors_table()
-        self._migrate_changes_table()
-        self._migrate_inbox_table()
-        self._inbox_cols = self._existing_inbox_cols()
+        create_and_migrate(self._conn)
+        self._inbox_cols = existing_inbox_cols(self._conn)
         self._chunked = True
         self._has_prev_superseded = True
 
     @property
     def read_only(self) -> bool:
         return self._read_only
-
-    def _table_columns(self, table: str) -> set[str]:
-        return {str(row[1]) for row in self._conn.execute(f"PRAGMA table_info({table})").fetchall()}
-
-    def _migrate_changes_table(self) -> None:
-        cols = self._table_columns("changes")
-        if cols and "prev_superseded_by" not in cols:
-            self._conn.execute("ALTER TABLE changes ADD COLUMN prev_superseded_by TEXT")
-            self._conn.commit()
-
-    def _migrate_inbox_table(self) -> None:
-        cols = self._table_columns("inbox")
-        for name, decl in self._INBOX_EXTRA:
-            if name not in cols:
-                self._conn.execute(f"ALTER TABLE inbox ADD COLUMN {name} {decl}")
-        self._conn.commit()
-
-    def _existing_inbox_cols(self) -> tuple[str, ...]:
-        have = self._table_columns("inbox")
-        return tuple(c for c in self._INBOX_COLS if c in have)
-
-    def _migrate_vectors_table(self) -> None:
-        cols = self._table_columns("vectors")
-        if cols and "chunk_no" in cols:
-            self._migrate_vectors_primary_key()
-            return
-        if not cols:
-            return
-        # Pre-chunking schema had PRIMARY KEY (key) without chunk_no. Vectors are derived
-        # data, so recreating the table lets lazy sync rebuild chunked vectors automatically.
-        self._conn.executescript(
-            """
-            DROP TABLE vectors;
-            CREATE TABLE vectors (
-                key          TEXT NOT NULL,
-                chunk_no     INTEGER NOT NULL DEFAULT 0,
-                content_hash TEXT NOT NULL,
-                model        TEXT NOT NULL,
-                vec          BLOB NOT NULL,
-                PRIMARY KEY (key, chunk_no, model)
-            );
-            """
-        )
-        self._conn.commit()
-
-    def _migrate_vectors_primary_key(self) -> None:
-        """Add ``model`` to the primary key so a model switch keeps the old vectors until done.
-
-        Existing rows are copied over unchanged; the table is rebuilt only for databases that
-        still have the ``(key, chunk_no)`` key.
-        """
-        pk_columns = {
-            str(row[1]) for row in self._conn.execute("PRAGMA table_info(vectors)") if row[5]
-        }
-        if "model" in pk_columns:
-            return
-        self._conn.executescript(
-            """
-            ALTER TABLE vectors RENAME TO vectors_old;
-            CREATE TABLE vectors (
-                key          TEXT NOT NULL,
-                chunk_no     INTEGER NOT NULL DEFAULT 0,
-                content_hash TEXT NOT NULL,
-                model        TEXT NOT NULL,
-                vec          BLOB NOT NULL,
-                PRIMARY KEY (key, chunk_no, model)
-            );
-            INSERT INTO vectors SELECT key, chunk_no, content_hash, model, vec FROM vectors_old;
-            DROP TABLE vectors_old;
-            """
-        )
-        self._conn.commit()
 
     # -- vectors -----------------------------------------------------------
 
@@ -611,7 +365,7 @@ class MemoryIndex:
 
         Cosine ranges differ a lot between embedding models (random pairs sit near 0.05 for
         MiniLM and near 0.50 for gte-modernbert), so absolute cutoffs are not portable. Below
-        ``_CALIBRATION_MIN_HEADS`` entries this falls back to the model's offline prior (or None
+        ``CALIBRATION_MIN_HEADS`` entries this falls back to the model's offline prior (or None
         for unknown models); above that it samples the store's own head vectors (cached in the
         index, resampled after ``_CALIBRATION_DRIFT`` drift) and blends smoothly from the prior
         to the empirical store distribution.
@@ -619,7 +373,7 @@ class MemoryIndex:
         heads = self._load_vectors(model)[0]
         count = len(heads)
         prior = prior_profile(model)
-        if count < _CALIBRATION_MIN_HEADS:
+        if count < CALIBRATION_MIN_HEADS:
             return prior
         row = None
         with contextlib.suppress(sqlite3.OperationalError):  # read-only copy of an old index
@@ -643,335 +397,6 @@ class MemoryIndex:
             )
             self._conn.commit()
         return blend_profiles(prior, empirical, count)
-
-    # -- usage -------------------------------------------------------------
-
-    def record_seen(self, keys: Iterable[str]) -> None:
-        now = time.time()
-        self._conn.executemany(
-            "INSERT OR IGNORE INTO usage (key, first_seen) VALUES (?, ?)",
-            [(k, now) for k in keys],
-        )
-        self._conn.commit()
-
-    def _bump(self, keys: Iterable[str], column: str) -> None:
-        now = time.time()
-        for key in keys:
-            self._conn.execute(
-                "INSERT OR IGNORE INTO usage (key, first_seen) VALUES (?, ?)", (key, now)
-            )
-            self._conn.execute(
-                f"UPDATE usage SET {column} = {column} + 1, last_used = ? WHERE key = ?",
-                (now, key),
-            )
-        self._conn.commit()
-
-    def record_recall(self, key: str) -> None:
-        """The agent fetched this entry's body by key."""
-        self._bump([key], "recall_count")
-
-    def record_hits(self, keys: Iterable[str]) -> None:
-        """This entry was returned by a query."""
-        self._bump(keys, "hit_count")
-
-    def usage(self) -> dict[str, dict[str, float]]:
-        rows = self._conn.execute(
-            "SELECT key, first_seen, recall_count, hit_count, last_used FROM usage"
-        )
-        return {
-            key: {
-                "first_seen": first,
-                "recall_count": recalls,
-                "hit_count": hits,
-                "last_used": last,
-            }
-            for key, first, recalls, hits, last in rows
-        }
-
-    # -- change log --------------------------------------------------------
-
-    def record_change(
-        self,
-        key: str,
-        action: str,
-        session_id: str = "",
-        prev: tuple[str, str, str, str] | None = None,
-        prev_superseded_by: str | None = None,
-    ) -> int:
-        """Log a change. ``prev`` is (title, summary, category, body) as it was
-        BEFORE the change, or None when the entry did not exist."""
-        title, summary, category, body = prev if prev is not None else (None,) * 4
-        if self._path != ":memory:":
-            self._conn.execute("PRAGMA synchronous=FULL")
-        try:
-            cur = self._conn.execute(
-                "INSERT INTO changes (ts, key, action, session_id, prev_title, "
-                "prev_summary, prev_category, prev_body, prev_superseded_by) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    time.time(),
-                    key,
-                    action,
-                    session_id or "",
-                    title,
-                    summary,
-                    category,
-                    body,
-                    prev_superseded_by,
-                ),
-            )
-            self._conn.commit()
-        finally:
-            if self._path != ":memory:":
-                self._conn.execute("PRAGMA synchronous=NORMAL")
-        change_id = int(cur.lastrowid or 0)
-        if change_id % 100 == 0:
-            self.trim_changes()
-        return change_id
-
-    _CHANGE_COLS = (
-        "id, ts, key, action, session_id, prev_title, prev_summary, "
-        "prev_category, prev_body, prev_superseded_by"
-    )
-    _LEGACY_CHANGE_COLS = (
-        "id, ts, key, action, session_id, prev_title, prev_summary, prev_category, prev_body"
-    )
-
-    @staticmethod
-    def _change_row(row: Any) -> dict[str, Any]:
-        names = (
-            "id",
-            "ts",
-            "key",
-            "action",
-            "session_id",
-            "prev_title",
-            "prev_summary",
-            "prev_category",
-            "prev_body",
-            "prev_superseded_by",
-        )
-        out = dict(zip(names, row))
-        out.setdefault("prev_superseded_by", None)
-        return out
-
-    def _change_cols(self) -> str:
-        return self._CHANGE_COLS if self._has_prev_superseded else self._LEGACY_CHANGE_COLS
-
-    def changes(self, key: str | None = None, limit: int = 20) -> list[dict[str, Any]]:
-        """Recent changes, newest first, optionally for one key."""
-        sql = f"SELECT {self._change_cols()} FROM changes"
-        params: list[str | int] = []
-        if key is not None:
-            sql += " WHERE key = ?"
-            params.append(key)
-        sql += " ORDER BY id DESC LIMIT ?"
-        params.append(max(1, int(limit)))
-        return [self._change_row(r) for r in self._conn.execute(sql, params)]
-
-    def get_change(self, change_id: int) -> dict[str, Any] | None:
-        row = self._conn.execute(
-            f"SELECT {self._change_cols()} FROM changes WHERE id = ?",
-            (change_id,),
-        ).fetchone()
-        return self._change_row(row) if row else None
-
-    def change_timestamps(self) -> dict[str, tuple[float, float]]:
-        """Return ``{key: (earliest_ts, latest_ts)}`` from the change log."""
-        rows = self._conn.execute("SELECT key, MIN(ts), MAX(ts) FROM changes GROUP BY key")
-        return {str(k): (float(mn), float(mx)) for k, mn, mx in rows if mn is not None}
-
-    def count_changes(self) -> int:
-        return int(self._conn.execute("SELECT COUNT(*) FROM changes").fetchone()[0])
-
-    def trim_changes(self, keep: int = 1000) -> int:
-        """Keep only the newest ``keep`` change rows; returns rows dropped."""
-        cur = self._conn.execute(
-            "DELETE FROM changes WHERE id <= "
-            "(SELECT id FROM changes ORDER BY id DESC LIMIT 1 OFFSET ?)",
-            (max(0, int(keep)),),
-        )
-        self._conn.commit()
-        return cur.rowcount
-
-    # -- review inbox (suggested memories awaiting approval) -----------------
-
-    _INBOX_COLS = (
-        "id",
-        "created_ts",
-        "session_id",
-        "title",
-        "summary",
-        "category",
-        "body",
-        "reason",
-        "duplicates_json",
-        "status",
-        "quote",
-        "grounded",
-        "checkpoint_id",
-        "message_index",
-    )
-    #: Columns added after the first release; ``_migrate_inbox_table`` adds them to old files.
-    _INBOX_EXTRA = (
-        ("quote", "TEXT"),
-        ("grounded", "INTEGER"),
-        ("checkpoint_id", "TEXT"),
-        ("message_index", "INTEGER"),
-    )
-
-    def _inbox_row(self, row: Any) -> dict[str, Any]:
-        d: dict[str, Any] = dict.fromkeys(self._INBOX_COLS)
-        d.update(zip(self._inbox_cols, row))
-        d["grounded"] = None if d["grounded"] is None else bool(d["grounded"])
-        try:
-            d["duplicates"] = json.loads(d.pop("duplicates_json") or "[]")
-        except ValueError:
-            d["duplicates"] = []
-        return d
-
-    def add_inbox(
-        self,
-        *,
-        session_id: str,
-        title: str,
-        summary: str,
-        category: str,
-        body: str,
-        reason: str = "",
-        duplicates: list | None = None,
-        quote: str = "",
-        grounded: bool | None = None,
-        checkpoint_id: str | None = None,
-        message_index: int | None = None,
-    ) -> int:
-        cur = self._conn.execute(
-            "INSERT INTO inbox (created_ts, session_id, title, summary, category, body, "
-            "reason, duplicates_json, quote, grounded, checkpoint_id, message_index) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                time.time(),
-                session_id or "",
-                title,
-                summary,
-                category,
-                body,
-                reason or "",
-                json.dumps(duplicates or []),
-                quote or "",
-                None if grounded is None else int(grounded),
-                checkpoint_id,
-                message_index,
-            ),
-        )
-        self._conn.commit()
-        return int(cur.lastrowid or 0)
-
-    def list_inbox(self, status: str | None = "pending") -> list[dict[str, Any]]:
-        sql = f"SELECT {', '.join(self._inbox_cols)} FROM inbox"
-        params: list[str] = []
-        if status:
-            sql += " WHERE status = ?"
-            params.append(status)
-        return [self._inbox_row(r) for r in self._conn.execute(sql + " ORDER BY id", params)]
-
-    def get_inbox(self, inbox_id: int) -> dict[str, Any] | None:
-        row = self._conn.execute(
-            f"SELECT {', '.join(self._inbox_cols)} FROM inbox WHERE id = ?",
-            (inbox_id,),
-        ).fetchone()
-        return self._inbox_row(row) if row else None
-
-    def count_inbox(self, status: str = "pending") -> int:
-        return int(
-            self._conn.execute("SELECT COUNT(*) FROM inbox WHERE status = ?", (status,)).fetchone()[
-                0
-            ]
-        )
-
-    def set_inbox_status(self, inbox_id: int, status: str) -> None:
-        self._conn.execute("UPDATE inbox SET status = ? WHERE id = ?", (status, inbox_id))
-        self._conn.commit()
-
-    def trim_inbox(self, max_age_days: float = 30, now: float | None = None) -> int:
-        """Drop approved/rejected rows older than ``max_age_days``."""
-        cutoff = (now if now is not None else time.time()) - max_age_days * 86400
-        cur = self._conn.execute(
-            "DELETE FROM inbox WHERE status != 'pending' AND created_ts < ?", (cutoff,)
-        )
-        self._conn.commit()
-        return cur.rowcount
-
-    # -- provenance (where a saved entry came from) --------------------------
-
-    def set_provenance(
-        self,
-        key: str,
-        *,
-        session_id: str = "",
-        captured_at: float | None = None,
-        source: str = "manual",
-        checkpoint_id: str | None = None,
-        message_index: int | None = None,
-        quote: str = "",
-        grounded: bool | None = None,
-    ) -> None:
-        self._conn.execute(
-            "INSERT OR REPLACE INTO provenance (key, session_id, captured_at, source, "
-            "checkpoint_id, message_index, quote, grounded) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                key,
-                session_id or "",
-                captured_at if captured_at is not None else time.time(),
-                source,
-                checkpoint_id,
-                message_index,
-                quote or None,
-                None if grounded is None else int(grounded),
-            ),
-        )
-        self._conn.commit()
-
-    def get_provenance_many(self, keys: Iterable[str]) -> dict[str, dict[str, Any]]:
-        """``{key: provenance}`` for the keys that have any (empty on files without the table)."""
-        wanted = list(dict.fromkeys(keys))
-        if not wanted or "provenance" not in self._provenance_tables():
-            return {}
-        out: dict[str, dict[str, Any]] = {}
-        for i in range(0, len(wanted), 500):
-            batch = wanted[i : i + 500]
-            marks = ", ".join("?" * len(batch))
-            rows = self._conn.execute(
-                "SELECT key, session_id, captured_at, source, checkpoint_id, message_index, "
-                f"quote, grounded FROM provenance WHERE key IN ({marks})",
-                batch,
-            )
-            for key, sid, at, source, cp, idx, quote, grounded in rows:
-                out[str(key)] = {
-                    "session_id": sid or "",
-                    "captured_at": float(at),
-                    "source": source,
-                    "checkpoint_id": cp,
-                    "message_index": idx,
-                    "quote": quote or "",
-                    "grounded": None if grounded is None else bool(grounded),
-                }
-        return out
-
-    def get_provenance(self, key: str) -> dict[str, Any] | None:
-        return self.get_provenance_many([key]).get(key)
-
-    def delete_provenance(self, key: str) -> None:
-        self._conn.execute("DELETE FROM provenance WHERE key = ?", (key,))
-        self._conn.commit()
-
-    def _provenance_tables(self) -> set[str]:
-        return {
-            str(r[0])
-            for r in self._conn.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'provenance'"
-            )
-        }
 
     def close(self) -> None:
         if not self._read_only and self._path != ":memory:":

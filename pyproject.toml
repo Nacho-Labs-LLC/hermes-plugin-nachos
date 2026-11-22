@@ -84,7 +84,7 @@ max-complexity = 12
 # ABC-override + slash-handler params are contract-mandated, not slop.
 # Every interpolated SQL fragment is a class constant (column lists) or an internal column
 # name; all values go through bound parameters.
-"nachos_core/index.py" = ["S608"]
+"nachos_core/index*.py" = ["S608"]
 "tests/*" = ["S101", "S603"]  # S101: assert is pytest style; S603: tests spawn fixed argv  # assert is how pytest tests work
 # Catalog wrapper: the sys.path bootstrap must run before the package import, and the
 # imports are a deliberate re-export (Hermes' directory scan looks for the class name).
