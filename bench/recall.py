@@ -241,7 +241,11 @@ def resolve_embedder(backend: str, opts: argparse.Namespace) -> tuple[Embedder |
         api_key_env=opts.api_key_env,
         command=opts.command,
         dtype=opts.dtype,
+        query_prefix=opts.query_prefix,
+        document_prefix=opts.document_prefix,
     )
+    if embedder is not None and opts.no_types and hasattr(embedder, "send_type"):
+        embedder.send_type = False  # legacy behaviour: queries embedded like documents
     return embedder, None
 
 
@@ -261,7 +265,7 @@ def run_backend(
     memories: list[dict[str, Any]],
     queries: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    run: dict[str, Any] = {"backend": backend, "status": "ok"}
+    run: dict[str, Any] = {"backend": opts.label or backend, "status": "ok"}
     embedder, reason = resolve_embedder(backend, opts)
     if reason:
         return {**run, "status": "skipped", "reason": reason}
@@ -382,6 +386,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     ap.add_argument("--dtype", default="", help="embedding_dtype passthrough (nachos backend)")
     ap.add_argument("--base-url", default="", help="embedding_base_url passthrough (openai)")
     ap.add_argument("--api-key-env", default="", help="embedding_api_key_env passthrough")
+    ap.add_argument("--query-prefix", default="", help="embedding_query_prefix (openai/st)")
+    ap.add_argument("--document-prefix", default="", help="embedding_document_prefix (openai/st)")
+    ap.add_argument(
+        "--no-types",
+        action="store_true",
+        help="nachos backend: never send the query/document type (pre-0.7 behaviour)",
+    )
+    ap.add_argument(
+        "--label", default="", help="name for this run in the report (default: backend)"
+    )
     ap.add_argument("--command", default="nachos-embeddings", help="nachos-embeddings executable")
     ap.add_argument("--category", action="append", help="only run this query category (repeatable)")
     ap.add_argument("--repeat", type=int, default=1, help="searches per query for latency (median)")

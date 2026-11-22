@@ -25,6 +25,8 @@ DEFAULTS: dict[str, Any] = {
     "embedding_dtype": "",
     "embedding_base_url": "",
     "embedding_api_key_env": "",
+    "embedding_query_prefix": "",
+    "embedding_document_prefix": "",
     # MiniLM: paraphrases score 0.68-0.73, distinct entries <=0.22; flagging is non-blocking, so false positives are cheap.
     "duplicate_threshold": 0.65,
     "shared_store": "off",
@@ -33,6 +35,8 @@ DEFAULTS: dict[str, Any] = {
     "checkpoint_max_age_days": 30,
     "capture": "review",
 }
+
+_VERBATIM_KEYS = frozenset({"embedding_query_prefix", "embedding_document_prefix"})
 
 CONFIG_SCHEMA: list[dict[str, Any]] = [
     {
@@ -66,6 +70,19 @@ CONFIG_SCHEMA: list[dict[str, Any]] = [
     {
         "key": "embedding_api_key_env",
         "description": "Name of the environment variable holding the embeddings API key (the key itself is never stored).",
+    },
+    {
+        "key": "embedding_query_prefix",
+        "description": "Text prepended to search queries before embedding, for the openai and "
+        "sentence-transformers backends (e.g. 'query: ' for E5, 'search_query: ' for nomic). "
+        "Leading/trailing spaces are kept. The nachos backend applies its own per-model prefixes. "
+        "Changing it re-embeds.",
+    },
+    {
+        "key": "embedding_document_prefix",
+        "description": "Text prepended to stored entries before embedding, for the openai and "
+        "sentence-transformers backends (e.g. 'passage: ' for E5, 'search_document: ' for nomic). "
+        "Changing it re-embeds.",
     },
     {
         "key": "duplicate_threshold",
@@ -159,7 +176,8 @@ def apply_config(cfg: dict[str, Any], values: dict[str, Any]) -> None:
         elif isinstance(default, int) and isinstance(value, (int, float)):
             cfg[key] = int(value)
         elif isinstance(default, str) and isinstance(value, str):
-            value = value.strip()
+            if key not in _VERBATIM_KEYS:  # prefixes keep their meaningful spaces
+                value = value.strip()
             if key == "capture" and value not in ("review", "off"):
                 continue
             cfg[key] = value

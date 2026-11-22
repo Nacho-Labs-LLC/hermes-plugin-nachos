@@ -38,7 +38,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from .embeddings import Embedder
+from .embeddings import DOCUMENT, QUERY, Embedder
 from .index import MemoryIndex, dot
 from .lexical import LexicalIndex, jaccard
 from .quality import low_signal_reason
@@ -51,7 +51,12 @@ PROFILE = "profile"
 SHARED = "shared"
 
 _RRF_K = 60
-_MIN_VECTOR_SCORE = 0.30
+# Hybrid recall only: a lexical hit must match at least this IDF-weighted share of the query's
+# terms to take part in fusion. Weak partial matches ("service", "internal") are noise next to
+# a semantic list, and RRF would otherwise let them displace or double-count real answers.
+# Model-independent, unlike an absolute cosine floor (which only suited MiniLM's score range);
+# 0.35-0.45 is a plateau on bench/ (see docs/benchmark.md).
+_MIN_LEXICAL_COVERAGE = 0.4
 _LEXICAL_DUP_THRESHOLD = 0.6
 
 
@@ -129,12 +134,12 @@ class MemoryService:
         """The embedder when semantic search is usable right now, else None."""
         return self.embedder if self.semantic_enabled else None
 
-    def _embed(self, texts: list[str]) -> list[list[float]] | None:
+    def _embed(self, texts: list[str], input_type: str = DOCUMENT) -> list[list[float]] | None:
         embedder = self._active_embedder()
         if embedder is None or not texts:
             return None
         try:
-            return embedder.embed(texts)
+            return embedder.embed(texts, input_type)
         except Exception as e:  # any backend failure degrades to lexical
             self.embedder_error = f"{type(e).__name__}: {e}"[:300]
             logger.warning(
@@ -151,6 +156,7 @@ class MemoryService:
         embedder = self._active_embedder()
         if embedder is None:
             return 0
+        embedder.warm_up()  # may refine model_id (e.g. CLI pooling/prefix) before it is compared
         bodies = scope.store.bodies()
         docs = {
             key: embed_text(title, summary, bodies.get(key, ""))
@@ -236,8 +242,8 @@ class MemoryService:
             self._lexical_cache[scope.name] = (fp, index)
         return index
 
-    def _lexical(self, scope: Scope, query: str) -> list[str]:
-        return self._lexical_index(scope).search(query)
+    def _lexical(self, scope: Scope, query: str, min_coverage: float = 0.0) -> list[str]:
+        return self._lexical_index(scope).search(query, min_coverage=min_coverage)
 
     def search(
         self, query: str, *, limit: int = 10, scope: str | None = None
@@ -268,7 +274,7 @@ class MemoryService:
             return None
         for s in targets:
             self.sync_index(s)
-        vectors = self._embed([query])
+        vectors = self._embed([query], QUERY)
         return vectors[0] if vectors else None
 
     def _ranked_hits(
@@ -278,12 +284,13 @@ class MemoryService:
         # With an embedder, lexical sits half a step below semantic so a
         # lexical-only rank-0 hit does not tie a semantic-only rank-0 hit.
         offset = 1 if qvec is not None else 0
-        for rank, key in enumerate(self._lexical(s, query)[: limit * 3]):
+        min_coverage = _MIN_LEXICAL_COVERAGE if qvec is not None else 0.0
+        for rank, key in enumerate(self._lexical(s, query, min_coverage)[: limit * 3]):
             yield key, rank + offset, "lexical", None
         embedder = self._active_embedder()
         if qvec is not None and embedder is not None:
             hits = s.index.search(qvec, embedder.model_id, top_k=limit * 3)
-            for rank, (key, sim) in enumerate(h for h in hits if h[1] >= _MIN_VECTOR_SCORE):
+            for rank, (key, sim) in enumerate(hits):
                 yield key, rank, "semantic", sim
 
     def _hydrate(

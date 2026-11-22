@@ -305,7 +305,7 @@ class LexicalIndex:
         probes = tuple(dict.fromkeys((*weights, *terms, *raw, stripped)))
         return {k for k in matched if any(p in self.docs[k].haystack for p in probes)}
 
-    def search(self, query: str) -> list[str]:
+    def search(self, query: str, min_coverage: float = 0.0) -> list[str]:
         """Rank matching document keys by IDF-weighted term overlap and phrase bonus."""
         raw, terms = query_terms(query)
         if not terms:
@@ -314,10 +314,15 @@ class LexicalIndex:
         if not weights:
             return []
         needle = query.lower()
+        total_weight = sum(weights.values()) or 1.0
         matched = self._matched_keys(weights, terms, raw, needle.strip())
         scored: list[tuple[float, str]] = []
         for key in matched:
             doc = self.docs[key]
+            if min_coverage > 0.0:
+                covered = sum(w for t, w in weights.items() if t in doc.doc_words)
+                if covered / total_weight < min_coverage:
+                    continue
             score = score_document(weights, doc.doc_words, doc.label_words, needle in doc.haystack)
             if score > 0:
                 scored.append((score, key))

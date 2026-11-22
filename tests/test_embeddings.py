@@ -11,6 +11,7 @@ import pytest
 
 from nachos_core.embeddings import (
     CliEmbedder,
+    Embedder,
     OpenAICompatEmbedder,
     make_embedder,
 )
@@ -18,6 +19,9 @@ from nachos_core.embeddings import (
 _FAKE_CLI = """#!{python}
 import json, sys
 assert sys.argv[1:4] == ["embed", "--stdin", "--json"], sys.argv
+import os
+if os.environ.get("FAKE_ARGS"):
+    open(os.environ["FAKE_ARGS"], "w").write(" ".join(sys.argv[4:]))
 for line in sys.stdin.read().splitlines():
     print(json.dumps([float(len(line)), 1.0]))
 """
@@ -37,6 +41,12 @@ die_after = int(os.environ.get("FAKE_DIE_AFTER", "0")) if starts == 1 else 0
 ready = {{"ready": True, "model": "fake"}}
 if os.environ.get("FAKE_DIM"):
     ready["dimension"] = int(os.environ["FAKE_DIM"])
+if os.environ.get("FAKE_TYPED"):
+    ready.update(
+        pooling=os.environ.get("FAKE_POOLING", "mean"),
+        queryPrefix="",
+        documentPrefix=os.environ.get("FAKE_DOCPREFIX", ""),
+    )
 print(json.dumps(ready), flush=True)
 args = sys.argv[2:]
 if os.environ.get("FAKE_ARGS"):
@@ -45,6 +55,9 @@ if os.environ.get("FAKE_ARGS"):
 served = 0
 for line in sys.stdin:
     req = json.loads(line)
+    if os.environ.get("FAKE_REQS"):
+        with open(os.environ["FAKE_REQS"], "a") as fh:
+            fh.write(str(req.get("type")) + "\\n")
     if req["texts"] == ["boom"]:
         print(json.dumps({{"id": req["id"], "error": "bad input"}}), flush=True)
         continue
@@ -246,3 +259,134 @@ def test_openai_compatible_endpoint(monkeypatch):
 def test_openai_backend_requires_url_and_model():
     with pytest.raises(ValueError, match="need embedding_base_url"):
         make_embedder("openai", model="", base_url="")
+
+
+# -- query / document input types ---------------------------------------------
+
+
+def _types_seen(tmp_path):
+    return (tmp_path / "reqs.txt").read_text().split()
+
+
+def test_type_is_sent_when_the_ready_line_shows_support(fake_serve_cli, monkeypatch, tmp_path):
+    path, _ = fake_serve_cli
+    monkeypatch.setenv("FAKE_TYPED", "1")
+    monkeypatch.setenv("FAKE_REQS", str(tmp_path / "reqs.txt"))
+    embedder = CliEmbedder(str(path))
+    try:
+        embedder.embed(["a doc"])
+        embedder.embed(["a question"], "query")
+        embedder.embed(["b"], input_type="document")
+    finally:
+        embedder.close()
+    assert embedder.supports_type is True
+    assert _types_seen(tmp_path) == ["document", "query", "document"]
+
+
+def test_type_is_omitted_for_a_cli_without_type_support(fake_serve_cli, monkeypatch, tmp_path):
+    path, _ = fake_serve_cli  # ready line has no pooling / prefix fields (0.6.0 CLI)
+    monkeypatch.setenv("FAKE_REQS", str(tmp_path / "reqs.txt"))
+    embedder = CliEmbedder(str(path))
+    try:
+        assert embedder.embed(["q"], "query") == [[1.0, 2.0]]
+    finally:
+        embedder.close()
+    assert embedder.supports_type is False
+    assert _types_seen(tmp_path) == ["None"]
+
+
+def test_send_type_false_keeps_legacy_requests(fake_serve_cli, monkeypatch, tmp_path):
+    path, _ = fake_serve_cli
+    monkeypatch.setenv("FAKE_TYPED", "1")
+    monkeypatch.setenv("FAKE_REQS", str(tmp_path / "reqs.txt"))
+    embedder = CliEmbedder(str(path))
+    embedder.send_type = False
+    try:
+        embedder.embed(["q"], "query")
+    finally:
+        embedder.close()
+    assert _types_seen(tmp_path) == ["None"]
+
+
+def test_oneshot_gets_type_only_when_supported(fake_cli, monkeypatch, tmp_path):
+    args_file = tmp_path / "args.txt"
+    monkeypatch.setenv("FAKE_ARGS", str(args_file))
+    embedder = CliEmbedder(str(fake_cli))
+    embedder.embed(["q"], "query")  # serve unsupported, type support unknown: no --type
+    assert args_file.read_text() == ""
+    embedder.supports_type = True
+    embedder.embed(["q"], "query")
+    assert args_file.read_text() == "--type query"
+
+
+def test_invalid_input_type_is_rejected(fake_serve_cli):
+    path, _ = fake_serve_cli
+    with pytest.raises(ValueError, match="input_type"):
+        CliEmbedder(str(path)).embed(["x"], "passage")
+
+
+class _Recorder(Embedder):
+    model_id = "rec"
+
+    def __init__(self, **kw):
+        self.__dict__.update(kw)
+        self.seen = []
+
+    def _embed_batch(self, texts):
+        self.seen.append(texts)
+        return [[1.0] for _ in texts]
+
+
+def test_client_side_prefixes_are_prepended_per_type():
+    rec = _Recorder(query_prefix="query: ", document_prefix="passage: ")
+    rec.embed(["alpha\nbeta"], "query")
+    rec.embed(["gamma"])
+    assert rec.seen == [["query: alpha beta"], ["passage: gamma"]]
+
+
+def test_prefixes_are_part_of_the_model_id_for_st_and_openai():
+    plain = make_embedder("sentence-transformers", model="m")
+    prefixed = make_embedder(
+        "sentence-transformers", model="m", query_prefix="query: ", document_prefix="passage: "
+    )
+    assert plain.model_id == "st:m"
+    assert prefixed.model_id != plain.model_id
+    assert "query: " in prefixed.model_id
+    assert "passage: " in prefixed.model_id
+    oa = make_embedder("openai", model="m", base_url="http://x/v1", document_prefix="d ")
+    assert oa.model_id != make_embedder("openai", model="m", base_url="http://x/v1").model_id
+
+
+def test_nachos_backend_ignores_client_prefixes(fake_serve_cli):
+    path, _ = fake_serve_cli
+    embedder = make_embedder("nachos", command=str(path), query_prefix="query: ")
+    assert embedder.query_prefix == ""
+    assert embedder.model_id == "nachos:default"
+
+
+@pytest.mark.parametrize(
+    ("env", "suffix"),
+    [
+        ({}, ""),  # 0.6.0 CLI: no type fields at all
+        ({"FAKE_TYPED": "1"}, ""),  # type-aware but mean pooling, no prefix: vectors unchanged
+        ({"FAKE_TYPED": "1", "FAKE_POOLING": "cls"}, ":pooling=cls"),
+        ({"FAKE_TYPED": "1", "FAKE_DOCPREFIX": "passage: "}, ":dp='passage: '"),
+    ],
+)
+def test_model_id_reflects_settings_that_change_stored_vectors(
+    fake_serve_cli, monkeypatch, env, suffix
+):
+    path, _ = fake_serve_cli
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    embedder = CliEmbedder(str(path), "m", dtype="q8")
+    assert embedder.model_id == "nachos:m:q8"  # before the worker is up
+    embedder.warm_up()
+    assert embedder.model_id == "nachos:m:q8" + suffix
+    embedder.close()
+
+
+def test_warm_up_without_a_working_cli_does_not_raise(tmp_path):
+    embedder = CliEmbedder(str(tmp_path / "missing-cli"))
+    embedder.warm_up()
+    assert embedder.model_id == "nachos:default"

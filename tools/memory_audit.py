@@ -17,8 +17,10 @@ Usage:
     memory_audit.py --store flatfile --path ~/.hermes/nachos/memory.md unused
 
 Embeddings are off by default (duplicates fall back to lexical overlap). Pass
---embeddings auto|nachos|openai|sentence-transformers, with --embedding-model
-and --embedding-base-url as needed, to use semantic similarity.
+--embeddings auto|nachos|openai|sentence-transformers, with --embedding-model,
+--embedding-base-url, --embedding-dtype and --embedding-query-prefix /
+--embedding-document-prefix as needed (match your Nachos config, or the stored
+vectors will not be found), to use semantic similarity.
 """
 
 from __future__ import annotations
@@ -48,6 +50,9 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     ap.add_argument("--embedding-model", default="")
     ap.add_argument("--embedding-base-url", default="")
+    ap.add_argument("--embedding-dtype", default="", help="nachos backend precision, e.g. q8")
+    ap.add_argument("--embedding-query-prefix", default="", help="openai/sentence-transformers")
+    ap.add_argument("--embedding-document-prefix", default="", help="openai/sentence-transformers")
     ap.add_argument("--json", action="store_true", help="machine-readable output")
     sub = ap.add_subparsers(dest="command", required=True)
 
@@ -179,6 +184,9 @@ def main(argv: list[str] | None = None) -> int:
         args.embeddings,
         model=args.embedding_model,
         base_url=args.embedding_base_url,
+        dtype=args.embedding_dtype,
+        query_prefix=args.embedding_query_prefix,
+        document_prefix=args.embedding_document_prefix,
     )
     service = open_service(args.store, path, embedder=embedder)
     try:
