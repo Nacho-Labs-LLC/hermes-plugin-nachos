@@ -35,6 +35,7 @@ DEFAULTS: dict[str, Any] = {
     "rerank_model": "",
     "rerank_dtype": "",
     "rerank_candidates": 25,
+    "related_per_hit": 3,
     "shared_store": "off",
     "shared_store_path": "",
     "redact_secrets": "on",
@@ -135,6 +136,12 @@ CONFIG_SCHEMA: list[dict[str, Any]] = [
         "key": "rerank_candidates",
         "type": "int",
         "description": "How many top fused results the reranker re-scores.",
+    },
+    {
+        "key": "related_per_hit",
+        "type": "int",
+        "description": "Linked entries (one hop, via [[key]] links) attached as `related` to each "
+        "recall result, at most 8 per query; 0 turns related expansion off.",
     },
     {
         "key": "shared_store",

@@ -55,6 +55,7 @@ def test_setup_schema_describes_all_non_secret_provider_settings():
         "redact_secrets",
         "checkpoint_max_age_days",
         "capture",
+        "related_per_hit",
     }
     assert all("default" in field for field in schema)
     assert all(not field.get("secret") for field in schema)

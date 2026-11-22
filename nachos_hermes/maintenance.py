@@ -16,7 +16,15 @@ from nachos_core.memory import PROFILE, MemoryService, Scope
 from nachos_core.quality import flag_reason
 from nachos_core.store import MDStore, SqliteStore
 
-_CHECKS = ("summaries", "duplicates", "unused", "superseded", "suspicious_supersedes", "inbox")
+_CHECKS = (
+    "summaries",
+    "duplicates",
+    "unused",
+    "superseded",
+    "suspicious_supersedes",
+    "links",
+    "inbox",
+)
 
 
 def _summaries(store):
@@ -28,12 +36,33 @@ def _summaries(store):
     return {"count": len(flagged), "items": flagged}
 
 
-def _check(name, service, home, days, index_available):
+def _links(service):
+    report = service.link_report()
+    kinds = (
+        ("broken_link", "broken_links"),
+        ("orphan_hub", "orphan_hubs"),
+        ("unlinked_related", "unlinked_related"),
+    )
+    items = [{"type": kind, **row} for kind, field in kinds for row in report[field]]
+    return {"count": len(items), "items": items, **{f: len(report[f]) for _k, f in kinds}}
+
+
+def _store_check(name, service):
+    """Checks that read only the store (no usage telemetry)."""
     if name == "summaries":
         return _summaries(service.profile.store)
     if name == "duplicates":
         pairs = service.duplicate_pairs(sync=False)
         return {"count": len(pairs), "items": pairs, "matching": "lexical"}
+    if name == "links":
+        return _links(service)
+    return None
+
+
+def _check(name, service, home, days, index_available):
+    result = _store_check(name, service)
+    if result is not None:
+        return result
     index = service.profile.index
     if name == "unused":
         rows = service.unused(days)

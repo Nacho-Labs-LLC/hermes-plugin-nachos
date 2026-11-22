@@ -241,6 +241,13 @@ class MemoryIndex:
                 head_count INTEGER NOT NULL,
                 profile    TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS links (
+                src TEXT NOT NULL,
+                dst TEXT NOT NULL,
+                pos INTEGER NOT NULL,
+                PRIMARY KEY (src, dst)
+            );
+            CREATE INDEX IF NOT EXISTS links_dst ON links (dst);
             CREATE TABLE IF NOT EXISTS inbox (
                 id              INTEGER PRIMARY KEY AUTOINCREMENT,
                 created_ts      REAL NOT NULL,
@@ -470,6 +477,46 @@ class MemoryIndex:
                 0
             ]
         )
+
+    # -- links -------------------------------------------------------------
+
+    def set_links(self, src: str, dsts: list[str]) -> None:
+        """Replace ``src``'s outgoing links (``dsts`` in body order)."""
+        self._conn.execute("DELETE FROM links WHERE src = ?", (src,))
+        self._conn.executemany(
+            "INSERT OR IGNORE INTO links (src, dst, pos) VALUES (?, ?, ?)",
+            [(src, dst, pos) for pos, dst in enumerate(dsts)],
+        )
+        self._conn.commit()
+
+    def delete_links(self, src: str) -> None:
+        """Drop ``src``'s outgoing links; links *to* it stay and read as broken."""
+        self._conn.execute("DELETE FROM links WHERE src = ?", (src,))
+        self._conn.commit()
+
+    def replace_links(self, forward: Mapping[str, list[str]]) -> bool:
+        """Make the stored links equal ``forward``; True when anything changed."""
+        current = self.all_links()
+        wanted = {src: dsts for src, dsts in forward.items() if dsts}
+        changed = [src for src in set(current) | set(wanted) if current.get(src) != wanted.get(src)]
+        for src in changed:
+            self.set_links(src, wanted.get(src, []))
+        return bool(changed)
+
+    def all_links(self) -> dict[str, list[str]]:
+        """``{src: [dst, ...]}`` for every stored link, in body order."""
+        out: dict[str, list[str]] = {}
+        for src, dst in self._conn.execute("SELECT src, dst FROM links ORDER BY src, pos"):
+            out.setdefault(src, []).append(dst)
+        return out
+
+    def links_from(self, src: str) -> list[str]:
+        rows = self._conn.execute("SELECT dst FROM links WHERE src = ? ORDER BY pos", (src,))
+        return [str(dst) for (dst,) in rows]
+
+    def links_to(self, dst: str) -> list[str]:
+        rows = self._conn.execute("SELECT src FROM links WHERE dst = ? ORDER BY src", (dst,))
+        return [str(src) for (src,) in rows]
 
     # -- similarity calibration -------------------------------------------
 

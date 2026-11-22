@@ -36,7 +36,9 @@ RECALL_SCHEMA = {
         "entry from the manifest (superseded entries still return their content "
         "plus a superseded_by pointer), or 'query' to search: matches by keywords "
         "and, when embeddings are enabled, by meaning, redirecting superseded hits "
-        "to their current successor unless include_superseded is true. Use when "
+        "to their current successor unless include_superseded is true. An exact-key "
+        "fetch also lists the entry's links, backlinks and broken_links, and query "
+        "results may carry `related` (linked entries one hop away). Use when "
         "the manifest shows a relevant entry or you suspect one exists."
     ),
     "parameters": {
@@ -44,6 +46,11 @@ RECALL_SCHEMA = {
         "properties": {
             "key": {"type": "string", "description": "Exact entry key (slug of title)."},
             "query": {"type": "string", "description": "Natural-language or keyword search."},
+            "entity": {
+                "type": "string",
+                "description": "Only entries that mention this identifier, host, path, @handle "
+                "or name; with no query, lists them.",
+            },
             "limit": {"type": "integer", "description": "Max results for a query (default 10)."},
             "include_superseded": {
                 "type": "boolean",
@@ -64,7 +71,10 @@ PUT_SCHEMA = {
         "up front when replacing an outdated entry so it stays archived out of "
         "default recall and the manifest. The response lists possible_duplicates "
         "and possible_updates; if one of possible_updates is an older version of "
-        "the same fact, call put again with supersedes=[key]. Secrets are "
+        "the same fact, call put again with supersedes=[key]. Link related entries by "
+        "writing [[key]] (or [[Entry Title]]) in the body; suggested_links lists entries "
+        "that share identifiers, hosts or names with the new one, and broken_links any "
+        "[[...]] that points nowhere. Secrets are "
         "redacted before storage."
     ),
     "parameters": {

@@ -157,6 +157,7 @@ class NachosMemoryProvider(MemoryProvider):
                 similarity_floor="p75" if self._cfg["similarity_floor"] == "auto" else None,
                 calibrate_duplicates=self._calibrate_duplicates(),
                 rerank_candidates=max(1, int(self._cfg["rerank_candidates"])),
+                related_per_hit=max(0, int(self._cfg["related_per_hit"])),
             )
             service.session_id = self._session_id
             return service
@@ -270,7 +271,8 @@ class NachosMemoryProvider(MemoryProvider):
             "`nachos_memory_put` (pass `supersedes` with the old key when replacing "
             "an outdated fact; if the response lists a `possible_updates` entry "
             "that is an older version of the same fact, call `nachos_memory_put` "
-            "again with `supersedes=[key]`); recall with `nachos_memory_recall`, "
+            "again with `supersedes=[key]`; `suggested_links` names entries sharing "
+            "entities with the new one, add `[[key]]` to the body to link them); recall with `nachos_memory_recall`, "
             "remove with `nachos_memory_remove`. Never use the built-in `memory` tool with "
             '`target: "memory"`: it is disabled and not shown to you. Persona and '
             "identity belong to SOUL.md and are not memory. Earlier conversation that was "
@@ -295,6 +297,7 @@ class NachosMemoryProvider(MemoryProvider):
         try:
             entries = self._service.manifest_entries()
             hidden = self._service.superseded_count()
+            link_counts = self._service.link_counts()
         except Exception as e:
             logger.debug("Nachos manifest list failed: %s", e)
             return contract
@@ -304,6 +307,7 @@ class NachosMemoryProvider(MemoryProvider):
             entries,
             char_budget=self._cfg["manifest_char_budget"],
             superseded_count=hidden,
+            link_counts=link_counts,
         )
         return f"{contract}\n\n{manifest}" if manifest else contract
 
@@ -514,20 +518,28 @@ class NachosMemoryProvider(MemoryProvider):
     def _recall(self, service: MemoryService, args: dict[str, Any]) -> str:
         key = (args.get("key") or "").strip()
         query = (args.get("query") or "").strip()
+        entity = (args.get("entity") or "").strip()
         scope = (args.get("scope") or "").strip() or None
         if key:
             entry = service.get_entry(key, scope)
             if entry is None:
                 return json.dumps({"error": f"No entry with key {key!r}"})
             return json.dumps(entry)
-        if query:
+        if query or entity:
             limit = clamp_int(args.get("limit"), 10, 1, 25)
             include_superseded = bool(args.get("include_superseded", False))
             results = service.search(
-                query, limit=limit, scope=scope, include_superseded=include_superseded
+                query,
+                limit=limit,
+                scope=scope,
+                include_superseded=include_superseded,
+                entity=entity or None,
             )
-            return json.dumps({"query": query, "count": len(results), "results": results})
-        return json.dumps({"error": "Provide 'key' or 'query'."})
+            out: dict[str, Any] = {"query": query, "count": len(results), "results": results}
+            if entity:
+                out["entity"] = entity
+            return json.dumps(out)
+        return json.dumps({"error": "Provide 'key', 'query' or 'entity'."})
 
     def _put(self, service: MemoryService, args: dict[str, Any]) -> str:
         if not self._primary:

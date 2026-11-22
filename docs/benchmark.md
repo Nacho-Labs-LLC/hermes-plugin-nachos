@@ -525,3 +525,45 @@ Readings:
 
 - **Keep `rerank: off` by default**: with supersedes + redirect active, `gte-modernbert-base` q8 (`rerank: off`) already hits `1.000` on `outdated`, `long-body`, `near-dup`, and every adversarial query at `12–17 ms` p50, while `rerank: on` costs `120–320 ms` per recall and slightly degrades redirected old-wording queries.
 - **Defaults in code**: `chunk_penalty = 0.05`, `duplicate_calibration = "auto"`, `calibrate_updates = True` (`p99` floor when calibrated), `similarity_floor = "off"`, `rerank = "off"`.
+
+## Linked memory (`naterchrdsn/links`)
+
+Links, `related` expansion, entity suggestions and the `entity` filter were added on top of `naterchrdsn/memory-next` (`a0001a875a`). Recall ranking is unchanged by design (a `related` list is attached after ranking; a graph boost was tried and dropped, below), so the first job of the bench is to show no regression. Same setup as the other matrices: `nachos` backend through `nachos-embeddings` (branch `emb-prefixes`), `q8`, typed, rerank off, `--repeat 1`, supersedes applied by label, cache outside the repo.
+
+### Recall before / after (hit@1 / hit@5 / MRR@10)
+
+| Set | Backend | Before (`a0001a875a`) | After | Delta hit@1 / MRR |
+| --- | --- | --- | --- | --- |
+| main (208 entries, 393 scored queries + 30 negative) | lexical | 0.695 / 0.812 / 0.748 | 0.695 / 0.812 / 0.748 | +0.000 / +0.000 |
+| main | MiniLM q8 | 0.758 / 0.924 / 0.832 | 0.758 / 0.924 / 0.832 | +0.000 / +0.000 |
+| main | gte-modernbert q8 | 0.768 / 0.949 / 0.848 | 0.766 / 0.949 / 0.847 | -0.002 / -0.001 |
+| adversarial (128 entries, 81 answerable queries) | lexical | 0.975 / 1.000 / 0.986 | 0.975 / 1.000 / 0.986 | +0.000 / +0.000 |
+| adversarial | MiniLM q8 | 0.988 / 1.000 / 0.994 | 0.988 / 1.000 / 0.994 | +0.000 / +0.000 |
+| adversarial | gte-modernbert q8 | 1.000 / 1.000 / 1.000 | 1.000 / 1.000 / 1.000 | +0.000 / +0.000 |
+
+The only difference is one `natural` query on gte-modernbert (hit@1 -0.002, inside the CLI's own run-to-run noise: re-running the unchanged baseline gave 0.7735 against 0.768 the first time, and re-running the new code matched that 0.7735 exactly). Neither fixture contains `[[links]]`, so `related` never fires there; the fixtures cannot show a gain from linking, only that the extra machinery (graph reconcile, `related` pass) is inert when no links exist.
+
+### Link suggestions (`--link-eval`)
+
+`bench/data/adversarial/links.json` holds 61 hand-labelled entry pairs (undirected) that a reader would want linked (same product and its replica, an incident and the system it hit, a plan and its support targets...), written before the suggester was run. Entries are compared by the root of their supersedes chain, so an updated version inherits its predecessor's labels, and two versions of the same fact are neutral. `--link-eval` replays all 128 entries through `put()` without supersedes and scores `suggested_links` as each entry arrives: precision is labelled-pair suggestions over all suggestions; recall is labelled pairs found at least once.
+
+| Backend | Pairs | Precision | Recall | TP/FP |
+| --- | --- | --- | --- | --- |
+| lexical | 61 | 0.667 | 0.131 | 8/4 |
+| MiniLM q8 | 61 | 0.600 | 0.098 | 6/4 |
+| gte-modernbert q8 | 61 | 0.556 | 0.082 | 5/4 |
+
+Notes:
+
+- **Recall is low on purpose.** Most labelled pairs are semantic (a billing API and its load-test note share no identifier), and the suggester only sees shared identifiers, hosts, paths, handles, project names and, in pairs, capitalised names. It is meant to catch the links an agent would otherwise miss for free, not to model relatedness; embeddings do not help (they push relations into `possible_updates`, which are excluded from `suggested_links`).
+- **Strict labels overstate the false positives.** Three of the four FPs are `Postgres ...` entries sharing the leading project name (`Postgres read replica for analytics` to `Postgres primary host`, `Postgres connection usage` to both replicas): real relations that my labels omitted. With them counted, lexical precision would be 11/12 = 0.917. I did not relabel, so the table is the strict number. The remaining FP, `2024-05-03 search outage` to `Incident on-call rotation`, comes from the word "incident" being treated as a project name.
+- **This label set is not independent.** A first run scored precision 0.455 / recall 0.147 (12 FPs: `production`, `staging`, `primary` and `python` taken as project names; `lumenfold.io` and `@lumenfold/sdk` as strong entities; one shared product name such as `GitHub` as enough). The current rules were added after that run: a project name must never appear in lowercase anywhere in memory, bare domains and product names are weak (two needed), and `.internal` machine names are strong. Treat 0.667 as tuned on this data, and re-check on real memory.
+- The main fixture has no links file, so `--link-eval` skips it.
+
+### Graph boost: tried, dropped
+
+A `graph_boost` (add a share of a strong hit's fused score to entries it links to) was implemented and measured on a copy of the adversarial set where each of the 62 labelled pairs was made an explicit `[[link]]`. It only reorders results: 0.01 changed nothing, 0.03 cost lexical hit@1 0.975 to 0.914, 0.3 to 0.716 (MiniLM 0.988 to 0.864). Linked entries are related, not the answer to the same query, so boosting them displaces the real answer. It was removed rather than shipped off by default; `related` shows neighbours without reordering anything.
+
+### Cost and size
+
+`memory.py` stays at radon maintainability B (10.6, from 9.2): the link and entity logic lives in `links.py`, `graph.py` and `linked.py`, and the unchanged cache refresh and change-log snapshot helpers moved to `support.py`. `put()` re-scans one entry's text for entities and links; the entity index is rebuilt from the store only after an external edit.

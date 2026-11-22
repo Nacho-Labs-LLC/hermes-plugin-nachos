@@ -10,6 +10,7 @@ cron jobs, memories, approvals, or model requests.
 ```sh
 /path/to/venv/bin/nachos-maintain --profile-home /home/alice/.hermes/profiles/work --json all
 /path/to/venv/bin/nachos-maintain --profile-home /home/alice/.hermes/profiles/work --store flatfile summaries
+/path/to/venv/bin/nachos-maintain --profile-home /home/alice/.hermes/profiles/work --json links
 ```
 
 Replace the example paths with your actual interpreter/install and profile
@@ -64,7 +65,8 @@ audit, and rerun before making approved edits.
 | `summaries` | The same `nachos_core.quality.flag_reason` used by `tools/correct_summaries.py` | Inspect low-signal, title-repeating, or vocabulary-mismatched summaries against the full body. |
 | `duplicates` | `MemoryService.duplicate_pairs(sync=False)`, embeddings disabled | Read both entries and decide whether they actually describe the same fact. No orphan-vector or telemetry cleanup. |
 | `unused` | `MemoryService.unused`, existing usage telemetry | Review never-recalled/never-query-hit entries first seen at least `--days N` ago (default 30). |
-| `all` | All four checks | Monthly review report, not an action plan executed by the CLI. |
+| `links` | `MemoryService.link_report`, straight from the store (no sidecar, no embeddings) | Fix `[[...]]` links that point nowhere (`broken_link`), link or fold entries that many others name but nothing links to (`orphan_hub`), and review entry pairs that strongly share identifiers, hosts, paths or names but are not linked (`unlinked_related`). Entity matching is regex-based and precision-first, so it misses relations that share no identifier; it never edits anything. |
+| `all` | Every check above | Monthly review report, not an action plan executed by the CLI. |
 
 `--days` must be finite and nonnegative. First-seen age is **not** creation
 age or last-modified age. Untracked entries are returned separately in

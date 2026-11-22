@@ -59,11 +59,23 @@ Run `hermes memory setup` or edit `$HERMES_HOME/nachos/config.json`. Settings ar
 | `rerank_model` | blank | Cross-encoder id (blank = `jinaai/jina-reranker-v1-tiny-en`, about 35 MB at q8). |
 | `rerank_dtype` | blank | Cross-encoder precision, e.g. `q8`. |
 | `rerank_candidates` | `25` | How many top fused results the reranker re-scores. |
+| `related_per_hit` | `3` | Linked entries (one hop) attached as `related` to each recall result, at most 8 per query. `0` turns related expansion off. |
 | `shared_store` | `off` | `on` adds a memory scope shared by every profile on the machine. |
 | `shared_store_path` | blank | Shared store directory (blank = `<hermes root>/nachos-shared`). |
 | `redact_secrets` | `on` | Redact secrets in everything written to memory. |
 | `checkpoint_max_age_days` | `30` | Delete pre-compression transcript checkpoints older than this; `0` keeps them. |
 | `capture` | `review` | `review` suggests memories from finished sessions into a review inbox; `off` disables. |
+
+## Linked memory
+
+Entries can reference each other. Write `[[key]]` (or `[[Entry Title]]`, or `[[key|label]]`) in a body; links inside code spans and fenced blocks are ignored.
+
+- **Stored in the sidecar** (`links` table, forward edges, backlinks by indexed lookup) and kept in step on put, edit, remove, revert and supersede, and reconciled against hand edits. A link to a superseded entry resolves to its active successor; a link to nothing is *broken*, tolerated, and reported by `put` (`broken_links`) and exact-key recall.
+- **Exact-key recall** (`nachos_memory_recall key=...`) also returns `links`, `backlinks` and `broken_links`.
+- **Query recall** may attach `related` to a result: up to `related_per_hit` (default 3) one-hop neighbours, at most 8 per query, never an entry already in the result list, outgoing links in body order then backlinks by key. Links do not change ranking: a graph boost was measured and rejected (`docs/benchmark.md`).
+- **Entities without an LLM.** Identifiers (`db-prim-02`, `dbt_hourly`), machine hostnames, paths, `@handles`, CamelCase and capitalised multiword names, mid-sentence capitalised words and project names used as titles are extracted with regexes into an entity to entries index. `nachos_memory_put` returns `suggested_links` ("this shares `db-prim-02.internal` with entries a, b"): a shared identifier, host, path, handle or project name is enough, topical entities need two, and entities found in many entries are ignored as generic. `nachos_memory_recall entity=...` filters a query to entries that mention an entity, or lists them when there is no query.
+- **Manifest.** Entries with links get a `[n links]` suffix only if the annotated manifest still fits `manifest_char_budget` without shortening anything more than the plain one needs.
+- **Maintenance.** `nachos-maintain links` reports broken links, orphan hubs (entries named in several others that nothing links to) and entries that strongly share entities but are not linked. Report-only.
 
 ## Embeddings
 
@@ -119,7 +131,7 @@ command with explicit profile selection:
 
 ```bash
 /path/to/venv/bin/nachos-maintain --profile-home /absolute/path/to/profile --json all
-# Independently schedulable: inbox | summaries | duplicates | unused | superseded | all
+# Independently schedulable: inbox | summaries | duplicates | unused | superseded | links | all
 /path/to/venv/bin/nachos-maintain --profile-home /absolute/path/to/profile --days 90 unused
 ```
 

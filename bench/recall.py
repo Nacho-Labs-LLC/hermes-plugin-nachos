@@ -607,6 +607,107 @@ def eval_suggest_backend(
     return run
 
 
+def _link_roots(memories: list[dict[str, Any]]) -> dict[str, str]:
+    """key -> root of its supersedes chain, so a newer version inherits its predecessor's labels."""
+    root: dict[str, str] = {}
+    for mem in memories:
+        key = slugify(mem["title"])
+        old = (mem.get("supersedes") or [None])[0]
+        root[key] = root.get(old, old) if old else key
+    return root
+
+
+def _score_links(
+    svc: MemoryService, memories: list[dict[str, Any]], positives: list[dict[str, Any]]
+) -> dict[str, Any]:
+    root = _link_roots(memories)
+    wanted = {frozenset((root.get(p["a"], p["a"]), root.get(p["b"], p["b"]))) for p in positives}
+    found: set[frozenset[str]] = set()
+    tp = fp = neutral = 0
+    false_positives: list[dict[str, Any]] = []
+    for mem in memories:
+        res = svc.put(
+            title=mem["title"],
+            summary=mem["summary"],
+            category=mem["category"],
+            body=mem["body"],
+            supersedes=None,
+        )
+        key = slugify(mem["title"])
+        for sug in res.get("suggested_links") or []:
+            pair = frozenset((root[key], root.get(sug["key"], sug["key"])))
+            if len(pair) == 1:
+                neutral += 1  # two versions of one fact: an update, not a link
+            elif pair in wanted:
+                tp += 1
+                found.add(pair)
+            else:
+                fp += 1
+                false_positives.append(
+                    {"key": key, "suggested": sug["key"], "shared": sug["shared"]}
+                )
+    return {
+        "labelled_pairs": len(wanted),
+        "suggestions": tp + fp,
+        "tp": tp,
+        "fp": fp,
+        "neutral": neutral,
+        "precision": round(tp / (tp + fp), 4) if tp + fp else 1.0,
+        "recall": round(len(found) / len(wanted), 4) if wanted else 1.0,
+        "false_positives": false_positives,
+    }
+
+
+def eval_link_backend(
+    backend: str, opts: argparse.Namespace, memories: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Replay ``memories`` through put() and score ``suggested_links`` against ``links.json``."""
+    run: dict[str, Any] = {"backend": opts.label or backend, "status": "ok"}
+    path = opts.data_dir / "links.json"
+    if not path.exists():
+        return {**run, "status": "skipped", "reason": f"no links.json in {opts.data_dir}"}
+    embedder, reason = resolve_embedder(backend, opts)
+    if reason:
+        return {**run, "status": "skipped", "reason": reason}
+    positives = json.loads(path.read_text(encoding="utf-8"))["positives"]
+    with tempfile.TemporaryDirectory(prefix="nachos-links-") as tmp:
+        svc = build_service(Path(tmp), embedder, **ranking_options(opts))
+        try:
+            run.update(_score_links(svc, memories, positives))
+        finally:
+            svc.close()
+    return run
+
+
+def format_link_report(report: dict[str, Any]) -> str:
+    env = report["environment"]
+    lines = [f"Nachos suggested_links eval: {env['memories']} memories", ""]
+    rows = [
+        [
+            r["backend"],
+            str(r["labelled_pairs"]),
+            f"{r['precision']:.3f}",
+            f"{r['recall']:.3f}",
+            f"{r['tp']}/{r['fp']}",
+            str(r["neutral"]),
+        ]
+        for r in report["runs"]
+        if r["status"] == "ok"
+    ]
+    lines += (
+        [_table(["backend", "pairs", "precision", "recall", "TP/FP", "neutral"], rows)]
+        if rows
+        else []
+    )
+    lines += [
+        f"{r['backend']}: skipped, {r['reason']}" for r in report["runs"] if r["status"] != "ok"
+    ]
+    for r in report["runs"]:
+        for fp in r.get("false_positives", [])[:40]:
+            lines.append(f"  FP {fp['key']} -> {fp['suggested']}  via {fp['shared']}")
+    return "\n".join(lines) + "\n"
+
+
 def format_suggest_report(report: dict[str, Any]) -> str:
     env = report["environment"]
     lines = [
@@ -676,6 +777,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="evaluate put() possible_updates recall@1/@3 and distinct fp@1 on the fixture",
     )
     ap.add_argument(
+        "--link-eval",
+        action="store_true",
+        help="evaluate put() suggested_links precision/recall against <data-dir>/links.json",
+    )
+    ap.add_argument(
         "--data-dir",
         type=Path,
         default=DATA_DIR,
@@ -725,7 +831,7 @@ def _emit_report(report: dict[str, Any], opts: argparse.Namespace, text: str) ->
         print(json.dumps(report, indent=1))
         return 0
     print(text)
-    if opts.misses and not opts.suggest_eval:
+    if opts.misses and not (opts.suggest_eval or opts.link_eval):
         for run in report["runs"]:
             for row in run.get("queries", []):
                 if row["rank"] is None or row["rank"] > 5:
@@ -745,6 +851,10 @@ def main(argv: list[str] | None = None) -> int:
     if not queries:
         print("no queries selected", file=sys.stderr)
         return 2
+    if opts.link_eval:
+        runs = [eval_link_backend(b, opts, memories) for b in opts.backends]
+        report = {"environment": environment(len(memories), len(queries), opts), "runs": runs}
+        return _emit_report(report, opts, format_link_report(report))
     if opts.suggest_eval:
         runs = [eval_suggest_backend(b, opts, memories, queries) for b in opts.backends]
         report = {"environment": environment(len(memories), len(queries), opts), "runs": runs}
