@@ -32,7 +32,6 @@ from __future__ import annotations
 
 import contextlib
 import logging
-import time
 from collections import OrderedDict
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -47,11 +46,27 @@ from .chunking import (
     embed_text,
 )
 from .embeddings import DOCUMENT, QUERY, Embedder
-from .index import MemoryIndex, dot
-from .lexical import LexicalIndex, jaccard
-from .quality import looks_like_update, low_signal_reason
+from .index import MemoryIndex
+from .lexical import LexicalIndex
+from .quality import low_signal_reason
 from .store.base import Entry, EntryMeta, MemoryStore
 from .store.md_store import slugify
+from .validity import (
+    RECENCY_MIN_GAP_SECONDS,
+    RECENCY_TIE_EPS,
+    backfill_scope_timestamps,
+    entry_payload,
+    find_duplicate_pairs,
+    format_put_result,
+    history_rows,
+    normalize_supersedes,
+    restore_from_change,
+    scope_status,
+    select_ranked,
+    suggest_supersedes_for,
+    superseded_entries,
+    unused_entries,
+)
 
 __all__ = [
     "CHUNK_OVERLAP",
@@ -80,53 +95,8 @@ _RRF_K = 60
 # 0.35-0.45 is a plateau on bench/ (see docs/benchmark.md).
 _MIN_LEXICAL_COVERAGE = 0.4
 _LEXICAL_DUP_THRESHOLD = 0.6
-# Recency tie-break tolerance on RRF scores: covers exact ties and symmetric (0,1)/(1,0)
-# hybrid rank swaps (1/60 + 1/62 - 2/61 ~= 8.8e-6) without overriding wider score gaps.
-_RECENCY_TIE_EPS = 1e-5
-
-
-def _normalize_supersedes(supersedes: str | list[str] | None, self_key: str) -> list[str]:
-    if not supersedes:
-        return []
-    raw = [supersedes] if isinstance(supersedes, str) else list(supersedes)
-    out: list[str] = []
-    for item in raw:
-        k = str(item or "").strip()
-        if k and k != self_key and k not in out:
-            out.append(k)
-    return out
-
-
-def _apply_recency_tiebreak(
-    items: list[tuple[tuple[str, str], dict[str, Any]]],
-    metas_by_scope: dict[str, dict[str, EntryMeta]],
-) -> list[tuple[tuple[str, str], dict[str, Any]]]:
-    """Within near-equal fused score clusters (same match count), prefer newer updated_at."""
-    if len(items) < 2:
-        return items
-
-    def _updated(entry: tuple[tuple[str, str], dict[str, Any]]) -> float:
-        meta = metas_by_scope[entry[0][0]].get(entry[0][1])
-        return meta.updated_at if meta is not None and meta.updated_at is not None else 0.0
-
-    out: list[tuple[tuple[str, str], dict[str, Any]]] = []
-    i = 0
-    while i < len(items):
-        lead_score = items[i][1]["score"]
-        lead_matches = len(items[i][1]["match"])
-        j = i + 1
-        while (
-            j < len(items)
-            and len(items[j][1]["match"]) == lead_matches
-            and lead_score - items[j][1]["score"] <= _RECENCY_TIE_EPS
-        ):
-            j += 1
-        cluster = items[i:j]
-        if len(cluster) > 1:
-            cluster.sort(key=lambda entry: -_updated(entry))
-        out.extend(cluster)
-        i = j
-    return out
+_RECENCY_TIE_EPS = RECENCY_TIE_EPS
+_RECENCY_MIN_GAP_SECONDS = RECENCY_MIN_GAP_SECONDS
 
 
 @dataclass
@@ -175,31 +145,9 @@ class MemoryService:
         self.session_id: str = ""
         self._seen_keys: dict[str, frozenset] = {}
         self._lexical_cache: dict[str, tuple[object, LexicalIndex]] = {}
+        self._meta_cache: dict[str, tuple[object, dict[str, EntryMeta]]] = {}
         for scope in self.scopes.values():
-            self._backfill_timestamps(scope)
-
-    @staticmethod
-    def _backfill_timestamps(scope: Scope) -> None:
-        """Populate missing created_at/updated_at from change log, usage first_seen, or now."""
-        if scope.store.read_only or scope.index.read_only:
-            return
-        metas = scope.store.all_meta()
-        missing = [k for k, m in metas.items() if m.created_at is None or m.updated_at is None]
-        if not missing:
-            return
-        change_ts = scope.index.change_timestamps()
-        usage = scope.index.usage()
-        now = time.time()
-        to_fill: dict[str, tuple[float, float, bool]] = {}
-        for key in missing:
-            if key in change_ts:
-                created_at, updated_at = change_ts[key]
-            elif key in usage and usage[key].get("first_seen"):
-                created_at = updated_at = float(usage[key]["first_seen"])
-            else:
-                created_at = updated_at = now
-            to_fill[key] = (created_at, updated_at, True)
-        scope.store.backfill_timestamps(to_fill)
+            backfill_scope_timestamps(scope.store, scope.index)
 
     @property
     def profile(self) -> Scope:
@@ -207,6 +155,7 @@ class MemoryService:
 
     def close(self) -> None:
         self._lexical_cache.clear()
+        self._meta_cache.clear()
         for scope in self.scopes.values():
             scope.close()
         if self.embedder is not None:
@@ -272,7 +221,7 @@ class MemoryService:
         rows: list[Entry] = []
         for scope in self.scopes.values():
             entries = scope.store.list()
-            metas = scope.store.all_meta()
+            metas = self._scope_meta(scope)
             if not include_superseded:
                 entries = [
                     e for e in entries if not (metas.get(e[0]) and metas[e[0]].superseded_by)
@@ -292,7 +241,7 @@ class MemoryService:
         return sum(
             1
             for scope in self.scopes.values()
-            for meta in scope.store.all_meta().values()
+            for meta in self._scope_meta(scope).values()
             if meta.superseded_by
         )
 
@@ -321,23 +270,23 @@ class MemoryService:
             if body is None:
                 continue
             s.index.record_recall(key)
-            meta = s.store.get_meta(key) or EntryMeta()
-            out: dict[str, Any] = {"key": key, "scope": s.name, "body": body}
-            if meta.created_at is not None:
-                out["created_at"] = meta.created_at
-            if meta.updated_at is not None:
-                out["updated_at"] = meta.updated_at
-            if meta.superseded_by:
-                out["superseded_by"] = meta.superseded_by
-                out["note"] = (
-                    f"This entry has been superseded by '{meta.superseded_by}'. "
-                    "Fetch that key for current information."
-                )
-            return out
+            return entry_payload(key, s.name, body, s.store.get_meta(key) or EntryMeta())
         return None
 
     def _invalidate_lexical(self, scope_name: str) -> None:
         self._lexical_cache.pop(scope_name, None)
+        self._meta_cache.pop(scope_name, None)
+
+    def _scope_meta(self, scope: Scope) -> dict[str, EntryMeta]:
+        fp = scope.store.fingerprint()
+        if fp is not None:
+            cached = self._meta_cache.get(scope.name)
+            if cached is not None and cached[0] == fp:
+                return cached[1]
+        metas = scope.store.all_meta()
+        if fp is not None:
+            self._meta_cache[scope.name] = (fp, metas)
+        return metas
 
     def _update_lexical_after_put(
         self,
@@ -350,6 +299,7 @@ class MemoryService:
         category: str,
     ) -> None:
         cached = self._lexical_cache.get(scope.name)
+        meta_cached = self._meta_cache.get(scope.name)
         if fp_before is None or cached is None or cached[0] != fp_before or "\n" in summary:
             self._invalidate_lexical(scope.name)
             return
@@ -360,6 +310,15 @@ class MemoryService:
             return
         cached[1].upsert(key, title=title, summary=summary, category=category, body=stored_body)
         self._lexical_cache[scope.name] = (fp_after, cached[1])
+        if meta_cached is not None and meta_cached[0] == fp_before:
+            new_meta = scope.store.get_meta(key)
+            if new_meta is not None:
+                meta_cached[1][key] = new_meta
+                self._meta_cache[scope.name] = (fp_after, meta_cached[1])
+            else:
+                self._meta_cache.pop(scope.name, None)
+        else:
+            self._meta_cache.pop(scope.name, None)
 
     def _lexical_index(self, scope: Scope) -> LexicalIndex:
         fp = scope.store.fingerprint()
@@ -383,23 +342,16 @@ class MemoryService:
         include_superseded: bool,
     ) -> list[tuple[tuple[str, str], dict[str, Any]]]:
         """Filter superseded entries (unless requested) and apply recency tie-breaking."""
-        if not fused:
-            return []
         scope_names = {scope_name for scope_name, _key in fused}
-        metas_by_scope = {name: self.scopes[name].store.all_meta() for name in scope_names}
-        items = [
-            item
-            for item in fused.items()
-            if include_superseded
-            or not (
-                (meta := metas_by_scope[item[0][0]].get(item[0][1])) is not None
-                and meta.superseded_by
-            )
-        ]
-        # Ties go to entries matched by both lexical and semantic, then newer updated_at on near-ties.
-        items.sort(key=lambda item: (-item[1]["score"], -len(item[1]["match"])))
-        items = _apply_recency_tiebreak(items, metas_by_scope)
-        return items[:limit]
+        metas_by_scope = {name: self._scope_meta(self.scopes[name]) for name in scope_names}
+        return select_ranked(
+            fused,
+            metas_by_scope,
+            limit=limit,
+            include_superseded=include_superseded,
+            eps=_RECENCY_TIE_EPS,
+            min_gap_seconds=_RECENCY_MIN_GAP_SECONDS,
+        )
 
     def search(
         self,
@@ -471,7 +423,7 @@ class MemoryService:
             }
             if "similarity" in row:
                 result["similarity"] = row["similarity"]
-            meta = s.store.get_meta(key)
+            meta = self._scope_meta(s).get(key)
             if meta is not None and meta.superseded_by:
                 result["superseded_by"] = meta.superseded_by
             results.append(result)
@@ -495,7 +447,7 @@ class MemoryService:
         label = f"{title} {summary}"
         for s in self.scopes.values():
             index = self._lexical_index(s)
-            metas = s.store.all_meta()
+            metas = self._scope_meta(s)
             excluded_key = exclude[1] if exclude and exclude[0] == s.name else None
             for key, doc_title, score in index.similar_labels(
                 label, threshold=_LEXICAL_DUP_THRESHOLD, exclude=excluded_key
@@ -538,45 +490,17 @@ class MemoryService:
         Offline lexical audits use ``sync=False`` with no embedder. Normal callers
         retain lazy reconciliation of vectors and removed-entry telemetry.
         """
-        pairs: list[dict[str, Any]] = []
         if sync:
             for s in self.scopes.values():
                 self.sync_index(s)
-        flat: list[tuple[str, str, str, str]] = []
-        for s in self.scopes.values():
-            metas = s.store.all_meta()
-            flat.extend(
-                (s.name, k, t, sm)
-                for k, t, sm, _c in s.store.list()
-                if not (metas.get(k) and metas[k].superseded_by)
-            )
-        vecs: dict[tuple[str, str], list[float]] = {}
         embedder = self._active_embedder()
-        if embedder is not None:
-            for s in self.scopes.values():
-                for key, vec in s.index.vectors(embedder.model_id).items():
-                    vecs[(s.name, key)] = vec
-        for i, (sa, ka, ta, sma) in enumerate(flat):
-            for sb, kb, tb, smb in flat[i + 1 :]:
-                va, vb = vecs.get((sa, ka)), vecs.get((sb, kb))
-                if va is not None and vb is not None:
-                    sim, how = dot(va, vb), "semantic"
-                    if sim < self.duplicate_threshold:
-                        continue
-                else:
-                    sim, how = jaccard(f"{ta} {sma}", f"{tb} {smb}"), "lexical"
-                    if sim < _LEXICAL_DUP_THRESHOLD:
-                        continue
-                pairs.append(
-                    {
-                        "a": {"scope": sa, "key": ka, "title": ta},
-                        "b": {"scope": sb, "key": kb, "title": tb},
-                        "similarity": round(sim, 3),
-                        "match": how,
-                    }
-                )
-        pairs.sort(key=lambda p: -p["similarity"])
-        return pairs
+        scope_map = {s.name: (s.store, s.index, self._scope_meta(s)) for s in self.scopes.values()}
+        return find_duplicate_pairs(
+            scope_map,
+            model_id=embedder.model_id if embedder is not None else None,
+            duplicate_threshold=self.duplicate_threshold,
+            lexical_threshold=_LEXICAL_DUP_THRESHOLD,
+        )
 
     # -- change log --------------------------------------------------------
 
@@ -621,25 +545,9 @@ class MemoryService:
         self, key: str | None = None, scope: str | None = None, limit: int = 20
     ) -> list[dict[str, Any]]:
         """Recent memory changes across scopes, newest first."""
-        rows: list[dict[str, Any]] = []
-        for s in self._scopes_for(scope):
-            for c in s.index.changes(key=key, limit=limit):
-                preview = " ".join(str(c["prev_summary"] or "").split())
-                if len(preview) > 60:
-                    preview = preview[:59] + "…"
-                rows.append(
-                    {
-                        "scope": s.name,
-                        "id": c["id"],
-                        "ts": c["ts"],
-                        "key": c["key"],
-                        "action": c["action"],
-                        "session_id": c["session_id"],
-                        "preview": preview,
-                    }
-                )
-        rows.sort(key=lambda r: r["ts"], reverse=True)
-        return rows[:limit]
+        return history_rows(
+            {s.name: s.index for s in self._scopes_for(scope)}, key=key, limit=limit
+        )
 
     def revert(self, change_id: int, scope: str = PROFILE) -> dict[str, Any]:
         """Restore the state an entry had before change ``change_id``."""
@@ -656,29 +564,7 @@ class MemoryService:
         current = self._snapshot(target, key)
         cur_meta = target.store.get_meta(key)
         cur_superseded = cur_meta.superseded_by if cur_meta is not None else None
-        prev_superseded = change.get("prev_superseded_by")
-        if change["action"] == "supersede" and current is not None:
-            target.store.set_superseded_by(key, prev_superseded)
-            restored = "restored"
-        elif change["prev_title"] is None:
-            # Entry did not exist before the change: undoing means removing it.
-            if current is not None:
-                target.store.remove(key)
-            target.index.delete_vector(key)
-            restored = "removed"
-        else:
-            target.store.put(
-                key,
-                title=change["prev_title"],
-                summary=change["prev_summary"] or "",
-                category=change["prev_category"] or "general",
-                body=change["prev_body"] or "",
-            )
-            if prev_superseded != (target.store.get_meta(key) or EntryMeta()).superseded_by:
-                target.store.set_superseded_by(key, prev_superseded)
-            target.index.delete_vector(key)
-            target.index.record_seen([key])
-            restored = "restored"
+        restored = restore_from_change(target.store, target.index, change, current is not None)
         self._invalidate_lexical(target.name)
         self._log(target, key, "revert", current, prev_superseded_by=cur_superseded)
         return {
@@ -760,25 +646,6 @@ class MemoryService:
             self._invalidate_lexical(scope.name)
         return applied
 
-    def _suggest_supersedes(
-        self,
-        scope: Scope,
-        new_text: str,
-        similar: list[dict[str, Any]],
-        already_superseded: set[str],
-    ) -> list[str]:
-        suggested: list[str] = []
-        for dup in similar:
-            if dup["scope"] != scope.name or dup["key"] in already_superseded:
-                continue
-            snap = self._snapshot(scope, dup["key"])
-            if snap is None:
-                continue
-            old_text = f"{snap[0]}\n{snap[1]}\n{snap[3]}"
-            if looks_like_update(old_text, new_text):
-                suggested.append(dup["key"])
-        return suggested
-
     def put(
         self,
         *,
@@ -834,37 +701,25 @@ class MemoryService:
             target.index.upsert_chunks(key, chunks, embedder.model_id, chunk_vectors)
         target.index.record_seen([key])
 
-        applied = self._apply_supersedes(target, key, _normalize_supersedes(supersedes, key))
+        applied = self._apply_supersedes(target, key, normalize_supersedes(supersedes, key))
         suggested = (
-            self._suggest_supersedes(target, f"{title}\n{summary}\n{body}", similar, set(applied))
+            suggest_supersedes_for(
+                target.store, scope, f"{title}\n{summary}\n{body}", similar, set(applied)
+            )
             if similar
             else []
         )
 
-        result: dict[str, Any] = {
-            "stored": key,
-            "title": title,
-            "category": category,
-            "scope": scope,
-            "updated": is_update,
-        }
-        if applied:
-            result["superseded"] = applied
-        if similar:
-            result["possible_duplicates"] = similar
-            if suggested:
-                result["suggested_supersedes"] = suggested
-                result["note"] = (
-                    "Similar entries already exist and this looks like an update. If it replaces "
-                    f"them, re-put with supersedes={suggested!r} (or merge and remove the old entry)."
-                )
-            else:
-                result["note"] = (
-                    "Similar entries already exist. If this is the same memory, merge "
-                    "the content into one entry (put with the existing title) and "
-                    "remove the other."
-                )
-        return result
+        return format_put_result(
+            key=key,
+            title=title,
+            category=category,
+            scope=scope,
+            is_update=is_update,
+            applied_supersedes=applied,
+            similar=similar,
+            suggested_supersedes=suggested,
+        )
 
     def remove(self, key: str, scope: str | None = None) -> str | None:
         """Remove ``key``; returns the scope it was removed from, or None."""
@@ -888,84 +743,23 @@ class MemoryService:
 
     def unused(self, older_than_days: float, now: float | None = None) -> list[dict[str, Any]]:
         """Entries older than N days (first seen) never recalled or returned."""
-        now = now if now is not None else time.time()
-        cutoff = now - older_than_days * 86400
-        rows: list[dict[str, Any]] = []
-        for s in self.scopes.values():
-            usage = s.index.usage()
-            metas = s.store.all_meta()
-            for key, title, _summary, category in s.store.list():
-                if metas.get(key) and metas[key].superseded_by:
-                    continue
-                u = usage.get(key)
-                if u is None or u["first_seen"] > cutoff:
-                    continue
-                if u["recall_count"] or u["hit_count"]:
-                    continue
-                rows.append(
-                    {
-                        "scope": s.name,
-                        "key": key,
-                        "title": title,
-                        "category": category,
-                        "age_days": round((now - u["first_seen"]) / 86400, 1),
-                    }
-                )
-        rows.sort(key=lambda r: -r["age_days"])
-        return rows
+        scope_map = {s.name: (s.store, s.index, self._scope_meta(s)) for s in self.scopes.values()}
+        return unused_entries(scope_map, older_than_days=older_than_days, now=now)
 
     def superseded(
         self, older_than_days: float = 30, now: float | None = None
     ) -> list[dict[str, Any]]:
         """Superseded entries older than N days (candidates for removal)."""
-        now = now if now is not None else time.time()
-        cutoff = now - older_than_days * 86400
-        rows: list[dict[str, Any]] = []
-        for s in self.scopes.values():
-            metas = s.store.all_meta()
-            for key, title, _summary, category in s.store.list():
-                meta = metas.get(key)
-                if meta is None or not meta.superseded_by:
-                    continue
-                ts = meta.updated_at if meta.updated_at is not None else meta.created_at
-                if ts is None or ts > cutoff:
-                    continue
-                rows.append(
-                    {
-                        "scope": s.name,
-                        "key": key,
-                        "title": title,
-                        "category": category,
-                        "superseded_by": meta.superseded_by,
-                        "age_days": round((now - ts) / 86400, 1),
-                    }
-                )
-        rows.sort(key=lambda r: (-r["age_days"], r["key"]))
-        return rows
+        scope_map = {s.name: (s.store, self._scope_meta(s)) for s in self.scopes.values()}
+        return superseded_entries(scope_map, older_than_days=older_than_days, now=now)
 
     def status(self) -> dict[str, Any]:
-        out: dict[str, Any] = {
-            "embeddings": self.embedder.model_id if self.embedder else "off",
+        model_id = self.embedder.model_id if self.embedder else None
+        return {
+            "embeddings": model_id or "off",
             "embeddings_error": self.embedder_error,
-            "scopes": {},
+            "scopes": {
+                s.name: scope_status(s.store, s.index, self._scope_meta(s), model_id)
+                for s in self.scopes.values()
+            },
         }
-        for s in self.scopes.values():
-            entries = s.store.list()
-            usage = s.index.usage()
-            metas = s.store.all_meta()
-            out["scopes"][s.name] = {
-                "entries": len(entries),
-                "superseded": sum(1 for m in metas.values() if m.superseded_by),
-                "approx_timestamps": sum(1 for m in metas.values() if m.approx_timestamps),
-                "changes": s.index.count_changes(),
-                "indexed": s.index.count(self.embedder.model_id) if self.embedder else 0,
-                "never_used": sum(
-                    1
-                    for k, *_ in entries
-                    if not (metas.get(k) and metas[k].superseded_by)
-                    and not (
-                        usage.get(k, {}).get("recall_count") or usage.get(k, {}).get("hit_count")
-                    )
-                ),
-            }
-        return out

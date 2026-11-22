@@ -409,13 +409,13 @@ class TestSuggestionHeuristic:
 
 
 class TestRecencyTieBreak:
-    def test_recency_breaks_near_equal_fused_scores_without_overriding_clear_winner(
+    def test_recency_breaks_ties_only_above_min_gap_and_never_overrides_clear_winner(
         self, tmp_path: Path
     ) -> None:
         svc = _make_service(tmp_path, shared=True)
         try:
-            # Two identical-score entries across scopes (exact fused RRF tie = 1/60 each):
-            # the newer updated_at must win.
+            # Two identical-score entries across scopes written moments apart (< 60s):
+            # same-session entries must keep their original order (profile first).
             svc.put(
                 title="Standup schedule",
                 summary="Daily engineering standup schedule details",
@@ -429,19 +429,26 @@ class TestRecencyTieBreak:
                 body="Daily engineering standup runs in the morning.",
                 scope=SHARED,
             )
-            hits = svc.search("daily engineering standup")
-            assert len(hits) == 2
-            assert hits[0]["scope"] == SHARED
-            assert hits[1]["scope"] == PROFILE
+            same_session = svc.search("daily engineering standup")
+            assert [h["scope"] for h in same_session] == [PROFILE, SHARED]
 
-            # Clear score winner (matches all 3 query words) still beats a newer weak match (1 word).
+            # Once the profile entry is older by > 60s, the newer shared entry wins the tie.
+            svc.scopes[PROFILE].store.set_superseded_by(
+                "standup-schedule", None, updated_at=time.time() - 120.0
+            )
+            aged = svc.search("daily engineering standup")
+            assert [h["scope"] for h in aged] == [SHARED, PROFILE]
+
+            # Clear score winner (matches all 3 query words) still beats a newer weak match.
             svc.put(
                 title="Strong match target",
                 summary="Kestrel falcon raptor telemetry",
                 body="Kestrel falcon raptor telemetry pipeline details.",
                 scope=PROFILE,
             )
-            time.sleep(0.02)
+            svc.scopes[PROFILE].store.set_superseded_by(
+                "strong-match-target", None, updated_at=time.time() - 3600.0
+            )
             svc.put(
                 title="Newer weak note",
                 summary="Generic telemetry overview",
@@ -450,6 +457,38 @@ class TestRecencyTieBreak:
             )
             strong_hits = svc.search("kestrel falcon telemetry")
             assert strong_hits[0]["key"] == "strong-match-target"
+        finally:
+            svc.close()
+
+    def test_meta_cache_reused_across_searches_and_invalidated_on_writes(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        svc = _make_service(tmp_path)
+        try:
+            svc.put(title="Alpha note", body="Alpha telemetry pipeline configuration.")
+            svc.search("alpha")
+
+            calls = 0
+            orig = svc.profile.store.all_meta
+
+            def _counting_all_meta():
+                nonlocal calls
+                calls += 1
+                return orig()
+
+            monkeypatch.setattr(svc.profile.store, "all_meta", _counting_all_meta)
+            assert [r["key"] for r in svc.search("alpha")] == ["alpha-note"]
+            assert [r["key"] for r in svc.search("telemetry")] == ["alpha-note"]
+            assert calls == 0
+
+            # External/direct supersede invalidates meta cache via fingerprint.
+            svc.put(
+                title="Alpha note v2",
+                body="Alpha telemetry pipeline updated configuration.",
+                supersedes="alpha-note",
+            )
+            assert [r["key"] for r in svc.search("alpha")] == ["alpha-note-v2"]
+            assert calls >= 1
         finally:
             svc.close()
 
