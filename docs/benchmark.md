@@ -1,809 +1,172 @@
-# Recall benchmark
+# Benchmarks
 
-A reproducible, stdlib-only benchmark for memory recall quality and latency, so changes such as a better embedding model, query/document prefixes, chunked body vectors or a reranker can be judged by numbers. It measures only; it never changes recall behaviour.
+Reproducible, stdlib-only benchmarks for memory recall quality and latency, so a change such as a different embedding model, prefix setting or reranker can be judged by numbers. They only measure; they never change recall behaviour. Use them to compare models for your own machine and to check that a code change did not move ranking.
 
-## What it does
+Contents: [Method](#method) · [Running it](#running-it) · [Benchmarking your own model](#benchmarking-your-own-model) · [Current results](#current-results) · [Known limits](#known-limits)
 
-`bench/recall.py` builds a temporary `MemoryService` (sqlite store in a temp dir), loads the fixture through the normal `put()` path, runs every labelled query through `MemoryService.search(limit=10)` and reports:
+## Method
 
-- **hit@1 / hit@5**: share of queries whose answer is in the top 1 / top 5.
-- **MRR@10**: mean reciprocal rank of the answer within the top 10 (0 if absent).
-- **p50 / p95 ms**: search latency per query (median over `--repeat` runs).
-- **build s**: wall time to `put()` all entries, which includes embedding them when a backend is on.
-- **model load s**: time for a first `embed()` call (model download/load), excluded from build and search timings.
+### Data sets
 
-Quality numbers are deterministic for a given backend and model; latency depends on the machine.
+All data is synthetic (fictional projects, hosts and people) and shaped like real agent memory. Each set is a directory of JSON under `bench/data/`, loaded through the normal `put()` path into a temporary store.
 
-## Run it
+| Set | Directory | Entries | Queries | Purpose |
+| --- | --- | --- | --- | --- |
+| Main | `bench/data` | 208 | 443 (393 answerable, 50 `negative`) | Recall quality across query styles. Some settings were tuned on it. |
+| Adversarial | `bench/data/adversarial` | 63 base + 65 follow-up updates = 128 | 111 (81 answerable, 30 `no-answer`) | Held-out check for supersede handling and abstention. Written before the update heuristic was read and not tuned on afterwards. |
+| Links (held out) | `bench/data/links-heldout` | 76 | 6 | Link-suggestion precision and recall (`--link-eval`). |
+| History | `bench/data/history.json` | 6 synthetic sessions | 29 (22 answerable, 7 not) | `nachos_history_search` ranking and context windows (`python -m bench.history`). |
 
-```bash
-python -m bench                                   # lexical only (--embeddings off)
-python -m bench --embeddings off,sentence-transformers
-python -m bench --embeddings nachos --dtype q8
-python -m bench --model org/some-model        # any model: runs off + nachos, so the result sits next to lexical
-python -m bench --model Alibaba-NLP/gte-modernbert-base --dtype q8   # explicit model and dtype
-python -m bench --embeddings openai --base-url http://localhost:11434/v1 --model nomic-embed-text
-python -m bench --category paraphrase --misses    # one category, list queries missing the top 5
-python -m bench --repeat 5 --json results.json    # full report, per-query ranks included
-```
-
-Run from the repository root with the dev environment (`uv sync --group dev`). No extra packages are needed for lexical runs.
-
-| Flag | Meaning |
-| --- | --- |
-| `--embeddings` | Comma-separated backends: `off`, `nachos`, `sentence-transformers`, `openai`. Each is run with the same options below. |
-| `--model`, `--dtype`, `--base-url`, `--api-key-env`, `--query-prefix`, `--document-prefix` | Passed through like the `embedding_*` keys in `nachos_hermes/config.py`. |
-| `--pooling`, `--max-length`, `--rerank-max-length` | `embedding_pooling`, `embedding_max_length`, `rerank_max_length` for the `nachos` backend. `--model` without `--embeddings` runs `off,nachos`; `--label` then names only the model run. |
-| `--no-types` | `nachos` backend: never send the query/document type (previous behaviour), to measure what the type adds. |
-| `--label` | Name for the run in the report, so several runs of one backend can be told apart. |
-| `--command` | `nachos-embeddings` executable name or path. |
-| `--category` | Only run this query category (repeatable). |
-| `--repeat N` | Searches per query for latency; the median is used. Default 1. |
-| `--json PATH` | Write the full report (`-` prints JSON only). |
-| `--misses` | List queries whose answer is not in the top 5. |
-
-A backend that is not available is skipped with a reason, not an error: a missing `nachos-embeddings` on `PATH`, an uninstalled `sentence-transformers`, `openai` without `--base-url`/`--model`, or an embedder that fails its warm-up call. The exit status is non-zero only when no backend ran.
-
-`pytest` does not run the benchmark. `tests/test_bench_recall.py` covers the metric math, fixture integrity and a small lexical smoke run.
-
-## Fixture
-
-`bench/data/memories.json` holds 208 synthetic entries (fictional projects, hosts and people; no real data) shaped like real agent memory: projects, environment, decisions, procedures and history. `bench/data/queries.json` holds 423 queries (393 answerable plus 30 `negative`), each with an `expect` list of memory keys (the slug of the title), a `category`, and `match` (`any` by default; `all` for multi-hop). Edit the JSON directly; `pytest tests/test_bench_recall.py` checks that every expected key exists, keys are unique, every entry passes the write gates, and the paraphrase and long-body rules below hold.
+Main-set query categories (`category` in `queries.json`; each query has `expect`, a list of memory keys, and `match`: `any`, or `all` for multi-hop):
 
 | Category | n | What it tests |
 | --- | --- | --- |
-| `keyword` | 139 | Short keyword queries, as an agent might type (`harbor invoices`). |
+| `keyword` | 139 | Short keyword queries, as an agent might type. |
 | `natural` | 90 | A full question that shares words with the entry. |
-| `paraphrase` | 60 | Same meaning, no shared words (checked by test): needs real semantic matching, so lexical-only scores 0 by construction. |
-| `long-body` | 30 | The answer sits only in the body after about 2000 characters, past the text the embedder sees (`embed_text` is cut at 2000). Tests chunked or full-body vectors. |
-| `outdated` | 30 | One entry of a superseded/current pair; the expected key is the **current** entry. Current code has no notion of recency, so failures here are expected and are the point. |
-| `near-dup` | 24 | A sibling entry differs by one detail (staging vs production, EU vs US); the right one must rank above its twin. |
-| `negative` | 30 | No correct answer exists (off-domain topics and topics adjacent to real ones). Reported apart as false-positive rates: `fp@1` = share of queries returning anything, `fp@5` = mean filled share of the top five slots; lower is better. |
-| `multi-hop` | 20 | Needs two entries (`match: all`): the rank is that of the last expected key to appear, so hit@1 is 0 by construction and hit@5 / MRR are the meaningful numbers. |
+| `paraphrase` | 60 | Same meaning, no shared words (enforced by a test), so lexical-only scores 0 by construction. |
+| `long-body` | 30 | The answer sits only in the body after about 2000 characters. Tests chunked body vectors. |
+| `outdated` | 30 | Worded from the superseded entry of an old/new pair; the expected key is the current entry. |
+| `near-dup` | 24 | A sibling entry differs by one detail (staging vs production); the right one must outrank its twin. |
+| `multi-hop` | 20 | Needs two entries. The rank is that of the last expected key, so hit@1 is 0 by construction; read hit@5 and MRR. |
+| `negative` | 50 | No correct answer exists (30 off-domain, 20 near-miss on a stored topic). Reported as false-positive and abstention rates. |
 
-## Baseline
+The adversarial set has `current` (37), `outdated` (24, worded from the superseded entry), `sibling` (20) and `no-answer` (30) queries, and 65 updates applied in order after the base entries. Updates carry an `update_of` label that the loader turns into `supersedes`; `--no-supersedes` leaves them out.
 
-Commit 41800d1379 (Nachos 0.6.0), single run, `--repeat 1`. Environment: Linux 6.12 x86_64, Intel Core i7-1360P (16 logical CPUs), Python 3.12.3, sentence-transformers 6.3.0 with torch 2.15.0 (CPU), model `all-MiniLM-L6-v2` (the `sentence-transformers` backend default). The first run also had to download the model, which is not in the timings.
+### Metrics
 
-| Backend | hit@1 | hit@5 | MRR@10 | p50 ms | p95 ms | build s | model load s |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| off (lexical) | 0.674 | 0.812 | 0.737 | 29.9 | 54.4 | 2.14 | 0.00 |
-| sentence-transformers | 0.690 | 0.893 | 0.781 | 52.4 | 79.5 | 10.06 | 7.55 |
+- **hit@1 / hit@5**: share of answerable queries whose expected entry is in the top 1 / top 5 results.
+- **MRR@10**: mean reciprocal rank of the expected entry within the top 10 (0 if absent).
+- **p50 / p95 ms**: median and 95th-percentile search latency (median over `--repeat` runs per query). Machine-dependent; quality numbers are deterministic for a given backend and model, apart from small run-to-run noise in some model runs (about 0.002 hit@1).
+- **build s**: time to `put()` every entry, including embedding. **model load s**: first `embed()` call, excluded from the other timings.
+- **fp@1 / fp@5** (negative queries): share returning anything, and mean filled share of the top five slots. Lower is better. Without a relevance floor recall always returns something, which is why abstention exists.
+- **Abstention P / R / F1**: a query is "abstained" when `search_with_confidence` reports `no_confident_match`. Recall is the share of unanswerable queries abstained on; precision is the share of abstained queries that really were unanswerable (answerable ones abstained on count against it); F1 combines them. The default `abstention: hint` only reports this; it does not change results.
+- **Update suggestion R@1 / R@3** (`--suggest-eval`): replaying the puts in order without `supersedes`, how often `possible_updates` ranks the true older entry first / in the top three. **distinct fp@1** is how often a put of a genuinely new fact still gets a suggestion at rank 1 (lower is better; non-blocking, since the agent decides).
+- **Link P / R** (`--link-eval`): precision and recall of `suggested_links` against hand-labelled entry pairs. `hard FP` counts labelled non-pairs that were suggested.
+- **Multi-query** (`--multi-query`): hit@1 / hit@5 for one query versus the grouped rephrasings of the same question fused with RRF.
+- **History**: `m@k` = the matched message holds the answer within the top k; `ctx@5` = the answer is anywhere in a returned result including neighbouring turns; `FP` = share of unanswerable queries that returned something.
 
-Per category (hit@1 / hit@5 / MRR@10):
+## Running it
 
-| Category | n | off | sentence-transformers |
-| --- | --- | --- | --- |
-| keyword | 139 | 0.950 / 1.000 / 0.972 | 0.978 / 1.000 / 0.989 |
-| natural | 90 | 0.711 / 0.889 / 0.796 | 0.767 / 0.978 / 0.862 |
-| paraphrase | 60 | 0.000 / 0.000 / 0.000 | 0.233 / 0.400 / 0.305 |
-| long-body | 30 | 0.933 / 1.000 / 0.967 | 0.467 / 1.000 / 0.694 |
-| outdated | 30 | 0.600 / 1.000 / 0.779 | 0.467 / 0.967 / 0.717 |
-| near-dup | 24 | 0.958 / 1.000 / 0.979 | 1.000 / 1.000 / 1.000 |
-| multi-hop | 20 | 0.000 / 0.800 / 0.353 | 0.000 / 0.850 / 0.367 |
-
-Readings:
-
-- Hybrid recall helps paraphrases (0.00 to 0.23 hit@1) but they remain the weakest category.
-- Long-body hit@1 falls from 0.93 to 0.47 with embeddings on: semantic hits for the truncated text outrank the lexical match on the body tail. Chunked body vectors should target this.
-- Outdated hit@1 also falls (0.60 to 0.47): nothing prefers the current entry over the superseded one.
-- Lexical search takes about 30 ms for 208 entries because every query reads all bodies; expect it to grow with the store.
-
-## Query/document type and model matrix (before the fusion fix)
-
-These numbers were measured before the fusion change described in the next section. Keep them as the "before" picture; the later tables supersede them.
-
-Same fixture, run with the `nachos` backend against the `nachos-embeddings` branch `naterchrdsn/emb-prefixes` (per-model prefixes and pooling, optional per-request `"type": "query"|"document"`). Nachos now tells the CLI whether it is embedding a search query or a stored entry or duplicate check; the CLI applies the model's own prefix and pooling. Environment as above (i7-1360P, 16 logical CPUs, Python 3.12.3, CLI under Node), one run each (`--repeat 1`), models cached in a directory outside both repos.
-
-How it was run: a shim named `nachos-embeddings` that execs `node <worktree>/bin/cli.js "$@"` was passed with `--command`.
+From the repository root with the dev environment (`uv sync --group dev`); lexical runs need nothing else.
 
 ```bash
-export NACHOS_EMBEDDINGS_CACHE=/path/outside/both/repos
-python -m bench --command ./shim/nachos-embeddings --label minilm-fp32 --embeddings nachos --model Xenova/all-MiniLM-L6-v2
-python -m bench ... --label minilm-q8 --model Xenova/all-MiniLM-L6-v2 --dtype q8
-python -m bench ... --label bge-small-q8 --model Xenova/bge-small-en-v1.5 --dtype q8
-python -m bench ... --label bge-small-q8-notype --model Xenova/bge-small-en-v1.5 --dtype q8 --no-types
-python -m bench ... --label arctic-s-q8 --model Snowflake/snowflake-arctic-embed-s --dtype q8   # and --no-types
-python -m bench ... --label gte-modernbert-q8 --model Alibaba-NLP/gte-modernbert-base --dtype q8
+python -m bench                                   # lexical only (--embeddings off)
+python -m bench --embeddings nachos --model Xenova/all-MiniLM-L6-v2 --dtype q8
+python -m bench --embeddings openai --base-url http://localhost:11434/v1 --model nomic-embed-text
+python -m bench --data-dir bench/data/adversarial # held-out set
+python -m bench --category paraphrase --misses    # one category; list queries missing the top 5
+python -m bench --repeat 5 --json results.json    # full report with per-query ranks
+python -m bench.history [--noise N] [--repeat R] [--json out.json]
 ```
 
-`--no-types` makes the nachos backend omit the type, so queries are embedded like documents (what Nachos did before this change). For `openai` and `sentence-transformers` there is no type; use `--query-prefix` / `--document-prefix` (config keys `embedding_query_prefix` / `embedding_document_prefix`).
+| Flag | Meaning |
+| --- | --- |
+| `--embeddings` | Comma-separated backends to run: `off`, `nachos`, `sentence-transformers`, `openai`. With `--model` and no `--embeddings` it runs `off,nachos` so the result sits next to the lexical baseline. |
+| `--model`, `--dtype`, `--pooling`, `--max-length`, `--base-url`, `--api-key-env`, `--query-prefix`, `--document-prefix` | Passed through like the `embedding_*` config keys. |
+| `--no-types` | `nachos` backend: do not send the query/document type, to measure what it adds. |
+| `--rerank`, `--rerank-borderline`, `--rerank-model`, `--rerank-dtype`, `--rerank-max-length`, `--rerank-candidates` | Measure the cross-encoder (full or borderline-only). |
+| `--suggest-eval`, `--link-eval` (with `--calibrate-duplicates`), `--multi-query` | Run the suggestion, link and multi-query evaluations. |
+| `--no-supersedes` | Load the fixture without applying supersede links. |
+| `--data-dir DIR` | Use another set (`memories.json`, `queries.json`, optional `updates.json`, `links.json`). |
+| `--category C` | Only this query category (repeatable). `--misses` lists failures. |
+| `--repeat N`, `--label`, `--command`, `--synthetic N`, `--json PATH` | Latency repeats; run name; `nachos-embeddings` executable; pad the corpus with synthetic distractors to N entries; write the report. |
 
-| Run | hit@1 | hit@5 | MRR@10 | p50 ms | p95 ms | build s | model load s |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| lexical (off) | 0.674 | 0.812 | 0.737 | 29.7 | 55.0 | 3.77 | 0.00 |
-| MiniLM-L6 fp32 | 0.687 | 0.891 | 0.779 | 42.7 | 63.8 | 8.27 | 0.59 |
-| MiniLM-L6 q8 | 0.684 | 0.891 | 0.778 | 39.0 | 65.7 | 6.15 | 0.81 |
-| bge-small q8, typed | 0.649 | 0.845 | 0.742 | 45.3 | 74.5 | 7.01 | 1.05 |
-| bge-small q8, no type | 0.651 | 0.845 | 0.744 | 41.3 | 65.9 | 7.12 | 0.46 |
-| arctic-embed-s q8, typed | 0.656 | 0.840 | 0.742 | 43.4 | 65.5 | 6.92 | 0.99 |
-| arctic-embed-s q8, no type | 0.603 | 0.812 | 0.699 | 85.6 | 121.4 | 7.06 | 0.47 |
-| gte-modernbert q8 | 0.659 | 0.837 | 0.745 | 57.0 | 84.4 | 18.86 | 1.08 |
+A backend that is not available is skipped with a reason, not an error (no `nachos-embeddings` on `PATH`, `sentence-transformers` not installed, `openai` without `--base-url` and `--model`, an embedder that fails warm-up). The exit status is non-zero only when no backend ran. `pytest` does not run the benchmarks; `tests/test_bench_recall.py` covers the metric math, fixture integrity and a small lexical smoke run.
 
-Per category, hit@1 / hit@5 / MRR@10:
+## Benchmarking your own model
 
-| Category | n | lexical (off) | MiniLM-L6 fp32 | MiniLM-L6 q8 | gte-modernbert q8 |
-|---|---|---|---|---|---|
-| keyword | 139 | 0.950 / 1.000 / 0.972 | 0.978 / 1.000 / 0.989 | 0.978 / 1.000 / 0.989 | 0.971 / 1.000 / 0.984 |
-| natural | 90 | 0.711 / 0.889 / 0.796 | 0.778 / 0.978 / 0.867 | 0.778 / 0.967 / 0.870 | 0.811 / 0.956 / 0.878 |
-| paraphrase | 60 | 0.000 / 0.000 / 0.000 | 0.217 / 0.383 / 0.292 | 0.217 / 0.400 / 0.284 | 0.033 / 0.183 / 0.113 |
-| long-body | 30 | 0.933 / 1.000 / 0.967 | 0.433 / 1.000 / 0.673 | 0.433 / 0.967 / 0.678 | 0.300 / 0.667 / 0.492 |
-| outdated | 30 | 0.600 / 1.000 / 0.779 | 0.467 / 0.967 / 0.717 | 0.433 / 1.000 / 0.697 | 0.533 / 1.000 / 0.761 |
-| near-dup | 24 | 0.958 / 1.000 / 0.979 | 1.000 / 1.000 / 1.000 | 1.000 / 1.000 / 1.000 | 1.000 / 1.000 / 1.000 |
-| multi-hop | 20 | 0.000 / 0.800 / 0.353 | 0.000 / 0.850 / 0.367 | 0.000 / 0.850 / 0.372 | 0.000 / 0.950 / 0.422 |
-
-| Category | n | bge-small q8, typed | bge-small q8, no type | arctic-embed-s q8, typed | arctic-embed-s q8, no type |
-|---|---|---|---|---|---|
-| keyword | 139 | 0.942 / 1.000 / 0.969 | 0.935 / 1.000 / 0.965 | 0.964 / 1.000 / 0.981 | 0.942 / 1.000 / 0.970 |
-| natural | 90 | 0.744 / 0.956 / 0.848 | 0.744 / 0.956 / 0.848 | 0.744 / 0.967 / 0.850 | 0.667 / 0.956 / 0.795 |
-| paraphrase | 60 | 0.017 / 0.117 / 0.070 | 0.017 / 0.133 / 0.086 | 0.033 / 0.117 / 0.081 | 0.000 / 0.100 / 0.048 |
-| long-body | 30 | 0.633 / 1.000 / 0.806 | 0.667 / 1.000 / 0.802 | 0.500 / 0.900 / 0.670 | 0.133 / 0.733 / 0.411 |
-| outdated | 30 | 0.433 / 1.000 / 0.711 | 0.467 / 1.000 / 0.728 | 0.533 / 1.000 / 0.761 | 0.600 / 1.000 / 0.792 |
-| near-dup | 24 | 1.000 / 1.000 / 1.000 | 1.000 / 1.000 / 1.000 | 1.000 / 1.000 / 1.000 | 1.000 / 1.000 / 1.000 |
-| multi-hop | 20 | 0.000 / 0.800 / 0.356 | 0.000 / 0.750 / 0.336 | 0.000 / 0.800 / 0.345 | 0.000 / 0.600 / 0.269 |
-
-What the query type adds (typed minus untyped, same model):
-
-| Model | hit@1 | hit@5 | MRR@10 | Notable categories |
-| --- | --- | --- | --- | --- |
-| arctic-embed-s q8 | +0.053 | +0.028 | +0.043 | long-body hit@1 0.133 to 0.500, natural 0.667 to 0.744, multi-hop hit@5 0.600 to 0.800 |
-| bge-small q8 | -0.003 | 0.000 | -0.002 | within noise (its instruction is optional for short-query retrieval) |
-
-Notes and caveats:
-
-- arctic-embed-s is the clear case for sending the type: without the query instruction it is the worst embedding run here; with it, it matches bge.
-- An extra bge-small fp32 run (hit@1 0.659, hit@5 0.845, MRR 0.746, paraphrase hit@1 0.017) shows its low paraphrase score is not caused by q8.
-- bge-small, arctic-embed-s and gte-modernbert score far below MiniLM on `paraphrase` (0.02 to 0.03 hit@1 against 0.22). I did not investigate whether that is the models, the fixture's deliberately word-free paraphrases, or the fusion in `MemoryService.search`; treat it as an open question.
-- The first gte-modernbert run failed with `init failed: fetch failed` during the download and was skipped; it succeeded on a retry once the file was cached. Its build is slow (18.9 s) and it is the weakest on long-body.
-- Latency is a single run on a shared machine and some runs overlapped with other work (the untyped arctic-embed-s p50 of 85.6 ms is almost certainly noise), so compare builds and p50s only roughly. Build time includes embedding every entry through `put()`.
-- The fixture is synthetic and its paraphrase queries are extreme by construction; differences of a few points on 20 to 60 queries are not significant.
-
-### Recommended default (superseded)
-
-On this fixture, keep `Xenova/all-MiniLM-L6-v2` as the default model. It has the best overall hit@5 (0.891) and MRR (0.779) of the semantic runs and by far the best paraphrase recall, and with `dtype: q8` it is essentially identical to fp32 (hit@5 0.891 both, MRR 0.778 vs 0.779) while building about a quarter faster, so q8 is the sensible setting for speed. None of the retrieval-tuned models (bge-small, arctic-embed-s, gte-modernbert) beat it overall here; gte-modernbert is best on natural questions and multi-hop but costs about 2.5x the build time and 768-dimensional vectors, and loses on long-body and paraphrase. If a prefixed model is chosen, send the query type (the default now): it is worth about 5 points of hit@1 for arctic-embed-s. Re-check on real memory data before changing the default; long-body and outdated are weak for every embedding setup, so chunked body vectors and recency handling matter more than the model choice.
-
-## Why paraphrase collapsed, and the fix
-
-The earlier result (bge, arctic, gte at 0.02 to 0.03 paraphrase hit@1 against MiniLM at 0.22) was an artefact of fusion, not of the models. Diagnosis with `python -m bench.diagnose` (cosine spreads and vector-only ranking, no fusion) on the 60 paraphrase queries, q8, typed:
-
-| Model | cosine (query, expected) p10/p50/p90 | cosine (query, random) p10/p50/p90 | random p99 | vector-only hit@1 / hit@5 / MRR@10 | queries with expected cosine < 0.30 |
-| --- | --- | --- | --- | --- | --- |
-| MiniLM-L6 | 0.19 / 0.33 / 0.49 | -0.03 / 0.08 / 0.22 | 0.35 | 0.367 / 0.633 / 0.478 | 40% |
-| bge-small | 0.55 / 0.62 / 0.68 | 0.44 / 0.52 / 0.60 | 0.66 | 0.317 / 0.567 / 0.411 | 0% |
-| arctic-embed-s | 0.55 / 0.60 / 0.65 | 0.44 / 0.51 / 0.58 | 0.62 | 0.300 / 0.550 / 0.422 | 0% |
-| gte-modernbert | 0.57 / 0.63 / 0.70 | 0.44 / 0.51 / 0.58 | 0.64 | 0.467 / 0.800 / 0.606 | 0% |
-
-- **Model quality is fine.** On vector-only ranking all three are comparable to or better than MiniLM (gte-modernbert is clearly best at 0.467 hit@1, 0.800 hit@5). The models' similarity ranges are compressed and shifted up (random pairs sit around 0.5, not 0.1), which is exactly why an absolute cosine cutoff cannot be shared between models.
-- **The 0.30 floor (`_MIN_VECTOR_SCORE`) was not the cause for these models.** It removed nothing for them (every expected cosine is above 0.30), and disabling it changed their fused numbers by zero. It did matter for MiniLM: without it MiniLM paraphrase fused hit@1 falls from 0.23 to 0.03, because the floor was quietly acting as a precision filter on the semantic list.
-- **The cause is the interaction of RRF with weak lexical hits.** A paraphrase query shares no words with its answer, but it still shares a generic word or two with other entries, so the lexical list returns up to 30 noise entries. In RRF those sit at ranks 1 to 30 next to the semantic list, and any entry that is in both lists gets a double contribution. With MiniLM the floor made the semantic list short, so overlap with the noise was rare; with a model whose similarities are all above 0.30 the semantic list always had 30 entries and the noise overlapped it constantly, pushing true answers down (fused paraphrase hit@1 0.33 vector-only to 0.02 fused for bge). The fusion also hurt MiniLM (0.37 vector-only, 0.23 fused).
-
-The offline replay used to compare variants (cached vectors, same lexical lists and the same RRF code path; it reproduced the harness numbers to two decimals) gave, for fused paraphrase / overall hit@1 / hit@5:
-
-| Variant | MiniLM | bge-small | arctic-s | gte-modernbert |
-| --- | --- | --- | --- | --- |
-| before: floor 0.30, all lexical hits | 0.23 / 0.68 / 0.89 | 0.02 / 0.65 / 0.84 | 0.02 / 0.65 / 0.83 | 0.02 / 0.65 / 0.85 |
-| floor disabled, all lexical hits | 0.03 / 0.63 / 0.84 | 0.02 / 0.65 / 0.84 | 0.02 / 0.65 / 0.83 | 0.02 / 0.65 / 0.85 |
-| per-query relative floor (mean + 2 sd), all lexical hits | 0.12 / 0.64 / 0.90 | 0.10 / 0.66 / 0.88 | 0.12 / 0.65 / 0.90 | 0.10 / 0.66 / 0.93 |
-| floor disabled, lexical hits need IDF-weighted query-term coverage >= 0.4 | 0.18 / 0.68 / 0.91 | 0.15 / 0.69 / 0.90 | 0.15 / 0.68 / 0.90 | 0.32 / 0.72 / 0.94 |
-
-**What changed in `MemoryService`:** the absolute cosine floor is removed, and when a query vector exists a lexical hit only joins the fusion if it covers at least 0.4 of the IDF-weighted query terms (`_MIN_LEXICAL_COVERAGE`; lexical-only mode is unchanged). Both are model-independent. 0.35 to 0.45 is a plateau on this fixture; 0.5 helps paraphrase further but costs multi-hop hit@5 (queries that combine words from two entries cover each only about half), so 0.4 is a compromise. This constant was tuned on a synthetic fixture whose paraphrase queries are word-free by construction, so re-check it on real data. A consequence of dropping the floor: a query with nothing relevant in memory now returns the nearest entries instead of possibly none. A calibrated floor (a percentile of random-pair similarity computed lazily from the stored vectors) is the proposal if that matters; it is not implemented.
-
-### Duplicate threshold (`duplicate_threshold`, 0.65)
-
-Same issue, measured on entry/entry cosine (12 near-duplicate sibling pairs from the `near-dup` fixture against every other pair):
-
-| Model | sibling pairs p10 / p50 / p90 | siblings flagged at 0.65 | other pairs p50 / p90 / p99 | other pairs flagged at 0.65 |
-| --- | --- | --- | --- | --- |
-| MiniLM-L6 | 0.44 / 0.68 / 0.77 | 58% | 0.12 / 0.25 / 0.47 | 0.6% |
-| bge-small | 0.70 / 0.77 / 0.88 | 92% | 0.55 / 0.62 / 0.72 | 4.3% |
-| arctic-embed-s | 0.78 / 0.82 / 0.92 | 100% | 0.65 / 0.71 / 0.78 | **48%** |
-| gte-modernbert | 0.70 / 0.78 / 0.86 | 100% | 0.53 / 0.60 / 0.70 | 2.3% |
-
-With arctic-embed-s the 0.65 threshold would flag about half of all entry pairs as likely duplicates, which makes the flag useless; bge-small is borderline; MiniLM, the model 0.65 was tuned for, misses about 4 in 10 near-duplicates. Proposal, not applied: derive the threshold per model from the stored vectors (for example the 99th percentile of pairwise similarity, clamped to a sane range) instead of one number in config. `duplicate_threshold` stays 0.65.
-
-### Stale vectors after a CLI upgrade
-
-The `nachos` `model_id` was a fixed `nachos:<model>[:<dtype>]`, so an index built by a 0.6.0 CLI (no prefixes, mean pooling) was reused unchanged after upgrading to a type-aware CLI, even though that CLI embeds documents differently for models such as bge (cls pooling) or e5/nomic (document prefix). `CliEmbedder` now learns pooling and the document prefix from the ready line (`warm_up()` is called before the index is compared) and appends `:pooling=<p>` and `:dp=<prefix>` to `model_id` only when they differ from mean pooling and no prefix. Upgrading re-embeds the affected models and leaves MiniLM (whose vectors are unchanged) alone. A not-yet-started CLI reports the base id until first use.
-
-### Results after the fix
-
-Same harness and fixture, typed queries, q8, `--repeat 3`. Machine load average was about 12 on 16 logical CPUs while measuring, so latencies are rough; each row is the quieter of two passes (quality metrics are identical between passes).
-
-| Run | hit@1 | hit@5 | MRR@10 | p50 ms | p95 ms | build s |
-| --- | --- | --- | --- | --- | --- | --- |
-| lexical | 0.674 | 0.812 | 0.737 | 28.9 | 39.5 | 2.02 |
-| MiniLM-L6 q8 | 0.692 | 0.919 | 0.795 | 36.5 | 55.8 | 9.32 |
-| bge-small q8 | 0.684 | 0.911 | 0.784 | 39.9 | 56.0 | 11.00 |
-| arctic-embed-s q8 | 0.692 | 0.906 | 0.790 | 39.6 | 58.0 | 6.11 |
-| gte-modernbert q8 | 0.713 | 0.939 | 0.818 | 56.6 | 94.0 | 13.17 |
-
-Per category, hit@1 / hit@5 / MRR@10:
-
-| Category | n | lexical | MiniLM-L6 q8 | bge-small q8 | arctic-embed-s q8 | gte-modernbert q8 |
-|---|---|---|---|---|---|---|
-| keyword | 139 | 0.950 / 1.000 / 0.972 | 0.978 / 1.000 / 0.989 | 0.942 / 1.000 / 0.969 | 0.964 / 1.000 / 0.981 | 0.971 / 1.000 / 0.984 |
-| natural | 90 | 0.711 / 0.889 / 0.796 | 0.767 / 0.978 / 0.862 | 0.744 / 0.978 / 0.850 | 0.756 / 0.967 / 0.856 | 0.811 / 0.978 / 0.892 |
-| paraphrase | 60 | 0.000 / 0.000 / 0.000 | 0.183 / 0.600 / 0.366 | 0.133 / 0.533 / 0.287 | 0.167 / 0.533 / 0.332 | 0.267 / 0.683 / 0.465 |
-| long-body | 30 | 0.933 / 1.000 / 0.967 | 0.600 / 0.967 / 0.772 | 0.867 / 0.967 / 0.921 | 0.667 / 0.967 / 0.803 | 0.533 / 0.967 / 0.734 |
-| outdated | 30 | 0.600 / 1.000 / 0.779 | 0.467 / 1.000 / 0.722 | 0.433 / 1.000 / 0.711 | 0.533 / 1.000 / 0.761 | 0.533 / 1.000 / 0.761 |
-| near-dup | 24 | 0.958 / 1.000 / 0.979 | 1.000 / 1.000 / 1.000 | 1.000 / 1.000 / 1.000 | 1.000 / 1.000 / 1.000 | 1.000 / 1.000 / 1.000 |
-| multi-hop | 20 | 0.000 / 0.800 / 0.353 | 0.000 / 0.750 / 0.332 | 0.000 / 0.800 / 0.342 | 0.000 / 0.750 / 0.315 | 0.000 / 0.900 / 0.386 |
-
-Change from before the fix (overall hit@1 / hit@5 / MRR@10): MiniLM 0.684 / 0.891 / 0.778 to 0.692 / 0.919 / 0.795; bge-small 0.649 / 0.845 / 0.742 to 0.684 / 0.911 / 0.784; arctic-embed-s 0.656 / 0.840 / 0.742 to 0.692 / 0.906 / 0.790; gte-modernbert 0.659 / 0.837 / 0.745 to 0.713 / 0.939 / 0.818. Paraphrase hit@1 moves from 0.22 / 0.02 / 0.03 / 0.03 to 0.18 / 0.13 / 0.17 / 0.27.
-
-### Recommended default
-
-The earlier recommendation was based on a measurement artefact. With fusion fixed, the ranking changes: `Alibaba-NLP/gte-modernbert-base` (q8) is best overall (hit@1 0.713, hit@5 0.939, MRR 0.818) and clearly best on paraphrase (0.267 hit@1, 0.683 hit@5), natural questions and multi-hop; the cost is a roughly 2x slower build (13 to 19 s against 6 to 9 s for 208 entries), 768-dimensional vectors (about twice the index size and search work) and a 150 MB q8 download, and it is weakest on long-body (0.533 hit@1). The small 384-dimensional models are within about 0.02 of each other and of MiniLM on overall hit@1; MiniLM is still the best on paraphrase among them at hit@5 (0.600) but bge-small is much better on long-body (0.867 against 0.600). Suggested default: keep MiniLM q8 where build time or footprint matter (it is the smallest download and the fastest), and recommend gte-modernbert q8 as the quality choice; on this fixture the gap to the small models is about 0.02 hit@1 and 0.02 to 0.03 hit@5, which is within what a 393-query synthetic set can resolve, so confirm on real memories before changing the default. The default in code is unchanged. Whatever the model, long-body (chunked body vectors) and outdated (recency) remain the weakest categories.
-
-## Chunked body vectors
-
-On `naterchrdsn/memory-next` (integrating lexical cache, WAL telemetry, query/document types and fusion coverage gating), long entries (>1200-char bodies) now store extra overlapping `~1200`-char / `~200`-char-overlap body chunks prefixed with the title (`(key, chunk_no)`, capped at 16 vectors per entry). Recall scores an entry by the max cosine across its vectors; duplicate detection continues to compare head vectors (`chunk_no = 0`) only.
-
-Before vs after chunking on the 208-entry / 393-query fixture (`nachos` backend, `q8`, typed, `--repeat 1`; 15 entries exceed 1200 chars, adding 30 body chunks = 238 total vectors):
-
-| Model | Stage | overall hit@1 / hit@5 / MRR@10 | long-body hit@1 / hit@5 / MRR@10 | p50 / p95 ms | build s | vectors | index KB |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| MiniLM-L6 q8 | before | 0.692 / 0.919 / 0.795 | 0.600 / 0.967 / 0.772 | 7.0 / 17.7 | 3.45 | 208 | 500.0 |
-| MiniLM-L6 q8 | after | 0.713 / 0.919 / 0.805 | 0.967 / 1.000 / 0.983 | 9.1 / 19.7 | 6.27 | 238 | 560.0 |
-| gte-modernbert q8 | before | 0.713 / 0.939 / 0.818 | 0.533 / 0.967 / 0.734 | 26.2 / 63.2 | 15.67 | 208 | 916.0 |
-| gte-modernbert q8 | after | 0.735 / 0.936 / 0.828 | 1.000 / 1.000 / 1.000 | 28.0 / 78.8 | 28.88 | 238 | 1036.0 |
-
-Readings:
-
-- **Long-body recall jumps sharply**: MiniLM-L6 q8 rises from `0.600` to `0.967` hit@1 (`+0.367`, MRR `0.772 -> 0.983`) and gte-modernbert q8 reaches `1.000 / 1.000 / 1.000` (`+0.467` hit@1, MRR `0.734 -> 1.000`), lifting overall hit@1 by `+0.021` to `+0.022` and overall MRR@10 by `+0.010` on both models.
-- **Small index footprint**: +30 chunks adds +60 KB (+12%) for MiniLM-L6 and +120 KB (+13%) for gte-modernbert. Build time rises when long entries embed multiple chunks synchronously on `put()`, while search latency increases modestly (`+2 ms` p50).
-- **Slight paraphrase dip**: Taking the max cosine over 3 vectors for long entries gives them slightly more chances to outrank 1-vector entries on word-free paraphrases (MiniLM paraphrase hit@1 `0.183 -> 0.150`, gte-modernbert `0.267 -> 0.200`), a minor multiple-testing trade-off offset by the large long-body gain.
-
-## Ranking round: calibration, chunk penalty, reranker
-
-Measured on `naterchrdsn/ranking` (on top of chunked body vectors), `nachos` backend, q8, typed queries, `--repeat 3`. The fixture now also has 30 `negative` queries (no correct answer; listed apart from the hit metrics, which still cover the 393 answerable queries). "Before" below is the branch without this round (chunk penalty 0, no floor, no rerank). Machine load average was 20 to 26 on 16 logical CPUs throughout, so latencies are rough and p95s especially. The CLI for reranking was built from nachos-embeddings commit `f29d2e1` (branch `naterchrdsn/rerank`) in a temp copy; embeddings and rerank models were cached outside both repos.
+Any Hugging Face ONNX encoder (or a local directory) works with the `nachos` backend:
 
 ```bash
-export NACHOS_EMBEDDINGS_CACHE=/path/outside/both/repos
-python -m bench --command ./shim --embeddings nachos --model Xenova/all-MiniLM-L6-v2 --dtype q8 --chunk-penalty 0   # before
-python -m bench ... --dtype q8                                  # chunk penalty 0.05 (the new default)
-python -m bench ... --dtype q8 --floor auto                     # + calibrated floor (p75)
-python -m bench ... --dtype q8 --rerank --rerank-dtype q8       # + reranker (jina-reranker-v1-tiny-en)
-python -m bench.diagnose --command ./shim --model <id> --dtype q8   # duplicate-threshold behaviour
+python -m bench --model org/some-model --dtype q8                       # main set, next to lexical
+python -m bench --model org/some-model --dtype q8 --data-dir bench/data/adversarial
+python -m bench --model org/some-model --dtype q8 --suggest-eval --multi-query
 ```
 
-### Chunk penalty
+If the model needs a prefix or a pooling the CLI does not know, pass `--query-prefix`, `--document-prefix`, `--pooling`. Compare the same `--dtype` across models, run on an idle machine, and use `--repeat 3` or more for latency. Treat differences under about 0.01 hit@1 on the main set (4 queries) as noise. If a model wins here, set it in `embedding_model` and `embedding_dtype`; Nachos re-embeds in the background ([docs/models.md](models.md#switching-models)).
 
-`MemoryService.chunk_penalty` is subtracted from a body chunk's cosine: an entry scores `max(head, best chunk - penalty)`. Sweep (overall hit@1 / hit@5 / MRR@10, paraphrase hit@1 / hit@5, long-body hit@1):
+## Current results
 
-| Penalty | MiniLM q8 overall | MiniLM paraphrase | MiniLM long-body | gte q8 overall | gte paraphrase | gte long-body |
-| --- | --- | --- | --- | --- | --- | --- |
-| 0 (before) | 0.713 / 0.919 / 0.805 | 0.150 / 0.583 | 0.967 | 0.735 / 0.936 / 0.828 | 0.200 / 0.650 | 1.000 |
-| 0.02 | 0.713 / 0.921 / 0.807 | 0.150 / 0.600 | 0.967 | 0.735 / 0.944 / 0.830 | 0.200 / 0.700 | 1.000 |
-| **0.05** | **0.718 / 0.921 / 0.810** | **0.183 / 0.600** | **0.967** | **0.738 / 0.944 / 0.832** | **0.217 / 0.700** | **1.000** |
-| 0.08 | 0.710 / 0.921 / 0.806 | 0.167 / 0.600 | 0.900 | 0.730 / 0.944 / 0.828 | 0.217 / 0.700 | 0.900 |
-| 0.12 | 0.713 / 0.921 / 0.807 | 0.167 / 0.600 | 0.900 | 0.723 / 0.942 / 0.823 | 0.233 / 0.700 | 0.767 |
+Measured on the 0.7.0 code with the `nachos-embeddings` CLI, `q8` models (`Xenova/all-MiniLM-L6-v2`, `Alibaba-NLP/gte-modernbert-base`, reranker `jinaai/jina-reranker-v1-tiny-en`), typed queries, supersedes applied, one 16-thread CPU. Latencies are indicative.
 
-0.05 is the default: it recovers part of the paraphrase hit@1 that chunking cost (MiniLM 0.150 to 0.183, gte 0.200 to 0.217) and lifts hit@5 on both, while long-body stays at 0.967 / 1.000. From 0.08 the penalty starts to hurt long-body (the answer lives in a chunk). It did not get back to the pre-chunking 0.183 / 0.267 paraphrase hit@1 in full. A multiplicative penalty was not tried.
+### Recall and abstention
 
-### Calibrated similarity floor (`similarity_floor: auto`, default off)
-
-The index measures a model's own random-pair cosine spread from the stored head vectors (fixed-seed sample of 4000 pairs; `calibration` table in the sidecar index keyed by `model_id`; resampled when the head count drifts by more than 20%; not computed below 30 entries) and drops semantic hits below a percentile of it. Profile of the two models (p50 / p75 / p90 / p95 / p99 of random head pairs): MiniLM 0.12 / 0.18 / 0.25 / 0.29 / 0.43, gte-modernbert 0.53 / 0.56 / 0.59 / 0.62 / 0.69, which is why no absolute cutoff is shared.
-
-Floor percentile sweep with the 0.05 chunk penalty (overall hit@1 / hit@5; negative fp@1 / fp@5; fp@1 is the share of the 30 negative queries that return anything, fp@5 the mean filled share of the top five slots):
-
-| Floor | MiniLM q8 | MiniLM negative | gte q8 | gte negative |
-| --- | --- | --- | --- | --- |
-| off | 0.718 / 0.921 | 1.00 / 1.00 | 0.738 / 0.944 | 1.00 / 1.00 |
-| p75 | 0.723 / 0.921 | 0.90 / 0.83 | 0.753 / 0.942 | 0.80 / 0.73 |
-| p80 | 0.720 / 0.921 | 0.83 / 0.77 | 0.753 / 0.942 | 0.80 / 0.65 |
-| p85 | 0.725 / 0.921 | 0.80 / 0.73 | 0.753 / 0.942 | 0.80 / 0.64 |
-| p90 | 0.733 / 0.921 | 0.80 / 0.62 | 0.756 / 0.934 | 0.80 / 0.60 |
-| p95* | 0.735 / 0.908 | 0.77 / 0.51 | 0.761 / 0.916 | 0.73 / 0.51 |
-| p99* | 0.720 / 0.827 | 0.73 / 0.36 | 0.728 / 0.830 | 0.67 / 0.35 |
-
-(*measured without the chunk penalty.) The floor raises hit@1 (it removes weak semantic hits that double-count against lexical noise) but cannot make irrelevant queries return nothing: even at p95, 70 to 77% of negative queries still return an entry, because the negatives are deliberately adjacent to real topics (and a lexical hit covering 40% of the terms still passes). Percentiles above p90 cost hit@5 quickly. At the mildest useful setting (p75) MiniLM loses nothing but gte loses one paraphrase query at hit@5 (0.944 to 0.942), so, by the rule that the floor may only ship if it costs no hit@5 anywhere, **it stays off by default**; `similarity_floor: auto` (p75) is available and is a small net win on hit@1 and negatives.
-
-### Duplicate threshold (`duplicate_calibration: auto`)
-
-With `duplicate_calibration: auto` the effective threshold is `max(duplicate_threshold, model p99 of random head-pair cosine)`; it only ever raises the threshold, and a `duplicate_threshold` other than the 0.65 default is used exactly as given (so anyone who set a value keeps it; `duplicate_calibration: off` pins 0.65 for everyone). Measured by `python -m bench.diagnose` on the 12 near-duplicate sibling pairs of the fixture and every other entry pair (siblings flagged = recall; others flagged = false-flag rate):
-
-| Model | Threshold before to after | Sibling recall before to after | Other pairs flagged before to after |
-| --- | --- | --- | --- |
-| MiniLM-L6 q8 | 0.650 to 0.650 | 58% to 58% | 0.6% to 0.6% |
-| bge-small q8 | 0.650 to 0.709 | 92% to 83% | 4.3% to 1.1% |
-| arctic-embed-s q8 | 0.650 to 0.774 | 100% to 92% | 48% to 1.1% |
-| gte-modernbert q8 | 0.650 to 0.691 | 100% to 92% | 2.3% to 1.1% |
-
-The calibration removes the arctic-embed-s failure (half of all pairs flagged) and roughly equalises the false-flag rate at about 1% for the models whose spread is wide, at the price of one sibling pair out of twelve. It cannot lower the threshold, so MiniLM, which misses 42% of these siblings at 0.65, is unchanged. Twelve sibling pairs is a small sample.
-
-### Reranker
-
-`rerank: nachos` (config keys `rerank_model`, `rerank_dtype`, `rerank_candidates` = 25) re-scores the top fused results with `jinaai/jina-reranker-v1-tiny-en` (q8, 33.4 MB model + 2.0 MB tokenizer) served by the same `nachos-embeddings serve` worker; passages are title, summary and the best-matching chunk. Final order options, on the cached reranker scores of the 423 queries (0.05 penalty; overall hit@1 / hit@5 / MRR@10):
-
-| Final order | MiniLM q8 | gte-modernbert q8 |
-| --- | --- | --- |
-| no rerank | 0.718 / 0.921 / 0.810 | 0.738 / 0.944 / 0.832 |
-| pure rerank order | 0.761 / 0.870 / 0.810 | 0.746 / 0.875 / 0.800 |
-| RRF blend of rerank rank and fused rank (k = 10) | 0.725 / 0.921 / 0.812 | 0.738 / 0.929 / 0.825 |
-| pure rerank only if the top rerank score is at least 0.5 | 0.768 / 0.926 / 0.836 | 0.771 / 0.942 / 0.845 |
-| fused rank term + 0.5 x rerank score | 0.761 / 0.926 / 0.833 | 0.776 / 0.944 / 0.850 |
-| **fused rank term + 1.0 x rerank score (`sum:1`)** | **0.763 / 0.926 / 0.833** | **0.773 / 0.942 / 0.848** |
-| fused rank term + 2.0 x rerank score | 0.763 / 0.921 / 0.831 | 0.758 / 0.939 / 0.835 |
-
-Pure rerank order gains hit@1 but loses about 0.05 hit@5, because this small English cross-encoder scores word-free paraphrases poorly (paraphrase hit@5 0.60 to 0.25 for MiniLM). Rank-only RRF blending is too timid to help. The default is the score blend `sum:1`: the fused rank contributes `1 / (1 + rank / 60)` and the cross-encoder its 0 to 1 score, so a confident reranker overturns the fused order and a lukewarm one only breaks near-ties. The threshold-gated variant is about as good but has a cliff; `sum:0.5` to `sum:1` are within noise. (`rerank_mode` is a `MemoryService` argument, not a config key.)
-
-Final results, rerank off vs on (floor off), hit@1 / hit@5 / MRR@10 per category; the last row of each overall table adds the floor:
-
-**MiniLM-L6 q8**
-
-| Run | hit@1 | hit@5 | MRR@10 | negative fp@1 / fp@5 | p50 ms | p95 ms | build s |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| rerank off | 0.718 | 0.921 | 0.810 | 1.00 / 1.00 | 7.1 | 9.0 | 3.6 |
-| rerank on | 0.763 | 0.926 | 0.833 | 1.00 / 1.00 | 184.1 | 506.9 | 3.3 |
-| floor, rerank off | 0.723 | 0.921 | 0.813 | 0.90 / 0.83 | 7.2 | 9.3 | 3.1 |
-| floor + rerank | 0.766 | 0.924 | 0.835 | 0.90 / 0.83 | 157.3 | 482.4 | 3.4 |
-
-| Category | n | rerank off | rerank on | floor, rerank off | floor + rerank |
-|---|---|---|---|---|---|
-| keyword | 139 | 0.978 / 1.000 / 0.989 | 0.993 / 1.000 / 0.996 | 0.978 / 1.000 / 0.989 | 0.993 / 1.000 / 0.996 |
-| natural | 90 | 0.756 / 0.978 / 0.857 | 0.844 / 0.989 / 0.902 | 0.756 / 0.978 / 0.857 | 0.844 / 0.989 / 0.902 |
-| paraphrase | 60 | 0.183 / 0.600 / 0.364 | 0.167 / 0.600 / 0.348 | 0.217 / 0.600 / 0.382 | 0.183 / 0.583 / 0.358 |
-| long-body | 30 | 0.967 / 1.000 / 0.983 | 1.000 / 1.000 / 1.000 | 0.967 / 1.000 / 0.983 | 1.000 / 1.000 / 1.000 |
-| outdated | 30 | 0.467 / 1.000 / 0.722 | 0.733 / 1.000 / 0.861 | 0.467 / 1.000 / 0.722 | 0.733 / 1.000 / 0.861 |
-| near-dup | 24 | 1.000 / 1.000 / 1.000 | 1.000 / 1.000 / 1.000 | 1.000 / 1.000 / 1.000 | 1.000 / 1.000 / 1.000 |
-| multi-hop | 20 | 0.000 / 0.750 / 0.332 | 0.000 / 0.800 / 0.350 | 0.000 / 0.750 / 0.332 | 0.000 / 0.800 / 0.350 |
-
-**gte-modernbert q8**
-
-| Run | hit@1 | hit@5 | MRR@10 | negative fp@1 / fp@5 | p50 ms | p95 ms | build s |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| rerank off | 0.738 | 0.944 | 0.832 | 1.00 / 1.00 | 16.6 | 20.8 | 12.3 |
-| rerank on | 0.773 | 0.942 | 0.848 | 1.00 / 1.00 | 327.3 | 568.7 | 12.9 |
-| floor, rerank off | 0.753 | 0.942 | 0.839 | 0.80 / 0.73 | 16.9 | 22.6 | 12.8 |
-| floor + rerank | 0.779 | 0.939 | 0.849 | 0.80 / 0.73 | 180.2 | 500.3 | 12.4 |
-
-| Category | n | rerank off | rerank on | floor, rerank off | floor + rerank |
-|---|---|---|---|---|---|
-| keyword | 139 | 0.971 / 1.000 / 0.984 | 0.993 / 1.000 / 0.996 | 0.971 / 1.000 / 0.984 | 0.993 / 1.000 / 0.996 |
-| natural | 90 | 0.800 / 0.978 / 0.886 | 0.867 / 0.978 / 0.918 | 0.833 / 0.978 / 0.906 | 0.878 / 0.978 / 0.924 |
-| paraphrase | 60 | 0.217 / 0.700 / 0.429 | 0.217 / 0.700 / 0.416 | 0.283 / 0.683 / 0.456 | 0.233 / 0.683 / 0.419 |
-| long-body | 30 | 1.000 / 1.000 / 1.000 | 0.967 / 1.000 / 0.983 | 0.967 / 1.000 / 0.983 | 0.967 / 1.000 / 0.983 |
-| outdated | 30 | 0.533 / 1.000 / 0.761 | 0.767 / 1.000 / 0.878 | 0.533 / 1.000 / 0.761 | 0.767 / 1.000 / 0.878 |
-| near-dup | 24 | 1.000 / 1.000 / 1.000 | 0.958 / 1.000 / 0.979 | 1.000 / 1.000 / 1.000 | 0.958 / 1.000 / 0.979 |
-| multi-hop | 20 | 0.000 / 0.900 / 0.382 | 0.000 / 0.850 / 0.383 | 0.000 / 0.900 / 0.382 | 0.000 / 0.850 / 0.382 |
-
-Reading the tables: the reranker's gains are concentrated where the question shares words with the answer's wording: `outdated` hit@1 jumps (MiniLM 0.467 to 0.733, gte 0.533 to 0.767) because the current entry's text matches a "current X" question better than the superseded one, `natural` hit@1 +0.09 and +0.07, `keyword` to 0.993. It does nothing for paraphrase (0.183 to 0.167 MiniLM, flat for gte), multi-hop hit@5 moves by at most 0.05 either way, and gte near-dup slips from 1.000 to 0.958 hit@1 (one query). It does not reduce false positives on negative queries (still 1.00): the reranker's top score for a negative query (median 0.29) overlaps the scores of true paraphrase hits (median 0.24). Cost: one more model (35 MB) held in the serve worker and 0.2 to 0.3 s per recall (p50 184 ms MiniLM, 327 ms gte at this machine load; p95 about 0.5 to 0.6 s; the CLI README quotes about 0.3 s for 25 passages).
-
-### Final recommended configuration
-
-| | Config | Download | Build (208 entries) | Search p50 / p95 | hit@1 / hit@5 / MRR@10 |
-| --- | --- | --- | --- | --- | --- |
-| **Recommended** | `gte-modernbert-base`, `q8`, rerank off | 150 MB + 3.6 MB tokenizer | 12.3 s | 17 / 21 ms | 0.738 / 0.944 / 0.832 |
-| Quality, if 0.3 s per recall is acceptable | same + `rerank: nachos` (jina tiny, q8) | + 35 MB | 12.9 s | 327 / 569 ms | 0.773 / 0.942 / 0.848 |
-| Lightweight | `all-MiniLM-L6-v2`, `q8`, rerank off | 23 MB + 0.7 MB | 3.6 s | 7 / 9 ms | 0.718 / 0.921 / 0.810 |
-| Lightweight + rerank | same + `rerank: nachos` | + 35 MB | 3.3 s | 184 / 507 ms | 0.763 / 0.926 / 0.833 |
-| Lexical only | `embeddings: off` | none | 0.8 s | 0.1 / 0.2 ms | 0.674 / 0.812 / 0.737 |
-
-The model recommendation from the previous section stands with the new numbers: gte-modernbert q8 is the quality choice (best hit@5 and MRR with rerank off, and cheaper per recall than MiniLM plus reranker), MiniLM q8 the lightweight one. Rerank stays **off by default**: it buys +0.035 to +0.045 hit@1 (mostly natural-language and "current X" questions) for 0.2 to 0.3 s on every recall and a second model, and gives no hit@5 gain on gte. Turn it on when hit@1 matters more than latency. Defaults in code: chunk penalty 0.05 (on), duplicate calibration auto, similarity floor off, rerank off. Caveats: the fixture is synthetic, builds and latencies were measured under heavy machine load (build seconds scale with entries and machine, p95s are noisy), and no real-memory run was done.
-
-
-### Not measured
-
-No OpenAI-compatible server (Ollama etc.) was reachable, so the `openai` backend has no numbers; the `sentence-transformers` row above predates the query type and used no prefixes.
-
-## Adversarial set
-
-`bench/data/adversarial/` is an independent eval set for `suggested_supersedes` and for recall over a store with superseded entries. It was written before the suggestion heuristic (`nachos_core/quality.py`, `validity.py`) or the main fixture were read, so it was not shaped by what the heuristic does, and the heuristic was not tuned against it afterwards: the numbers below are a one-shot report.
-
-Run it with `--data-dir`:
-
-```bash
-python -m bench --data-dir bench/data/adversarial --suggest-eval          # suggestion precision/recall by case
-python -m bench --data-dir bench/data/adversarial                         # recall, supersedes applied by label
-python -m bench --data-dir bench/data/adversarial --no-supersedes         # same, supersedes links not applied
-```
-
-Files (all fictional):
-
-- `memories.json`: 63 base entries (same format as the main fixture).
-- `updates.json`: 65 follow-up puts applied in order after the base entries. Each has `update_of: <key>` (37, including 2 chains where the target is itself an update) or `update_of: null` with a `reason` (28 distinct entries), plus a `case` tag. The loader appends them to the memories, turning `update_of` into `supersedes`, so `--suggest-eval` and `--no-supersedes` work unchanged. Every update has a new title (a same-title put would just overwrite), so titles differ from the old one by a little (`... v3`, `... (Postgres 17)`) or a lot (`Thumbnail service` for `Image resizer lambda`).
-- `queries.json`: 96 queries over the final state: 37 `current`, 24 `outdated` (worded from the superseded entry only; expected key is the current one), 20 `sibling` (must pick the right twin or additive note) and 15 `no-answer` (`expect: []`).
-
-`--suggest-eval` adds a per-`case` table when entries carry a `case`. No-answer queries are left out of hit@k and counted separately ("returned results").
-
-| Update cases (label: update) | n | Distinct cases (label: distinct) | n |
-| --- | --- | --- | --- |
-| update-nocue (no cue words) | 7 | distinct-sibling (near-identical wording, other facet) | 10 |
-| update-rename (only a name or URL changes) | 5 | distinct-additive-numbers (notes with numbers) | 6 |
-| update-negation ("no longer uses X") | 4 | distinct-different-subject (shared vocabulary) | 4 |
-| update-question / update-log | 2 / 3 | distinct-negation (additive "has no X") | 3 |
-| update-multifact (one fact of several changed) | 4 | distinct-log (incident or retro) | 2 |
-| update-title-differs | 4 | distinct-unrelated | 2 |
-| update-i18n (German/French) | 3 | distinct-related | 1 |
-| update-markdown (code blocks) | 3 | | |
-| update-chain (update of an update) | 2 | | |
-
-### Suggestion results
-
-Machine as above; MiniLM-L6 q8 through the `nachos-embeddings` CLI (branch `naterchrdsn/emb-prefixes`, typed, `NACHOS_EMBEDDINGS_CACHE` outside both repos). 37 labelled updates, 28 distinct entries. Suggestions are checked against the labels as each entry is put, with no supersedes applied during the replay.
-
-| Backend | precision | recall | F1 | TP/FP/FN |
-| --- | --- | --- | --- | --- |
-| lexical (off) | 0.500 | 0.054 | 0.098 | 2/2/35 |
-| MiniLM-L6 q8 | 0.429 | 0.081 | 0.136 | 3/4/34 |
-
-By case (TP/n for updates; FP for distinct entries; lexical / MiniLM):
-
-| Case | n | lexical | MiniLM q8 |
-| --- | --- | --- | --- |
-| update-nocue | 7 | 0/7 | 0/7 |
-| update-rename | 5 | 0/5 | 0/5 |
-| update-negation | 4 | 0/4 | 0/4 |
-| update-question | 2 | 0/2 | 0/2 |
-| update-log | 3 | 0/3 | 0/3 |
-| update-multifact | 4 | 1/4 | 1/4 |
-| update-title-differs | 4 | 0/4 | 0/4 |
-| update-i18n | 3 | 0/3 | 0/3 |
-| update-markdown | 3 | 0/3 | 0/3 |
-| update-chain | 2 | 1/2 | 2/2 |
-| distinct-sibling | 10 | 2 FP | 4 FP |
-| other distinct cases (18 entries) | 18 | 0 FP | 0 FP |
-
-On this set the suggester is near-silent rather than noisy: it finds the update when the title is the old title plus a version or qualifier (`Plans and prices` to `Plans and prices v3`, `Nimbus billing API` to `... endpoints`) and almost nothing else.
-
-### Why it fails
-
-Read after the run, from `nachos_core/quality.py` and `validity.py` (no change made):
-
-1. **The title gate rejects most real updates.** `_titles_compatible_for_supersede` needs two shared core title tokens (or at least half of them) and no one-sided qualifiers on both titles. 33 of the 37 updates fail it, because an update that is worded as a new entry usually retitles it (`Postgres primary host` to `Primary database server`, `Team standup` to `Daily sync meeting`, `Auth service` to `Why do we get logged out after 5 minutes?`). Applying only the body check (`looks_like_update` without titles) would fire on 26 of the 37, so the title gate is the dominant recall limit. Examples: `Nightly backup job`, `Plans and prices` (nocue), `Supportzeiten`, `Rechnungsnummern` (i18n: the German titles share no token with the old ones), `Thumbnail service` (title-differs).
-2. **Candidate retrieval depends on the same titles.** Candidates are the duplicate-similarity hits plus entries whose core title tokens are exactly equal. A retitled update has neither unless the embedding duplicate threshold happens to catch it, so it is never compared. `Feature flags` vs `Feature flag service` passes the title gate and still misses (the body only changes a hostname: no digits or paths the fact regex sees).
-3. **The body test only sees numbers, paths, URLs and a few cadence words.** A change of a name, host without a path, tool or person is invisible: `update-rename` (`Grafana dashboards` is a bare hostname change; `On-call roster` swaps two first names; `Transactional email sender` changes one address) never differs in a fact token. Negations (`We no longer use Sentry`, `WireGuard is not used anymore`) and prose changes (`Opsgenie` for `PagerDuty`, `Snowflake` for `BigQuery`, `Adyen` for `Stripe`) have no number change, and the cue list does not contain "no longer", "not used anymore", "is out" or "stopped using".
-4. **Facet qualifiers only block when both titles have one.** `Postgres read replica for analytics`, `CI runner pool for macOS`, `Sprint cadence for the design team` and `Support response targets for enterprise` add a qualifier to an existing title; the old title has no qualifier of its own, so `old_only` is empty and the pair passes as "compatible". Their bodies differ in a number or hostname, so the body test fires: 4 false positives for MiniLM (2 for lexical, which only retrieved the macOS and enterprise ones as candidates). A sibling fact whose twin is not itself labelled stays one-sided and is mistaken for a version.
-5. **What did not fire falsely:** none of the 18 additive, negation, log, different-subject or unrelated entries produced a suggestion, because they differ in title and the title gate holds. The same gate that protects precision here is what costs recall in item 1.
-6. **Chains work only with a close title.** `Primary database server (Postgres 17)` was missed by lexical (core title not equal because of the extra `postgres` token, and no embedding hit) and caught by MiniLM.
-
-### Recall with and without supersedes
-
-96 queries, supersedes applied by label (`--no-supersedes` leaves every entry active). No-answer queries are excluded from the hit metrics (see below). The first row of each pair is lexical, the second MiniLM-L6 q8.
-
-| Run | hit@1 | hit@5 | MRR@10 |
-| --- | --- | --- | --- |
-| lexical, supersedes applied | 0.889 | 0.951 | 0.914 |
-| lexical, no supersedes | 0.617 | 0.926 | 0.768 |
-| MiniLM q8, supersedes applied | 0.951 | 1.000 | 0.972 |
-| MiniLM q8, no supersedes | 0.679 | 0.988 | 0.826 |
-
-Per category, hit@1 / hit@5 / MRR@10:
-
-| Category | n | lexical, applied | lexical, none | MiniLM, applied | MiniLM, none |
-| --- | --- | --- | --- | --- | --- |
-| current | 37 | 0.919 / 1.000 / 0.955 | 0.730 / 1.000 / 0.849 | 1.000 / 1.000 / 1.000 | 0.811 / 1.000 / 0.901 |
-| outdated | 24 | 0.750 / 0.833 / 0.779 | 0.125 / 0.750 / 0.450 | 0.875 / 1.000 / 0.927 | 0.250 / 0.958 / 0.587 |
-| sibling | 20 | 1.000 / 1.000 / 1.000 | 1.000 / 1.000 / 1.000 | 0.950 / 1.000 / 0.975 | 0.950 / 1.000 / 0.975 |
-
-- Applying the labels is worth +0.27 (lexical) and +0.27 (MiniLM) overall hit@1 and +0.63 on `outdated`. This is the ceiling a perfect suggester could reach; today the suggester delivers almost none of it.
-- With links applied, lexical `outdated` still misses 4 of 24 at hit@5 (`db-prim-01 host`, `standup 09:45 Google Meet`, `redis-sess.internal 6379 allkeys-lru`, `lyon-app-02 deploiement jeudi`): the old wording is only in the now-hidden entry, so a keyword search has nothing to match. Embeddings recover them. Archiving an old entry makes its wording unfindable unless its text is folded into the successor.
-- Without links, `outdated` hit@1 is 0.125 (lexical) and 0.250 (MiniLM): the old entry usually outranks the new one because queries use its words.
-- No-answer: 13/15 (lexical) and 15/15 (MiniLM) of the no-answer queries still return results, since recall has no relevance floor. A caller cannot tell "nothing known" from "a weak match" from the result list alone.
-
-## Consolidated results (`memory-next` HEAD)
-
-Measured on `naterchrdsn/memory-next` (commit `9c662836bb`, integrating lexical + metadata caching, chunked body vectors with 0.05 chunk penalty, calibrated duplicate/update floors, `possible_updates` candidates with facet-qualifier reasons, superseded search redirect before reranking, and optional cross-encoder reranking). CLI built from `nachos-embeddings` archive `a0df123` (`rerank` branch), `q8` models (`Xenova/all-MiniLM-L6-v2`, `Alibaba-NLP/gte-modernbert-base`, `jinaai/jina-reranker-v1-tiny-en`), `--repeat 1`, supersedes applied on both fixtures.
-
-### Recall matrix (original + held-out adversarial, supersedes applied)
-
-| Backend | Rerank | Original hit@1 / hit@5 / MRR@10 | Original outdated hit@1 | Original p50 / p95 ms | Original build s | Adversarial hit@1 / hit@5 / MRR@10 | Adversarial outdated hit@1 | Adversarial p50 / p95 ms |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| lexical (`off`) | off | 0.695 / 0.812 / 0.748 | 0.867 | 0.2 / 0.3 | 1.14 | 0.975 / 1.000 / 0.986 | 1.000 | 0.1 / 0.2 |
-| MiniLM-L6 q8 | off | 0.758 / 0.924 / 0.832 | 1.000 | 7.3 / 8.4 | 4.72 | 0.988 / 1.000 / 0.994 | 1.000 | 4.5 / 5.0 |
-| MiniLM-L6 q8 | on (`sum:1`) | 0.784 / 0.926 / 0.845 | 0.967 | 181.8 / 490.6 | 4.49 | 0.951 / 1.000 / 0.975 | 0.875 | 122.5 / 149.0 |
-| **gte-modernbert q8** | **off** | **0.773 / 0.949 / 0.850** | **1.000** | **17.0 / 26.4** | **13.82** | **1.000 / 1.000 / 1.000** | **1.000** | **12.3 / 14.4** |
-| gte-modernbert q8 | on (`sum:1`) | 0.791 / 0.949 / 0.858 | 0.967 | 320.1 / 518.4 | 14.30 | 0.951 / 1.000 / 0.975 | 0.875 | 128.9 / 211.2 |
-
-Notes:
-- Original fixture has 208 memories, 393 answerable queries + 30 `negative` queries (`fp@1 / fp@5`: lexical `0.767 / 0.707`, semantic runs `1.000 / 1.000` with `similarity_floor: off`). Adversarial set has 128 memories, 81 answerable queries + 15 no-answer queries (`13/15` lexical, `15/15` semantic still returned results).
-- Search redirect (`superseded_by` chain substitution before reranking) eliminates the old-wording lexical gap: adversarial lexical `outdated` hit@1 jumps from `0.750` (before redirect) to `1.000` (`0.125` without supersedes), and both MiniLM q8 and gte-modernbert q8 reach `1.000` on `outdated` across both fixtures with rerank off.
-- Rerank trade-off on redirected queries: enabling the cross-encoder raises original `natural` (+0.08–0.10) and `keyword` (to `0.993`) hit@1, lifting overall original hit@1 by `+0.018` to `+0.026`, but drops adversarial `outdated` hit@1 (`1.000 -> 0.875`, 3/24 queries) because a redirected successor that no longer contains the query's old terms receives a low cross-encoder score.
-
-### `possible_updates` candidate evaluation (`--suggest-eval`)
-
-Replayed in order without `supersedes` (original tune set: 15 updates / 193 distinct puts; held-out adversarial set: 37 updates / 91 distinct puts). Calibrated floor reuses the index's cached `p99` random head-pair cosine when `>= 30` vectors are stored, falling back to `max(0.45, duplicate_threshold - 0.17)` (`0.48`) below 30 entries.
-
-| Backend | Floor | Original R@1 / R@3 | Original distinct fp@1 (non-dup) | Adversarial R@1 / R@3 | Adversarial distinct fp@1 |
-| --- | --- | --- | --- | --- | --- |
-| lexical (`off`) | IDF cosine `>= 0.25` | 0.933 / 1.000 | 0.233 (0.160) | 0.973 / 0.973 | 0.253 |
-| MiniLM-L6 q8 | uncalibrated (`0.48`) | 1.000 / 1.000 | 0.399 (0.331) | 1.000 / 1.000 | 0.275 |
-| MiniLM-L6 q8 | **calibrated (`p99`)** | **1.000 / 1.000** | **0.394 (0.331)** | **1.000 / 1.000** | **0.275** |
-| gte-modernbert q8 | uncalibrated (`0.48`) | 1.000 / 1.000 | 0.995 (0.994) | 1.000 / 1.000 | 0.989 |
-| gte-modernbert q8 | **calibrated (`p99`)** | **1.000 / 1.000** | **0.705 (0.692)** | **1.000 / 1.000** | **0.648** |
-
-Readings:
-- Replacing the brittle title/cue gate with similarity-ranked `possible_updates` candidates lifts held-out adversarial recall from `0.054 / 0.081` to **`0.973` (lexical, 36/37)** and **`1.000` (MiniLM q8 & gte-modernbert q8, 37/37 at rank 1)**.
-- Calibrating the semantic floor to `p99` is essential for shifted-range models like `gte-modernbert`: it cuts distinct `fp@1` by `29–34` percentage points (`0.995 -> 0.705` original, `0.989 -> 0.648` adversarial) with zero recall loss (`1.000` R@1 on both sets). Remaining `gte` distinct `fp@1` comes mainly from the cold-start window (`< 30` entries before calibration activates, where `0.48` sits below `gte`'s `p50` of `0.53`) and parallel siblings (which now carry an explicit `'different qualifier: ...'` warning in `reason`).
-
-### Recommended configuration
-
-| Profile | Settings | Download | Build (208) | Search p50 / p95 (orig) | Original hit@1 / hit@5 / MRR@10 | Adversarial hit@1 / hit@5 |
-| --- | --- | --- | --- | --- | --- | --- |
-| **Recommended (quality)** | `embeddings: nachos`, `embedding_model: Alibaba-NLP/gte-modernbert-base`, `embedding_dtype: q8`, `rerank: off`, `duplicate_calibration: auto`, `similarity_floor: off` | ~154 MB | 13.8 s | 17 / 26 ms | **0.773 / 0.949 / 0.850** | **1.000 / 1.000** |
-| **Lightweight (default)** | `embeddings: nachos`, `embedding_model: Xenova/all-MiniLM-L6-v2`, `embedding_dtype: q8`, `rerank: off`, `duplicate_calibration: auto`, `similarity_floor: off` | ~24 MB | 4.7 s | 7 / 8 ms | 0.758 / 0.924 / 0.832 | 0.988 / 1.000 |
-| Max original hit@1 (slower) | `gte-modernbert-base` q8 + `rerank: nachos`, `rerank_dtype: q8` | +35 MB | 14.3 s | 320 / 518 ms | 0.791 / 0.949 / 0.858 | 0.951 / 1.000 |
-| Zero-dependency | `embeddings: off` | none | 1.1 s | 0.2 / 0.3 ms | 0.695 / 0.812 / 0.748 | 0.975 / 1.000 |
-
-- **Keep `rerank: off` by default**: with supersedes + redirect active, `gte-modernbert-base` q8 (`rerank: off`) already hits `1.000` on `outdated`, `long-body`, `near-dup`, and every adversarial query at `12–17 ms` p50, while `rerank: on` costs `120–320 ms` per recall and slightly degrades redirected old-wording queries.
-- **Models**: set `embedding_model` / `embedding_dtype` to the first row's `Alibaba-NLP/gte-modernbert-base` / `q8` or the second's `Xenova/all-MiniLM-L6-v2` / `q8`; see [Choosing a model](#choosing-a-model-naterchrdsnmodels).
-- **Defaults in code**: `chunk_penalty = 0.05`, `duplicate_calibration = "auto"`, `calibrate_updates = True` (`p99` floor when calibrated), `similarity_floor = "off"`, `rerank = "off"`, `abstention = "hint"`.
-
-## Choosing a model (`naterchrdsn/models`)
-
-Measured on `naterchrdsn/models` (on `memory-next` `a0001a8`), CLI from `nachos-embeddings` branch `naterchrdsn/models`, `q8`, typed queries, rerank off, `--repeat 3`, 16-thread CPU (quality numbers are deterministic; latencies are medians of the final idle runs, earlier runs on a busier machine were up to 2x slower). Original fixture: 208 memories, 393 answerable queries; adversarial: 128 memories, 81 queries.
-
-```bash
-python -m bench --command ./shim --embeddings off
-python -m bench --command ./shim --embeddings nachos --model Xenova/all-MiniLM-L6-v2 --dtype q8 --label minilm-q8    # and gte-modernbert, arctic-embed-s, ...
-python -m bench --command ./shim --data-dir bench/data/adversarial ...                       # held-out set
-```
-
-**Before / after the model-settings work** (the change must not move recall): the same explicit `--model ... --dtype q8` runs on `memory-next` and on this branch.
-
-| Backend | Original hit@1 / hit@5 / MRR@10 before | after | Adversarial hit@1 / hit@5 / MRR@10 before | after |
-| --- | --- | --- | --- | --- |
-| lexical | 0.695 / 0.812 / 0.748 | 0.695 / 0.812 / 0.748 | 0.975 / 1.000 / 0.986 | 0.975 / 1.000 / 0.986 |
-| MiniLM q8 | 0.758 / 0.924 / 0.832 | 0.758 / 0.924 / 0.832 | 0.988 / 1.000 / 0.994 | 0.988 / 1.000 / 0.994 |
-| gte-modernbert q8 | 0.773 / 0.949 / 0.850 | 0.773 / 0.949 / 0.850 | 1.000 / 1.000 / 1.000 | 1.000 / 1.000 / 1.000 |
-
-Identical to three decimals: the settings pass-through and the per-model index key add no change to ranking.
-
-**The candidate models** (original / adversarial; p50 and build from the same runs, original fixture):
-
-| Model (q8) | Download | Dims | Original hit@1 / hit@5 / MRR@10 | Adversarial hit@1 / hit@5 | p50 / p95 ms | Build s |
-| --- | --- | --- | --- | --- | --- | --- |
-| `Xenova/all-MiniLM-L6-v2` | 23 MB | 384 | 0.758 / 0.924 / 0.832 | 0.988 / 1.000 | 8.2 / 10.2 | 4.8 |
-| `Snowflake/snowflake-arctic-embed-s` | 34 MB | 384 | 0.753 / 0.911 / 0.824 | 0.988 / 1.000 | 9.3 / 10.8 | 5.6 |
-| `Alibaba-NLP/gte-modernbert-base` | 150 MB | 768 | 0.773 / 0.949 / 0.850 | 1.000 / 1.000 | 20.5 / 27.7 | 19.5 |
-| `Xenova/bge-small-en-v1.5` | 34 MB | 384 | 0.728 / 0.916 / 0.807 | 0.988 / 1.000 | 16.0 / 27.3 | 12.0 |
-| `Xenova/e5-small-v2` | 34 MB | 384 | 0.753 / 0.898 / 0.818 | 0.975 / 1.000 | 15.2 / 30.3 | 47.5 (loaded machine) |
-| `nomic-ai/nomic-embed-text-v1.5` | 137 MB | 768 | 0.748 / 0.924 / 0.825 | 1.000 / 1.000 | 92.4 / 263.4 | 119.0 (loaded machine) |
-
-(The last three rows are from the baseline runs on `memory-next` on a busier machine, so their latencies are not comparable; bge-small is 12.0 s to build there.) Reading: only gte-modernbert is clearly better than MiniLM on this fixture (+0.015 hit@1, +0.025 hit@5, adversarial 1.000). The 384-dim retrieval models (arctic-embed-s, bge-small, e5-small) and nomic do not beat MiniLM here; arctic-embed-s is the best of them on hit@1 and the adversarial set, so it is the one to try if you want a retrieval-tuned 384-dim model, not a measured improvement over MiniLM. The fixture is synthetic with 393 queries, so differences under about 0.01 hit@1 (4 queries) are not significant. Run your own: `python -m bench --model <id>`.
-
-**Switching models** (MiniLM q8 to gte-modernbert q8 on the 208-entry fixture, `reindex_budget_ms` 250): before this change the first recall after the switch blocked for **17.2 s** while all entries re-embedded. Now recalls during the switch are lexical-only and take a median **314 ms** (max 1.8 s: one long entry of up to 16 chunks; the first includes loading the model) and the switch completes after **43 recalls** (26.7 s of embedding spread across them). The old vectors stay until the last entry is done, then they are dropped and the new model's thresholds are recalibrated (0.16 s).
-
-## History search benchmark
-
-`python -m bench.history [--noise N] [--repeat R] [--json out.json]` builds throwaway checkpoint directories from `bench/data/history.json` (6 synthetic sessions, 29 queries: 22 answerable across exact / partial / context / tool, 7 unanswerable) and compares the previous rule (every query word must appear) with the IDF ranking, with and without context windows. `m@k` = the matched message holds the answer in the top k; `ctx@5` = the answer is anywhere in a returned result (match or neighbouring turn); `FP` = share of unanswerable queries that return anything. `--noise 200` adds 200 filler checkpoints to measure latency at the `max_snapshots` limit. The fixture was written by the same author as the ranking, so treat the absolute rates as a regression guard, not an independent eval.
-
-| variant | m@1 | m@5 | ctx@5 | FP | p50 ms | p50 ms (+200 checkpoints) |
-|---|---|---|---|---|---|---|
-| all terms required (before) | 0.318 | 0.318 | 0.318 | 0.143 | 0.6 | 21.4 |
-| IDF ranking, no context | 0.864 | 0.864 | 0.955 | 0.000 | 0.8 | 27.6 |
-| IDF ranking + context (default) | 0.864 | 0.864 | 1.000 | 0.000 | 0.8 | 33.3 |
-
-Cost is one extra pass of scoring plus re-reading the few checkpoints that hold surviving hits; still one gunzip pass over at most `max_snapshots` checkpoints.
-
-Memory recall bench (`python -m bench`, rerank off, q8 models; before = `a0001a8`, after = this branch): hit@1 / MRR@10 unchanged on every backend except gte-modernbert main set, 0.766 -> 0.773 / 0.847 -> 0.850 (run-to-run noise in the fusion, not a code path this change touches). Adversarial set unchanged (lexical 0.975/0.986, MiniLM 0.988/0.994, gte 1.000/1.000).
-
-## Abstention, cold-start priors, and multi-query recall
-
-Measured on `naterchrdsn/abstain` (on top of `naterchrdsn/memory-next` commit `a0001a875a`). Adds per-query search confidence + explicit abstention (`abstention: hint` default, `on` opt-in), offline per-model calibration priors blended across cold start (30–100 entries), optional borderline cross-encoder verification (`rerank: borderline`), and batched multi-query recall (`queries: [string]`, up to 4 variants, with top-5 max-rerank when rerank is enabled).
-
-### Offline per-model priors and cold-start blending
-
-Previously, empirical random-pair calibration (`MemoryIndex.similarity_profile`) returned `None` below 30 entries, leaving shifted-range models like `gte-modernbert` on the raw `0.48` `possible_updates` floor during cold start. `nachos_core/calibration.py` now ships offline random-pair cosine tables for MiniLM plus every model family in `nachos-embeddings`' profiles, computed once over an 80-topic generic English corpus (3,160 distinct pairs, `q8`, `--type document`, zero overlap with the recall fixtures):
-
-| Model family | p50 | p75 | p90 | p95 | p99 | mean | std |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| `all-minilm-l6-v2` (`nachos:default`) | 0.039 | 0.094 | 0.161 | 0.212 | 0.320 | 0.048 | 0.090 |
-| `snowflake-arctic-embed-v2.0` | 0.131 | 0.179 | 0.226 | 0.254 | 0.332 | 0.136 | 0.072 |
-| `bge-en-v1.5` | 0.470 | 0.516 | 0.562 | 0.595 | 0.651 | 0.476 | 0.066 |
-| `gte-modernbert` | 0.499 | 0.538 | 0.577 | 0.607 | 0.667 | 0.505 | 0.056 |
-| `nomic-embed-text-v1.5` | 0.567 | 0.597 | 0.629 | 0.648 | 0.684 | 0.569 | 0.045 |
-| `snowflake-arctic-embed-v1` | 0.671 | 0.702 | 0.732 | 0.748 | 0.779 | 0.672 | 0.045 |
-| `e5` | 0.775 | 0.797 | 0.819 | 0.833 | 0.854 | 0.777 | 0.032 |
-
-Below 30 stored heads, `similarity_profile()` returns the model's prior directly; from 30 to 99 heads it linearly blends `(1 - n/100) * prior + (n/100) * empirical`; at `>= 100` heads it uses 100% empirical store calibration. Unknown models keep the previous empirical-only behavior.
-
-Effect on cold-start `--suggest-eval` (`possible_updates`, before `a0001a8` vs after priors):
-
-| Backend | Original R@1 / R@3 | Original distinct fp@1 (non-dup) before -> after | Adversarial R@1 / R@3 | Adversarial distinct fp@1 before -> after |
-| --- | --- | --- | --- | --- |
-| lexical (`off`) | 0.933 / 1.000 | 0.233 (0.160) -> 0.233 (0.160) | 0.973 / 0.973 | 0.253 -> 0.253 |
-| MiniLM-L6 q8 | 1.000 / 1.000 | 0.394 (0.331) -> 0.394 (0.331) | 1.000 / 1.000 | 0.275 -> 0.275 |
-| **gte-modernbert q8** | **1.000 / 1.000** | **0.705 (0.692) -> 0.539 (0.503)** | **1.000 / 1.000** | **0.648 -> 0.352** |
-
-Priors nearly halve `gte-modernbert`'s distinct `fp@1` on the held-out adversarial set (`0.648 -> 0.352`, down from `0.989` uncalibrated) and cut original distinct `fp@1` by `16.6` percentage points (`0.705 -> 0.539`) with zero recall loss (`1.000 / 1.000` on both fixtures).
-
-### Per-query confidence and abstention (with near-miss negatives)
-
-Both benchmark suites were expanded with unanswerable **near-miss** negatives (same named service/topic as a stored entry, asking for unstored facts):
-- `bench/data/queries.json`: +20 near-miss negatives (`q424`–`q443`, total 50 unanswerable = 30 standard + 20 near-miss alongside 393 answerable).
-- `bench/data/adversarial/queries.json`: +15 near-miss negatives (`a097`–`a111`, total 30 no-answer = 15 standard + 15 near-miss alongside 81 answerable).
-
-`MemoryService.search_with_confidence` combines cheap per-query signals — OOV-aware lexical coverage (weighting out-of-vocabulary query terms at `max_idf`, checking redirected predecessors too), lexical/semantic margins, calibrated semantic z-score `(sim - mean) / std` against the model's profile, `lexical+semantic` agreement, and optional cross-encoder score — into a `0..1` `confidence_score`. In semantic mode, the semantic z-score path and the lexical+agreement path combine via `max(s_sem, lex_path)` with a separate semantic cutoff (`SEMANTIC_ABSTAIN_THRESHOLD = 0.48`, vs `LEXICAL_ABSTAIN_THRESHOLD = 0.38`) so word-free paraphrases with a strong z-score are not penalised for zero lexical overlap and lexical-strong hits (e.g. `long-body`) are not dragged down by moderate semantic z-scores. When below threshold, recall sets `confident: false`, `no_confident_match: true`, and a `note`, while keeping low-confidence candidates listed so hit@k never drops (`0.000` hit@1 / hit@5 / MRR@10 change across all runs).
-
-**False-abstain breakdown before (weighted average, single `0.38` cutoff) -> after (decisive-OR, separate backend thresholds) on `bench/data` (393 answerable + 50 negative):**
-
-| Backend | Formula | Abstention P / R / F1 | Confident hit@1 | Unanswerable abstained (std / nm) | Answerable abstained (total) | By category (`para / nat / long / mhop / outd / kw+nd`) |
-| --- | --- | --- | --- | --- | --- | --- |
-| lexical (`off`) | before & after (`0.38`) | 0.312 / 0.680 / 0.428 | 0.690 | 34/50 (23/30, 11/20) | 75/393 (19 non-para) | `56 / 10 / 2 / 4 / 3 / 0` |
-| MiniLM-L6 q8 | before (avg `0.38`) | 0.354 / 0.560 / 0.434 | 0.733 | 28/50 (22/30, 6/20) | 51/393 (5 non-para) | `46 / 3 / 2 / 0 / 0 / 0` |
-| **MiniLM-L6 q8** | **after (OR `0.48`)** | **0.448 / 0.520 / 0.481** | **0.751** | **26/50 (22/30, 4/20)** | **32/393 (5 non-para)** | **`27 / 3 / 1 / 1 / 0 / 0`** |
-| gte-modernbert q8 | before (avg `0.38`) | 0.312 / 0.600 / 0.411 | 0.728 | 30/50 (25/30, 5/20) | 66/393 (12 non-para) | `54 / 4 / 5 / 3 / 0 / 0` |
-| **gte-modernbert q8** | **after (OR `0.48`)** | **0.367 / 0.580 / 0.450** | **0.748** | **29/50 (25/30, 4/20)** | **50/393 (8 non-para)** | **`42 / 2 / 3 / 3 / 0 / 0`** |
-
-**Held-out adversarial (`bench/data/adversarial`, 81 answerable + 30 no-answer [15 std + 15 near-miss]), including optional `rerank: borderline`:**
-
-| Backend | Mode | Answerable hit@1 / hit@5 / MRR@10 | Abstention P / R / F1 | Unanswerable abstained (std / nm) | Answerable abstained | Verified % | Search p50 / mean ms |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| lexical (`off`) | `rerank: off` | 0.975 / 1.000 / 0.986 | **1.000 / 0.667 / 0.800** | 20/30 (9/15, 11/15) | **0/81** | - | 0.2 / 0.2 |
-| MiniLM-L6 q8 | `rerank: off` | 0.988 / 1.000 / 0.994 | **1.000 / 0.333 / 0.500** | 10/30 (9/15, 1/15) | **0/81** | 0% | 4.7 / 4.8 |
-| MiniLM-L6 q8 | **`rerank: borderline`** | 0.988 / 1.000 / 0.994 | **1.000 / 0.567 / 0.723** | 17/30 (11/15, 6/15) | **0/81** | **13.5%** (15/111) | **4.9 / 8.2** |
-| gte-modernbert q8 | `rerank: off` | 1.000 / 1.000 / 1.000 | **1.000 / 0.467 / 0.636** | 14/30 (8/15, 6/15) | **0/81** | 0% | 14.6 / 16.9 |
-| gte-modernbert q8 | **`rerank: borderline`** | 1.000 / 1.000 / 1.000 | **1.000 / 0.567 / 0.723** | 17/30 (10/15, 7/15) | **0/81** | **9.9%** (11/111) | **12.1 / 19.1** |
-
-- **Optional borderline verifier (`rerank: borderline`)**: fires only when initial confidence sits within `±0.12` of the threshold (`9.9%–13.5%` of queries), scoring only the top 5 results with `jina-reranker-v1-tiny-en`. On the held-out adversarial set it raises recall sharply (`MiniLM 0.333 -> 0.567`, `gte 0.467 -> 0.567`, both `P = 1.000`, `F1 = 0.723`) for only `+2–3 ms` average latency (`28–46 ms` on verified queries; median latency unchanged at `5–12 ms`, vs `123–129 ms` for full rerank). On the original set (`12.6%–13.1%` verified; mean latency `9.0 -> 18.8 ms` MiniLM, `25.8 -> 40.0 ms` gte), the small English cross-encoder scores word-free paraphrases low (`~0.20`), pulling additional paraphrases below threshold (`MiniLM P 0.448 -> 0.355, R 0.540`; `gte P 0.367 -> 0.326, R 0.560`). It stays off when `rerank: off`.
-- **Default decision (`abstention: hint` default, `on` opt-in)**: Switching to decisive-OR cuts semantic false abstentions by `24%–37%` (`51 -> 32` MiniLM, `66 -> 50` gte; non-paraphrase false abstentions only `1.5%–2.4%`) and raises `confident hit@1` to `0.748–0.751`. However, original-set precision still cannot reach `>= 0.60` at `R >= 0.50` across backends (ceiling is `~0.50` MiniLM, `~0.41` gte, `~0.31` lexical) because the 60 word-free `paraphrase` queries overlap `negative:std` in semantic z-score and score lower than `negative:near-miss` on every signal (including the cross-encoder). Therefore **`abstention: hint` ships by default** (result fields `confident`/`no_confident_match` are present as informational hints without instructing automatic retries in the tool description), while **`abstention: on`** is opt-in to enable automatic retry guidance.
-
-### Multi-query recall (`--multi-query`, 1 vs 3 queries)
-
-`nachos_memory_recall` and `MemoryService.search` / `search_with_confidence` accept `queries: [string]` (up to 4 variants), embedding all variants in a single batched `_embed()` call and fusing results with RRF (deduplicating hits while keeping best per-hit similarity and best per-query confidence).
-
-Run with:
-
-```bash
-python -m bench.recall --embeddings off --multi-query --repeat 3
-python -m bench.recall --command ./shim --embeddings nachos --model Alibaba-NLP/gte-modernbert-base --dtype q8 --multi-query --repeat 3
-```
-
-**Original (`bench/data`), exact 3-query groups (`paraphrase + natural + keyword`, `n = 29`, `--repeat 3`):**
-
-| Backend | Mode | hit@1 | hit@5 | MRR@10 | p50 ms | p95 ms | Notes |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| lexical (`off`) | 1-query (paraphrase) | 0.000 | 0.000 | 0.000 | 0.5 | 0.9 | |
-| lexical (`off`) | 2-query (para + natural) | 0.000 | 0.621 | 0.210 | 0.7 | 1.1 | |
-| lexical (`off`) | **3-query** | **0.483** | **0.931** | **0.696** | **0.8** | **1.3** | 1.6x latency |
-| lexical (`off`) | retry-on-low-conf | 0.448 | 0.862 | 0.650 | 1.3 | 3.3 | retried 27/29 (93%) |
-| MiniLM-L6 q8 | 1-query (paraphrase) | 0.241 | 0.621 | 0.411 | 15.9 | 30.4 | |
-| MiniLM-L6 q8 | 2-query (para + natural) | 0.793 | 1.000 | 0.876 | 25.0 | 50.6 | |
-| MiniLM-L6 q8 | **3-query** | **0.966** | **1.000** | **0.983** | **33.8** | **62.0** | 2.1x latency |
-| MiniLM-L6 q8 | retry-on-low-conf | 0.828 | 1.000 | 0.905 | 46.1 | 85.3 | retried 24/29 (83%) |
-| gte-modernbert q8 | 1-query (paraphrase) | 0.172 | 0.655 | 0.377 | 44.0 | 75.1 | |
-| gte-modernbert q8 | 2-query (para + natural) | 0.862 | 0.966 | 0.912 | 72.6 | 97.0 | |
-| gte-modernbert q8 | **3-query** | **0.966** | **1.000** | **0.983** | **114.9** | **138.0** | 2.6x latency |
-| gte-modernbert q8 | retry-on-low-conf | 0.931 | 1.000 | 0.966 | 156.2 | 200.5 | retried 28/29 (97%) |
-
-**All multi-variant groups (`bench/data`, `n = 151`, avg `2.19` queries per group):**
-
-| Backend | 1-query hit@1 / hit@5 / MRR@10 | multi-query hit@1 / hit@5 / MRR@10 | retry-on-low-conf hit@1 / hit@5 / MRR@10 | p50 ms (1 / multi / retry) | Retry rate |
-| --- | --- | --- | --- | --- | --- |
-| lexical (`off`) | 0.450 / 0.550 / 0.496 | 0.623 / 0.940 / 0.752 | 0.576 / 0.907 / 0.713 | 0.5 / 0.7 / 0.6 | 45% (68/151) |
-| MiniLM-L6 q8 | 0.576 / 0.834 / 0.689 | 0.947 / 1.000 / 0.970 | 0.808 / 0.987 / 0.888 | 13.8 / 25.6 / 21.6 | 32% (49/151) |
-| gte-modernbert q8 | 0.596 / 0.881 / 0.721 | 0.974 / 1.000 / 0.987 | 0.874 / 0.993 / 0.931 | 38.6 / 64.7 / 50.3 | 38% (57/151) |
-
-**Multi-query + cross-encoder rerank (`--rerank --rerank-dtype q8 --multi-query`, top-5 max-rerank across variants):**
-
-| Backend | Subset | 1-query hit@1 / hit@5 / MRR@10 (p50 ms) | multi-query hit@1 / hit@5 / MRR@10 (p50 ms) |
-| --- | --- | --- | --- |
-| MiniLM-L6 q8 + rerank | 3-query triples (`n = 29`) | 0.138 / 0.655 / 0.353 (322.7 ms) | **1.000 / 1.000 / 1.000 (107.4 ms)** |
-| MiniLM-L6 q8 + rerank | All multi-variant (`n = 151`) | 0.609 / 0.834 / 0.705 (214.6 ms) | **0.993 / 1.000 / 0.997 (88.9 ms)** |
-| gte-modernbert q8 + rerank | 3-query triples (`n = 29`) | 0.103 / 0.655 / 0.318 (368.0 ms) | **1.000 / 1.000 / 1.000 (201.0 ms)** |
-| gte-modernbert q8 + rerank | All multi-variant (`n = 151`) | 0.636 / 0.881 / 0.738 (341.8 ms) | **1.000 / 1.000 / 1.000 (135.4 ms)** |
-
-Readings:
-- Multi-query recall turns the hardest category in the benchmark (`paraphrase`) from `0.172–0.241` hit@1 into **`0.966` hit@1 / `1.000` hit@5** (and even `2-query` without title keywords jumps to `0.793–0.862` hit@1), while batching all 3 queries into one embedding call keeps latency sub-linear (`1.6x–2.6x` single-query p50).
-- When `rerank: nachos` is enabled, capping multi-query reranking to the top 5 fused candidates and taking the max cross-encoder score across variants evaluates only `15` pairs for 3 queries (fewer than single-query rerank's `25` pairs), reaching **`1.000 / 1.000 / 1.000`** on triples (`0.993–1.000` across all 151 groups) at **`1.8x–3.0x` lower p50 latency** than single-query full reranking.
-- Pairing abstention with retry-on-low-confidence captures most of the gain automatically (`hit@1 0.172 -> 0.931` on `gte` triples, `hit@5 0.655 -> 1.000`; `0/22` retries and `0 ms` extra latency on the adversarial multi-variant set where 1-query already hits `1.000`).
-
-## Linked memory (`naterchrdsn/links`)
-
-Links, `related` expansion, entity suggestions and the `entity` filter were added on top of `naterchrdsn/memory-next` (`a0001a875a`). Recall ranking is unchanged by design (a `related` list is attached after ranking; a graph boost was tried and dropped, below), so the first job of the bench is to show no regression. Same setup as the other matrices: `nachos` backend through `nachos-embeddings` (branch `emb-prefixes`), `q8`, typed, rerank off, `--repeat 1`, supersedes applied by label, cache outside the repo.
-
-### Recall before / after (hit@1 / hit@5 / MRR@10)
-
-| Set | Backend | Before (`a0001a875a`) | After | Delta hit@1 / MRR |
-| --- | --- | --- | --- | --- |
-| main (208 entries, 393 scored queries + 30 negative) | lexical | 0.695 / 0.812 / 0.748 | 0.695 / 0.812 / 0.748 | +0.000 / +0.000 |
-| main | MiniLM q8 | 0.758 / 0.924 / 0.832 | 0.758 / 0.924 / 0.832 | +0.000 / +0.000 |
-| main | gte-modernbert q8 | 0.768 / 0.949 / 0.848 | 0.766 / 0.949 / 0.847 | -0.002 / -0.001 |
-| adversarial (128 entries, 81 answerable queries) | lexical | 0.975 / 1.000 / 0.986 | 0.975 / 1.000 / 0.986 | +0.000 / +0.000 |
-| adversarial | MiniLM q8 | 0.988 / 1.000 / 0.994 | 0.988 / 1.000 / 0.994 | +0.000 / +0.000 |
-| adversarial | gte-modernbert q8 | 1.000 / 1.000 / 1.000 | 1.000 / 1.000 / 1.000 | +0.000 / +0.000 |
-
-The only difference is one `natural` query on gte-modernbert (hit@1 -0.002, inside the CLI's own run-to-run noise: re-running the unchanged baseline gave 0.7735 against 0.768 the first time, and re-running the new code matched that 0.7735 exactly). Neither fixture contains `[[links]]`, so `related` never fires there; the fixtures cannot show a gain from linking, only that the extra machinery (graph reconcile, `related` pass) is inert when no links exist.
-
-### Link suggestions, first version: entity rules only (`--link-eval`)
-
-This is the first version, measured with supersedes not applied in the replay; the next section replaces it (its numbers on the current harness are in the before columns there).
-
-`bench/data/adversarial/links.json` holds 61 hand-labelled entry pairs (undirected) that a reader would want linked (same product and its replica, an incident and the system it hit, a plan and its support targets...), written before the suggester was run. Entries are compared by the root of their supersedes chain, so an updated version inherits its predecessor's labels, and two versions of the same fact are neutral. `--link-eval` replays all 128 entries through `put()` without supersedes and scores `suggested_links` as each entry arrives: precision is labelled-pair suggestions over all suggestions; recall is labelled pairs found at least once.
-
-| Backend | Pairs | Precision | Recall | TP/FP |
-| --- | --- | --- | --- | --- |
-| lexical | 61 | 0.667 | 0.131 | 8/4 |
-| MiniLM q8 | 61 | 0.600 | 0.098 | 6/4 |
-| gte-modernbert q8 | 61 | 0.556 | 0.082 | 5/4 |
-
-Notes:
-
-- **Recall is low on purpose.** Most labelled pairs are semantic (a billing API and its load-test note share no identifier), and the suggester only sees shared identifiers, hosts, paths, handles, project names and, in pairs, capitalised names. It is meant to catch the links an agent would otherwise miss for free, not to model relatedness; embeddings do not help (they push relations into `possible_updates`, which are excluded from `suggested_links`).
-- **Strict labels overstate the false positives.** Three of the four FPs are `Postgres ...` entries sharing the leading project name (`Postgres read replica for analytics` to `Postgres primary host`, `Postgres connection usage` to both replicas): real relations that my labels omitted. With them counted, lexical precision would be 11/12 = 0.917. I did not relabel, so the table is the strict number. The remaining FP, `2024-05-03 search outage` to `Incident on-call rotation`, comes from the word "incident" being treated as a project name.
-- **This label set is not independent.** A first run scored precision 0.455 / recall 0.147 (12 FPs: `production`, `staging`, `primary` and `python` taken as project names; `lumenfold.io` and `@lumenfold/sdk` as strong entities; one shared product name such as `GitHub` as enough). The current rules were added after that run: a project name must never appear in lowercase anywhere in memory, bare domains and product names are weak (two needed), and `.internal` machine names are strong. Treat 0.667 as tuned on this data, and re-check on real memory.
-- The main fixture has no links file, so `--link-eval` skips it.
-
-### Link suggestions, second version: similarity path
-
-The first version found only 8 to 13 percent of the labelled pairs. This version adds a similarity path (`nachos_core/links.py`): IDF-weighted word-overlap cosine against every other active entry (always available, no dependency) and, with embeddings, head-vector cosine; each is turned into a z-score over that entry's own similarities, the two are added, and an entry is suggested alone above a high z (4.75 for words, 6.5 summed) or above a lower one (3.5 / 4.5) together with any shared non-generic entity, best first, at most 3, each with a `reason`. Z-scores are used instead of per-model cosine percentiles because the calibrated percentiles (a p99/p95 profile) need 30+ stored entries, drift as the store grows, and gave precision 0.22 to 0.33 in the first tries. Fewer than 20 active entries gives no similarity suggestions (the entity rules still apply). The project-name rule was tightened: a stoplist of common capitalised nouns (`Incident`, `Meeting`, `Service`...) and the owner of a name is only a hit when another entry uses the name.
-
-Method. A second link set, `bench/data/links-heldout/` (76 entries on a different fictional company, 78 labelled pairs, 15 hard negatives such as two HR policies or two style guides), was written and committed first, before this code existed, and not tuned against. The thresholds were chosen on the adversarial set's labels. `--link-eval` now applies labelled updates as `supersedes` (an agent following `possible_updates`), reports hard-negative false positives, and takes `--calibrate-duplicates` (used for the embedding rows, the shipped `duplicate_calibration: auto` setting). Before = the previous commit on the same harness.
-
-| Set | Backend | Before precision / recall (TP/FP) | After precision / recall (TP/FP) | Hard-negative FPs after |
-| --- | --- | --- | --- | --- |
-| adversarial (tuning set, 61 pairs) | lexical | 0.727 / 0.098 (8/3) | 0.660 / 0.459 (35/18) | n/a |
-| adversarial | MiniLM q8 | 0.667 / 0.066 (6/3) | 0.631 / 0.557 (41/24) | n/a |
-| adversarial | gte-modernbert q8 | 0.625 / 0.066 (5/3) | 0.646 / 0.557 (42/23) | n/a |
-| held-out (78 pairs) | lexical | 0.571 / 0.154 (12/9) | 0.480 / 0.154 (12/13) | 0 / 15 |
-| held-out | MiniLM q8 | 0.471 / 0.103 (8/9) | 0.550 / 0.282 (22/18) | 0 / 15 |
-| held-out | gte-modernbert q8 | 0.500 / 0.090 (7/7) | 0.538 / 0.269 (21/18) | 2 / 15 |
-
-Result: the target (recall at least 0.5 at precision at least 0.6) is met on the set the thresholds were chosen on and **not met on the held-out set**: MiniLM 0.282 recall at 0.550 precision, gte 0.269 at 0.538, lexical 0.154 at 0.480 (unchanged recall, lower precision).
-
-What I can say about the gap, without having tuned on it:
-
-- A threshold sweep on the held-out set for diagnosis only (not applied) shows no setting of this signal family reaches both numbers there. The best MiniLM/gte trade-offs were about 0.35 recall at 0.59 precision (summed z of 5.5), 0.46 recall at 0.46 to 0.51 precision, and 0.5 recall only at about 0.35 to 0.38 precision. The held-out relations are mostly topic-adjacent entries with little shared wording (a refund policy and the payments service, a deploy workflow and the hosting platform), which wording and sentence-embedding similarity cannot separate from same-topic unrelated entries at the cap of 3.
-- Precision is understated by incomplete labels. Of the 18 MiniLM false positives, at least 6 are relations I would accept on review but did not label (`shipping-rates` to `checkout-flow`, `bike-grading` to `pricing-rules`, `ci-pipelines` to `kestrel-storefront`, `secrets-handling` to `sendcloud-setup` through Vault, `moneybird-integration` to `sendcloud-setup`, `warehouse-printers` to `warehouse-layout`). I did not relabel. The labelled hard negatives were mostly respected (0 of 15 for lexical and MiniLM; gte linked `python-conventions` with `typescript-conventions` and `holiday-policy` with `onboarding`).
-- Lexical on the held-out set is unchanged at 0.154 recall because the held-out store is small (76 entries): few entries stand out by wording alone at z 4.75, and a z-score over about 60 candidates cannot exceed roughly 7.7 (a cluster of five related entries caps each at about 3.3).
-- The first embedding attempts also lost most of their recall to `possible_duplicates` and `possible_updates` filtering: with the calibrated p99 bands, the high-similarity neighbours are exactly the entries listed there. Excluding both lists from `suggested_links` gave MiniLM 0.50 / 0.28 and gte 0.42 / 0.08 on the adversarial set against 0.63 / 0.56 and 0.65 / 0.56 now, so suggestions may repeat an entry that `possible_updates` or `possible_duplicates` also lists. That deviates from "below the duplicate/update band" on purpose; the agent decides between merging, superseding and linking.
-- Process note: the held-out set was run twice with identical results; the second run followed fixing the project-name stoplist, which had silently not been applied in the first (the edit did not match after reformatting). The `Incident` false positive is gone on the adversarial set.
-
-Recall before / after on the two recall fixtures (hit@1 / hit@5 / MRR@10) is unchanged for lexical and MiniLM on both sets; gte on the main set moved from 0.768 / 0.949 / 0.848 to 0.773 / 0.949 / 0.850 (+0.005 hit@1), inside that backend's run-to-run noise (0.768 and 0.7735 on identical code earlier). Ranking code was not touched. Build time with the link path is not measurably different from before (lexical 208-entry build 1.5 s against 1.6 s; the embedding builds were dominated by embedding time and varied by 2x between identical runs on the loaded machine). The cost per put is one pass over every active entry's word set and head vector.
-
-### Graph boost: tried, dropped
-
-A `graph_boost` (add a share of a strong hit's fused score to entries it links to) was implemented and measured on a copy of the adversarial set where each of the 62 labelled pairs was made an explicit `[[link]]`. It only reorders results: 0.01 changed nothing, 0.03 cost lexical hit@1 0.975 to 0.914, 0.3 to 0.716 (MiniLM 0.988 to 0.864). Linked entries are related, not the answer to the same query, so boosting them displaces the real answer. It was removed rather than shipped off by default; `related` shows neighbours without reordering anything.
-
-### Cost and size
-
-`memory.py` stays at radon maintainability B (10.6, from 9.2): the link and entity logic lives in `links.py`, `graph.py` and `linked.py`, and the unchanged cache refresh and change-log snapshot helpers moved to `support.py`. `put()` re-scans one entry's text for entities and links; the entity index is rebuilt from the store only after an external edit.
-
-## Reconciliation branch check (no ranking change expected)
-
-The reconciliation work adds `MemoryService.link_supersede`/`unlink_supersede` and a `key`
-argument to `put`/`prepare`, and does not touch ranking. `python -m bench --repeat 3`, rerank
-off, memory-next before and this branch after (hit@1 / hit@5 / MRR@10):
-
-| Data set | Backend | Before | After |
-| --- | --- | --- | --- |
-| original (393 positive queries) | lexical | 0.695 / 0.812 / 0.748 | 0.695 / 0.812 / 0.748 |
-| original | MiniLM q8 | 0.758 / 0.924 / 0.832 | 0.758 / 0.924 / 0.832 |
-| original | gte-modernbert q8 | 0.766 / 0.949 / 0.847 | 0.773 / 0.949 / 0.850 |
-| adversarial | lexical | 0.975 / 1.000 / 0.986 | 0.975 / 1.000 / 0.986 |
-| adversarial | MiniLM q8 | 0.988 / 1.000 / 0.994 | 0.988 / 1.000 / 0.994 |
-| adversarial | gte-modernbert q8 | 1.000 / 1.000 / 1.000 | 1.000 / 1.000 / 1.000 |
-
-No backend regressed. The +0.007 hit@1 for gte-modernbert on the original set is not explained
-by any code change (ranking is untouched); I treat it as run-to-run variation in the embedding
-worker, not an improvement.
-
-## Consolidated Round 4 matrix (`naterchrdsn/memory-next` HEAD)
-
-Measured on the fully integrated `naterchrdsn/memory-next` branch (merging `models`, `history-provenance`, `abstain`, `links`, `reconcile`, and cross-feature wiring). `nachos-embeddings` CLI (`q8`, typed queries), supersedes applied, 16-CPU host.
-
-### Recall & abstention (original + held-out adversarial)
-
-| Backend | Rerank | Orig hit@1 / hit@5 / MRR@10 | Orig outdated | Orig p50 / p95 ms | Orig abstention P / R / F1 | Adv hit@1 / hit@5 / MRR@10 | Adv outdated | Adv p50 / p95 ms | Adv abstention P / R / F1 |
+| Backend | Rerank | Main hit@1 / hit@5 / MRR | Main outdated hit@1 | Main p50 / p95 ms | Main abstention P / R / F1 | Adv. hit@1 / hit@5 / MRR | Adv. outdated hit@1 | Adv. p50 / p95 ms | Adv. abstention P / R / F1 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | lexical (`off`) | off | 0.695 / 0.812 / 0.748 | 0.867 | 0.5 / 0.7 | 0.312 / 0.680 / 0.428 | 0.975 / 1.000 / 0.986 | 1.000 | 0.5 / 0.7 | 1.000 / 0.667 / 0.800 |
-| MiniLM-L6 q8 | off | 0.758 / 0.924 / 0.832 | 1.000 | 9.2 / 19.1 | 0.448 / 0.520 / 0.481 | 0.988 / 1.000 / 0.994 | 1.000 | 5.9 / 6.9 | 1.000 / 0.333 / 0.500 |
-| **gte-modernbert q8** | **off** | **0.773 / 0.949 / 0.850** | **1.000** | **22.0 / 43.5** | **0.367 / 0.580 / 0.450** | **1.000 / 1.000 / 1.000** | **1.000** | **16.9 / 32.8** | **1.000 / 0.467 / 0.636** |
-| gte-modernbert q8 | `borderline` | 0.773 / 0.949 / 0.850 | 1.000 | 32.4 / 200.1 (12.6% ver) | 0.326 / 0.560 / 0.412 | 1.000 / 1.000 / 1.000 | 1.000 | 15.8 / 24.9 (9.9% ver) | **1.000 / 0.567 / 0.723** |
-| gte-modernbert q8 | `nachos` (`sum:1`) | 0.791 / 0.949 / 0.858 | 0.967 | 441.4 / 730.8 | 0.330 / 0.580 / 0.420 | 0.951 / 1.000 / 0.975 | 0.875 | 204.9 / 274.2 | 1.000 / 0.533 / 0.696 |
+| MiniLM-L6 | off | 0.758 / 0.924 / 0.832 | 1.000 | 9.2 / 19.1 | 0.448 / 0.520 / 0.481 | 0.988 / 1.000 / 0.994 | 1.000 | 5.9 / 6.9 | 1.000 / 0.333 / 0.500 |
+| gte-modernbert | off | 0.773 / 0.949 / 0.850 | 1.000 | 22.0 / 43.5 | 0.367 / 0.580 / 0.450 | 1.000 / 1.000 / 1.000 | 1.000 | 16.9 / 32.8 | 1.000 / 0.467 / 0.636 |
+| gte-modernbert | `borderline` | 0.773 / 0.949 / 0.850 | 1.000 | 32.4 / 200.1 | 0.326 / 0.560 / 0.412 | 1.000 / 1.000 / 1.000 | 1.000 | 15.8 / 24.9 | 1.000 / 0.567 / 0.723 |
+| gte-modernbert | `nachos` | 0.791 / 0.949 / 0.858 | 0.967 | 441.4 / 730.8 | 0.330 / 0.580 / 0.420 | 0.951 / 1.000 / 0.975 | 0.875 | 204.9 / 274.2 | 1.000 / 0.533 / 0.696 |
 
-### Feature evaluations (post-merge)
+Build time for the main set: about 1 s lexical, 5 s MiniLM, 14 s gte-modernbert.
 
-| Eval | Subset | lexical (`off`) | MiniLM-L6 q8 | gte-modernbert q8 |
+- **Embeddings help most on paraphrases.** Lexical hit@1 is 0.000 there by construction; with embeddings and one query it is about 0.2, and with grouped rephrasings (below) 0.97.
+- **Supersede redirect fixes outdated queries.** Search follows `superseded_by` to the current entry before ranking. On the adversarial set lexical `outdated` hit@1 is 1.000 with supersedes applied and 0.125 without.
+- **Full reranking (`rerank: nachos`) raises main hit@1 by about 0.02** but costs 120-440 ms per recall and lowers adversarial `outdated` hit@1 (1.000 to 0.875): a redirected successor that no longer contains the query's old wording scores low. `borderline` re-scores about 10-13% of queries, keeps latency near the median, and raises adversarial abstention recall (MiniLM 0.333 to 0.567, gte 0.467 to 0.567, precision 1.000). Neither is on by default.
+- **Abstention is advisory.** On the main set precision stays under about 0.5 at recall near 0.5 because the 60 paraphrase queries share no words with their answers and look like non-matches. On the adversarial set no answerable query is abstained on (0 of 81). This is why the default is `hint`.
+- Negative queries: lexical `fp@1 / fp@5` 0.767 / 0.707; semantic runs 1.000 / 1.000 (`similarity_floor: off`).
+
+### Update suggestions (`--suggest-eval`)
+
+Main set: 15 updates among 193 distinct puts. Adversarial: 37 updates among 91 distinct puts. Calibrated floor is the model's 99th-percentile random-pair similarity.
+
+| Backend | Main R@1 / R@3 | Main distinct fp@1 | Adv. R@1 / R@3 | Adv. distinct fp@1 |
 | --- | --- | --- | --- | --- |
-| `--suggest-eval` | Original (15 upd / 193 dist) | R@1 0.933 / R@3 1.000, fp@1 0.233 | R@1 1.000 / R@3 1.000, fp@1 0.394 | R@1 1.000 / R@3 1.000, fp@1 **0.539** (was 0.705) |
-| `--suggest-eval` | Adversarial (37 upd / 91 dist) | R@1 0.973 / R@3 0.973, fp@1 0.253 | R@1 1.000 / R@3 1.000, fp@1 0.275 | R@1 1.000 / R@3 1.000, fp@1 **0.352** (was 0.648) |
-| `--link-eval` | Adversarial (61 pairs) | P 0.660 / R 0.459 (35/18) | P 0.631 / R 0.557 (41/24) | P 0.646 / R 0.557 (42/23) |
-| `--link-eval` | Held-out (78 pairs, 15 hard neg) | P 0.480 / R 0.154 (0/15 hard FP) | P 0.550 / R 0.282 (0/15 hard FP) | P 0.538 / R 0.269 (2/15 hard FP) |
-| `--multi-query` | Original 3-query triples (`n = 29`, `--repeat 3`) | 1q 0.000 -> 3q 0.483 / 0.931 (0.7 ms) | 1q 0.241 -> 3q **0.966 / 1.000** (18.6 ms) | 1q 0.172 -> 3q **0.966 / 1.000** (55.1 ms) |
-| `--multi-query` | All multi-variant (`n = 151`, avg 2.19 q) | 1q 0.450 -> mq 0.623 / 0.940 (0.6 ms) | 1q 0.576 -> mq **0.947 / 1.000** (13.7 ms) | 1q 0.596 -> mq **0.974 / 1.000** (37.5 ms) |
-| `bench.history` | Base / `+200` checkpoints | before: m@1 0.318 / ctx@5 0.318 (FP 0.143) -> **IDF+ctx: m@1 0.864 / ctx@5 1.000 (FP 0.000, 0.66 ms)**; `+200`: m@1 0.727 / ctx@5 0.864 (FP 0.000, 17.7 ms) | n/a | n/a |
+| lexical | 0.933 / 1.000 | 0.233 | 0.973 / 0.973 | 0.253 |
+| MiniLM-L6 | 1.000 / 1.000 | 0.394 | 1.000 / 1.000 | 0.275 |
+| gte-modernbert | 1.000 / 1.000 | 0.539 | 1.000 / 1.000 | 0.352 |
 
-Zero regression across every metric versus `a0001a875a` (`0.000` hit@1 / hit@5 / MRR@10 drift across lexical, MiniLM q8, and gte-modernbert q8 on both datasets).
+Calibration matters for models with a shifted similarity range: without it gte-modernbert's distinct fp@1 is 0.995 / 0.989 instead of the values above.
+
+### Multi-query recall (`--multi-query`)
+
+Grouped rephrasings of one question (paraphrase + natural + keyword), fused with RRF in one embedding call.
+
+| Backend | 3-query groups (n = 29): 1 query, hit@1 | 3 queries, hit@1 / hit@5 | p50 ms (3 queries) | All groups (n = 151): 1 query, hit@1 | multi-query, hit@1 / hit@5 |
+| --- | --- | --- | --- | --- | --- |
+| lexical | 0.000 | 0.483 / 0.931 | 0.8 | 0.450 | 0.623 / 0.940 |
+| MiniLM-L6 | 0.241 | 0.966 / 1.000 | 33.8 | 0.576 | 0.947 / 1.000 |
+| gte-modernbert | 0.172 | 0.966 / 1.000 | 114.9 | 0.596 | 0.974 / 1.000 |
+
+Cost is about 1.6-2.6x the single-query latency. With `rerank: nachos`, multi-query caps reranking at the top 5 candidates and takes the best score across variants, reaching hit@1 1.000 on the triples at lower latency than single-query full reranking.
+
+### Links (`--link-eval`)
+
+Suggestions are deliberately precision-first and recall-low; most labelled pairs are semantic and share no identifier. Adversarial set (61 labelled pairs) and held-out set (78 pairs, 15 hard negatives):
+
+| Backend | Adv. precision / recall | Held-out precision / recall | Held-out hard FP |
+| --- | --- | --- | --- |
+| lexical | 0.660 / 0.459 | 0.480 / 0.154 | 0 of 15 |
+| MiniLM-L6 | 0.631 / 0.557 | 0.550 / 0.282 | 0 of 15 |
+| gte-modernbert | 0.646 / 0.557 | 0.538 / 0.269 | 2 of 15 |
+
+Links do not change recall ranking: with no `[[links]]` in the fixtures, hit@1 / hit@5 / MRR are unchanged to three decimals on both sets. A graph boost (adding a share of a strong hit's score to its linked entries) was measured and rejected: it lowered lexical adversarial hit@1 from 0.975 to 0.914 at a small boost, because linked entries are related rather than the answer to the same query.
+
+### History search (`python -m bench.history`)
+
+| Variant | m@1 | m@5 | ctx@5 | FP | p50 ms (base / +200 checkpoints) |
+| --- | --- | --- | --- | --- | --- |
+| every query word must appear (old rule) | 0.318 | 0.318 | 0.318 | 0.143 | 0.6 / 21.4 |
+| IDF ranking, no context | 0.864 | 0.864 | 0.955 | 0.000 | 0.8 / 27.6 |
+| IDF ranking + context windows (current) | 0.864 | 0.864 | 1.000 | 0.000 | 0.8 / 33.3 |
+
+### Chunked body vectors, chunk penalty and calibration
+
+- Long entries (over 1200 characters) get overlapping body-chunk vectors (up to 16 per entry). Without them, `long-body` queries failed once embeddings were on, because the embedder only saw the start of the body.
+- A chunk's score is reduced by 0.05 (`chunk_penalty`) so a chunk matching one sentence cannot outrank a head vector that matches the whole topic. Removing it cost paraphrase hit@1.
+- Cosine ranges differ a lot between models (random pairs sit near 0.1 for MiniLM and 0.5 for bge), so the duplicate threshold and optional similarity floor are calibrated per model from random-pair statistics: offline priors below 30 entries, blended into the store's own distribution from 30 to 100.
+
+### Switching cost
+
+MiniLM q8 to gte-modernbert q8 on the 208-entry store (`reindex_budget_ms` 250): the first recall used to block for 17.2 s. Now recalls during the switch are lexical, take a median 314 ms (max 1.8 s) and the switch completes after 43 recalls.
+
+## Known limits
+
+- **Synthetic, small, partly tuned.** The main set (208 entries) informed several defaults; the adversarial recall/update set and the links-held-out set were not tuned on. Real stores differ in vocabulary, length and noise. Differences under 0.01 hit@1 are not significant.
+- **Latency is one machine.** Numbers are medians on one idle 16-thread CPU; some rows of the README model table (notably nomic) were measured on a busier machine.
+- **Paraphrase remains the weakest category** for single queries; multi-query rephrasing is the main mitigation and depends on the agent supplying good variants.
+- **Abstention cannot separate paraphrases from non-matches** on the main set, so it is advisory. Near-miss negatives (a stored topic, an unstored fact) are the hardest to abstain on.
+- **Update and link suggestions are heuristics.** Update suggestions flag some genuinely new facts (distinct fp@1 0.28-0.54 with embeddings); they are non-blocking. Link suggestions miss relations that share no identifier, host, path or name.
+- **English only.** The fixtures and the default models are English.
+- **Not measured:** stores much larger than a few hundred entries beyond latency padding (`--synthetic`), non-English text, and reranker models other than `jina-reranker-v1-tiny-en`.

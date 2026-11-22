@@ -3,7 +3,9 @@
 `nachos-maintain` is installed with the pip/wheel package. It also runs as
 `python -m nachos_hermes.maintenance`. It is a deterministic **report-only**
 CLI, not an autonomous memory curator. Installing or running it creates no
-cron jobs, memories, approvals, or model requests.
+cron jobs, entries, approvals, or model requests. To act on its findings see
+[reconciliation](reconciliation.md); for the overall design see
+[architecture](architecture.md).
 
 ## Select exactly one profile
 
@@ -65,13 +67,17 @@ audit, and rerun before making approved edits.
 | `summaries` | The same `nachos_core.quality.flag_reason` used by `tools/correct_summaries.py` | Inspect low-signal, title-repeating, or vocabulary-mismatched summaries against the full body. |
 | `duplicates` | `MemoryService.duplicate_pairs(sync=False)`, embeddings disabled | Read both entries and decide whether they actually describe the same fact. No orphan-vector or telemetry cleanup. |
 | `unused` | `MemoryService.unused`, existing usage telemetry | Review never-recalled/never-query-hit entries first seen at least `--days N` ago (default 30). |
+| `superseded` | `MemoryService.superseded` | Entries superseded at least `--days N` ago (default 30): candidates to remove once you are sure the successor covers them. |
+| `suspicious_supersedes` | `MemoryService.suspicious_supersedes` | Supersede links where the old and new entries differ by a qualifier such as region or team, so the new entry may not replace the old one. Unlink with reconciliation if it is wrong. |
+| `provenance` | Index `provenance` table | Entries with no recorded origin. Information only: entries saved before 0.7.0 never have one. |
+| `reconciliation` | The deterministic proposal generator used by `nachos-reconcile` | A compact count of proposals (merge, supersede, unlink, rewrite, delete, choose-one) that a reconciliation review would offer. Nothing is written. |
 | `links` | `MemoryService.link_report`, straight from the store (no sidecar, no embeddings) | Fix `[[...]]` links that point nowhere (`broken_link`), link or fold entries that many others name but nothing links to (`orphan_hub`), and review entry pairs that strongly share identifiers, hosts, paths or names but are not linked (`unlinked_related`). Entity matching is regex-based and precision-first, so it misses relations that share no identifier; it never edits anything. |
 | `all` | Every check above | Monthly review report, not an action plan executed by the CLI. |
 
-`--days` must be finite and nonnegative. First-seen age is **not** creation
+`--days` (used by `unused` and `superseded`) must be finite and nonnegative. First-seen age is **not** creation
 age or last-modified age. Untracked entries are returned separately in
 `untracked_keys`, not labeled unused. Rebuilding/deleting an index loses usage
-history. An unused or old memory is not necessarily false or unimportant.
+history. An unused or old entry is not necessarily false or unimportant.
 
 Lexical duplicate checks can miss paraphrases and flag related but distinct
 facts; the all-pairs scan is quadratic, so schedule it less often for large
@@ -84,9 +90,9 @@ conflicts, expired authorizations, or semantic redundancy reliably.
 
 With `--json`, stdout contains one JSON object. Success has `schema_version: 1`,
 `report_only: true`, resolved `profile_home`/`store_path`, `index_available`, and
-`checks` containing only the requested checks. Summary/duplicate/unused checks
-have `count` and `items` (no hidden truncation). Unused includes `days`,
-`telemetry_available`, and `untracked_keys`. Inbox has `pending_candidates`,
+`checks` containing only the requested checks. Summary, duplicate, unused,
+superseded and link checks have `count` and `items` (no hidden truncation). Unused includes `days`,
+`telemetry_available`, and `untracked_keys`; superseded includes `days`. Inbox has `pending_candidates`,
 `pending_jobs`, and `processing_jobs`. Missing index means
 `pending_candidates: null` and `telemetry_available: false`, not evidence of a
 clean inbox. Queue counts are separate from extracted candidate counts.
@@ -96,7 +102,7 @@ inspect counts and availability. Store/path/schema/read failures return **2**
 and an object with `schema_version`, `report_only`, and `error`, without partial
 `checks`. Argparse syntax/help follows the normal CLI convention (usage errors
 on stderr, exit 2; not JSON). Without `--json`, reports are human-readable.
-Reports contain keys, categories, and duplicate titles; even without full bodies
+Reports contain entry keys, categories, and duplicate titles; even without full bodies
 or transcripts they may be sensitive. Keep them private and set retention.
 
 ## Separate daily / weekly / monthly cron recipes
@@ -174,5 +180,13 @@ The primary-agent write guard is unchanged. If a scheduled/delegated session
 reports `skipped: non-primary agent context`, stop and hand the audit report to
 an authorized primary session. Never impersonate a primary provider, change
 context flags, or edit SQLite to get around that refusal.
+
+## Source-checkout tools
+
+These scripts live in the repository (not the wheel) and take explicit paths: `--store {sqlite,flatfile}` and `--path` (default `$HERMES_HOME/nachos/memory.db`).
+
+- `tools/memory_audit.py` (`--embeddings`, `--embedding-model`, `--json`, ...): `duplicates`, `unused`, `purge-category NAME`, `history [--key K] [--limit N]`, `revert ID`. `purge-category` and `revert` are dry runs unless `--run`. Nothing changes content otherwise, but opening it can still initialise store and index schema; use `nachos-maintain` when you need a strictly read-only audit.
+- `tools/correct_summaries.py [--limit N] [--run]`: generates replacement summaries with `auxiliary.nachos_summary.model`. See step 3 above for its cost and safety limits.
+- `tools/import_memories.py`: one-time import; see the [README](../README.md#migrate).
 
 To turn these findings into reviewed, applied fixes see [reconciliation](reconciliation.md).
