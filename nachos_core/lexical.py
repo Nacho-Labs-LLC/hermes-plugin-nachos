@@ -252,21 +252,31 @@ class LexicalIndex:
         query_words = tokens(label)
         if not query_words:
             return []
+        n_query = len(query_words)
+        # Pigeonhole prefix filter: a match needs at least min_overlap shared terms,
+        # so it must hit at least one of the (n_query - min_overlap + 1) rarest terms.
+        min_overlap = max(1, math.ceil(threshold * n_query))
+        if min_overlap > 1 and (min_overlap - 1) / n_query >= threshold:
+            min_overlap -= 1
+        prefix_len = max(1, n_query - min_overlap + 1)
+        by_freq = sorted(query_words, key=lambda t: len(self.label_postings.get(t, ())))
         candidates: set[str] = set()
-        for term in query_words:
+        for term in by_freq[:prefix_len]:
             bucket = self.label_postings.get(term)
             if bucket:
                 candidates.update(bucket)
         if exclude is not None:
             candidates.discard(exclude)
-        n_query = len(query_words)
         matches: list[tuple[str, str, float]] = []
-        for key in sorted(candidates, key=lambda k: (self.docs[k].category, self.docs[k].title, k)):
+        for key in candidates:
             doc = self.docs[key]
             overlap = len(query_words & doc.label_words)
             score = overlap / (n_query + len(doc.label_words) - overlap)
             if score >= threshold:
                 matches.append((key, doc.title, score))
+        matches.sort(
+            key=lambda item: (self.docs[item[0]].category, self.docs[item[0]].title, item[0])
+        )
         return matches
 
     def idf(self, terms: Iterable[str]) -> dict[str, float]:
