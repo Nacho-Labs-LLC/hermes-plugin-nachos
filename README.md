@@ -46,19 +46,23 @@ Run `hermes memory setup` or edit `$HERMES_HOME/nachos/config.json`. Settings ar
 | `store` | `sqlite` | Store format: `sqlite` or hand-editable `flatfile`. |
 | `manifest_char_budget` | `1200` | Soft size target for the manifest; summaries shorten, entries are never dropped. |
 | `embeddings` | `auto` | Backend: `auto`, `nachos`, `openai`, `sentence-transformers` or `off`. |
-| `embedding_model` | blank | Model id (blank = backend default). |
+| `embedding_model` | blank | Model id (blank = backend default, MiniLM for `nachos`; see [Choosing a model](#choosing-a-model)). For the `nachos` backend any Hugging Face ONNX encoder or a local directory path. |
 | `embedding_dtype` | blank | Precision for the `nachos` backend, e.g. `q8` (about 3x faster, cosine about 0.99 vs fp32). Blank = backend default. Changing it re-embeds. |
+| `embedding_pooling` | blank | `mean` or `cls` for the `nachos` backend. Blank = the model's built-in profile. Changing it re-embeds. |
+| `embedding_max_length` | `0` | Truncate inputs to this many tokens for the `nachos` backend (`0` = model default; can only lower the tokenizer limit). Changing it re-embeds. |
 | `embedding_base_url` | blank | OpenAI-compatible base URL. |
 | `embedding_api_key_env` | blank | Name of the env var holding the API key. |
-| `embedding_query_prefix` | blank | Prepended to search queries for the `openai` and `sentence-transformers` backends, e.g. `query: ` (E5) or `search_query: ` (nomic). Spaces are kept. The `nachos` backend applies its own per-model prefixes. Changing it re-embeds. |
-| `embedding_document_prefix` | blank | Prepended to stored entries for the same backends, e.g. `passage: ` (E5) or `search_document: ` (nomic). Changing it re-embeds. |
+| `embedding_query_prefix` | blank | Prepended to search queries, e.g. `query: ` (E5) or `search_query: ` (nomic). Spaces are kept. For the `nachos` backend blank keeps the model's built-in prefix and `none` disables it; the `openai` and `sentence-transformers` backends have no built-in (blank = no prefix). |
+| `embedding_document_prefix` | blank | Prepended to stored entries, e.g. `passage: ` (E5) or `search_document: ` (nomic); same blank / `none` rules. Changing it re-embeds. |
 | `duplicate_threshold` | `0.65` | Similarity (0-1) above which a new entry is flagged as a likely duplicate. With `duplicate_calibration: auto` this is a minimum: it is raised to the embedding model's own random-pair 99th percentile when that is higher. Any value other than `0.65` is used exactly as given. |
 | `duplicate_calibration` | `auto` | `auto` calibrates the default threshold per embedding model (cosine ranges differ a lot between models); `off` uses `duplicate_threshold` as is. |
 | `similarity_floor` | `off` | `auto` drops semantic hits below the model's own 75th percentile of random-pair similarity, calibrated from the stored vectors. |
 | `rerank` | `off` | `nachos` re-scores the top fused results with a cross-encoder served by `nachos-embeddings` (needs the `nachos` backend and a CLI with `--rerank-model`; silently ignored otherwise). Adds roughly 0.3 s per recall. |
 | `rerank_model` | blank | Cross-encoder id (blank = `jinaai/jina-reranker-v1-tiny-en`, about 35 MB at q8). |
 | `rerank_dtype` | blank | Cross-encoder precision, e.g. `q8`. |
+| `rerank_max_length` | `0` | Cross-encoder input length in tokens (`0` = the model's default: 1024 for the jina reranker, 512 otherwise). |
 | `rerank_candidates` | `25` | How many top fused results the reranker re-scores. |
+| `reindex_budget_ms` | `250` | After an embedding model change, how long one recall or write may spend re-embedding (see [Switching models](#switching-models)). |
 | `shared_store` | `off` | `on` adds a memory scope shared by every profile on the machine. |
 | `shared_store_path` | blank | Shared store directory (blank = `<hermes root>/nachos-shared`). |
 | `redact_secrets` | `on` | Redact secrets in everything written to memory. |
@@ -67,10 +71,10 @@ Run `hermes memory setup` or edit `$HERMES_HOME/nachos/config.json`. Settings ar
 
 ## Embeddings
 
-Semantic recall is optional; without it recall is lexical. A failing backend drops to lexical for the rest of the process, and changing the model re-embeds on the next recall.
+Semantic recall is optional; without it recall is lexical. A failing backend drops to lexical for the rest of the process.
 
 - `auto` picks the first available: `nachos-embeddings` on PATH, `sentence-transformers`, then an OpenAI-compatible URL (needs `embedding_base_url` and `embedding_model`).
-- The `nachos` backend keeps one `nachos-embeddings serve` worker alive, which needs nachos-embeddings 0.6.0 or newer (`npm i -g @nacho-labs/nachos-embeddings`); older versions fall back automatically to one process per call.
+- The `nachos` backend keeps one `nachos-embeddings` worker alive (`npm i -g @nacho-labs/nachos-embeddings`). It needs 0.6.0 or newer; older versions fall back automatically to one process per call. The model-override settings below (`embedding_pooling`, `embedding_max_length`, prefixes, `rerank_max_length`) need a CLI release that has `--pooling`, `--max-length` and `--rerank-max-length`; settings you leave blank are never sent, so an older CLI keeps working with the others.
 
 ```bash
 npm i -g @nacho-labs/nachos-embeddings   # local model, found on PATH by `auto`
@@ -83,6 +87,60 @@ npm i -g @nacho-labs/nachos-embeddings   # local model, found on PATH by `auto`
 ```
 
 Any OpenAI-compatible `/embeddings` endpoint works (Ollama above); for a hosted one also set `embedding_api_key_env`. `{ "embeddings": "off" }` disables semantic recall.
+
+### Choosing a model
+
+Name the model you want; there are no presets. Blank `embedding_model` means the backend default (MiniLM through `nachos-embeddings`). For example, the best measured model:
+
+```json
+{ "embeddings": "nachos",
+  "embedding_model": "Alibaba-NLP/gte-modernbert-base",
+  "embedding_dtype": "q8" }
+```
+
+Our benchmark (synthetic fixtures in `bench/data`: 208 memories / 393 answerable queries, plus a held-out adversarial set; reranker off; `q8`; p50 is median search latency on one idle 16-thread CPU, so it varies with the machine):
+
+| `embedding_model` (dtype q8) | Download | Dims | hit@1 / hit@5 / MRR | Adversarial hit@1 | p50 | Note |
+| --- | --- | --- | --- | --- | --- | --- |
+| *(`embeddings: off`)* | none | - | 0.695 / 0.812 / 0.748 | 0.975 | 0.2 ms | Lexical only. |
+| blank, or `Xenova/all-MiniLM-L6-v2` | 23 MB | 384 | 0.758 / 0.924 / 0.832 | 0.988 | 8.2 ms | Default; smallest and fastest. |
+| `Alibaba-NLP/gte-modernbert-base` | 150 MB | 768 | **0.773 / 0.949 / 0.850** | **1.000** | 20.5 ms | Best measured; about 2x the embedding time and a 768-dim index. |
+| `Snowflake/snowflake-arctic-embed-s` | 34 MB | 384 | 0.753 / 0.911 / 0.824 | 0.988 | 9.3 ms | Retrieval-tuned; ties MiniLM here. |
+| `Xenova/bge-small-en-v1.5` | 34 MB | 384 | 0.728 / 0.916 / 0.807 | 0.988 | 16.0 ms | Did not beat MiniLM here. |
+| `Xenova/e5-small-v2` | 34 MB | 384 | 0.753 / 0.898 / 0.818 | 0.975 | 15.2 ms | Did not beat MiniLM here. |
+| `nomic-ai/nomic-embed-text-v1.5` | 137 MB | 768 | 0.748 / 0.924 / 0.825 | 1.000 | 92.4 ms | Several times slower (p50 measured on a busier machine). |
+
+Differences under about 0.01 hit@1 (4 queries) are not significant on this fixture. The default `embedding_dtype` is blank (fp32, about 4x the download); `q8` is what was measured. Measure any model on your own machine with `python -m bench --model <id> --dtype q8` (see [docs/benchmark.md](docs/benchmark.md)).
+
+Changing `embedding_model` (or dtype) re-embeds safely: old vectors are kept until the new model has covered every entry, and recall stays lexical meanwhile (see [Switching models](#switching-models)). For the `nachos` backend `embedding_model` accepts any Hugging Face ONNX encoder, or a local directory (`./models/my-model`, fully offline); `python -m nachos_hermes.models list` shows the effective settings and `nachos-embeddings models` the models it ships profiles for.
+
+**Overrides.** Built-in per-model profiles (pooling, query/document prefixes) are only defaults. Set `embedding_pooling`, `embedding_max_length`, `embedding_query_prefix` and `embedding_document_prefix` to override them for the `nachos` backend (prefix: blank = the model's own, `none` = no prefix). The reranker takes `rerank_model`, `rerank_dtype` and `rerank_max_length` the same way. The embedding overrides except the query prefix change stored vectors, so changing one re-embeds (below); reranker settings never do. (Vectors are L2-normalized by the index, so the CLI's `--no-normalize` has no use here and is not exposed.)
+
+### Switching models
+
+Changing any embedding setting (model, dtype, pooling, max length, document prefix) puts the profile's vectors in a different space. Nachos switches safely:
+
+- **Old vectors are kept** until the new model has embedded every entry, so a crash or a second change loses nothing and switching back is instant. Only then are the old vectors dropped and the new model's similarity thresholds (`duplicate_calibration`, `similarity_floor`) recalibrated from the new vectors.
+- **Recall never waits for the whole index.** A few edited entries are embedded inline as before. More than 24 stale entries (a model switch, a first run on an existing store) are re-embedded in small, time-sized batches: about `reindex_budget_ms` (default 250 ms) per recall or write, plus the entry in flight (a long entry is up to 16 chunks). Measured on the bench fixture switching MiniLM to gte-modernbert (208 entries): the first recall used to block for 17.2 s; now recalls during the switch take a median of 314 ms (max 1.8 s) and the switch completes after 43 recalls.
+- **Lexical meanwhile.** Until a scope is fully re-embedded, recall, duplicate checks and update hints use lexical matching only; partially embedded rankings would mix two vector spaces.
+- **Status.** `/nachos-memory-status` shows `re-embedding: profile 40/208 ...` while it runs. From a shell (read-only, no model loaded):
+
+```bash
+python -m nachos_hermes.models status  --profile-home ~/.hermes/profiles/default   # coverage per model, needs_reindex
+python -m nachos_hermes.models reindex --profile-home ~/.hermes/profiles/default   # finish now (loads the model)
+python -m nachos_hermes.models list    [--profile-home H]                          # effective settings, auxiliary LLMs
+```
+
+### Language models Nachos can call
+
+These are chat models, not embedding models, and use Hermes' own `auxiliary` settings in `config.yaml`; Nachos does not change their semantics. Both can cost money if left unset (Hermes may fall back to your main model), so pin a cheap one.
+
+| Setting | Used by | Notes |
+| --- | --- | --- |
+| `auxiliary.nachos_capture.model` | Session-end capture (`capture: review`) | Suggests memories into the review inbox. |
+| `auxiliary.nachos_summary.model` | `tools/correct_summaries.py` | Writes replacement summaries; dry-run still calls the model. |
+
+`python -m nachos_hermes.models list` prints both next to the embedding settings, with their current values when Hermes' config is readable.
 
 ## Tools
 

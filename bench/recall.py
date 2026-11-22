@@ -307,6 +307,9 @@ def resolve_embedder(backend: str, opts: argparse.Namespace) -> tuple[Embedder |
         rerank=getattr(opts, "rerank", False),
         rerank_model=getattr(opts, "rerank_model", ""),
         rerank_dtype=getattr(opts, "rerank_dtype", ""),
+        pooling=getattr(opts, "pooling", ""),
+        max_length=getattr(opts, "max_length", 0),
+        rerank_max_length=getattr(opts, "rerank_max_length", 0),
     )
     if embedder is not None and opts.no_types and hasattr(embedder, "send_type"):
         embedder.send_type = False  # legacy behaviour: queries embedded like documents
@@ -342,13 +345,20 @@ def ranking_options(opts: argparse.Namespace) -> dict[str, Any]:
     return out
 
 
+def _run_name(backend: str, opts: argparse.Namespace) -> str:
+    """Report name of a run: ``--label``, except the lexical baseline keeps its own name."""
+    if opts.label and not (backend == "off" and len(getattr(opts, "backends", ())) > 1):
+        return str(opts.label)
+    return backend
+
+
 def run_backend(
     backend: str,
     opts: argparse.Namespace,
     memories: list[dict[str, Any]],
     queries: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    run: dict[str, Any] = {"backend": opts.label or backend, "status": "ok"}
+    run: dict[str, Any] = {"backend": _run_name(backend, opts), "status": "ok"}
     embedder, reason = resolve_embedder(backend, opts)
     if reason:
         return {**run, "status": "skipped", "reason": reason}
@@ -584,7 +594,7 @@ def eval_suggest_backend(
     queries: list[dict[str, Any]],
 ) -> dict[str, Any]:
     """Replay ``memories`` through put() without supersedes and evaluate possible_updates."""
-    run: dict[str, Any] = {"backend": opts.label or backend, "status": "ok"}
+    run: dict[str, Any] = {"backend": _run_name(backend, opts), "status": "ok"}
     embedder, reason = resolve_embedder(backend, opts)
     if reason:
         return {**run, "status": "skipped", "reason": reason}
@@ -651,11 +661,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     ap = argparse.ArgumentParser(prog="bench.recall", description=__doc__.split("\n\n")[0])
     ap.add_argument(
         "--embeddings",
-        default="off",
-        help=f"comma-separated backends to run, from {', '.join(BACKENDS)} (default: off)",
+        default=None,
+        help=f"comma-separated backends to run, from {', '.join(BACKENDS)} "
+        "(default: off; with --model: off,nachos, so the result sits next to "
+        "the lexical baseline)",
     )
     ap.add_argument("--model", default="", help="embedding_model passthrough")
     ap.add_argument("--dtype", default="", help="embedding_dtype passthrough (nachos backend)")
+    ap.add_argument(
+        "--pooling", default="", choices=("", "mean", "cls"), help="embedding_pooling (nachos)"
+    )
+    ap.add_argument(
+        "--max-length", type=int, default=0, help="embedding_max_length in tokens (nachos)"
+    )
     ap.add_argument("--base-url", default="", help="embedding_base_url passthrough (openai)")
     ap.add_argument("--api-key-env", default="", help="embedding_api_key_env passthrough")
     ap.add_argument("--query-prefix", default="", help="embedding_query_prefix (openai/st)")
@@ -708,11 +726,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     ap.add_argument("--rerank", action="store_true", help="enable the nachos cross-encoder rerank")
     ap.add_argument("--rerank-model", default="", help="rerank_model passthrough")
     ap.add_argument("--rerank-dtype", default="", help="rerank_dtype passthrough")
+    ap.add_argument(
+        "--rerank-max-length", type=int, default=0, help="rerank_max_length in tokens (nachos)"
+    )
     ap.add_argument("--rerank-candidates", type=int, default=25)
     ap.add_argument(
         "--rerank-mode", default="sum:1", help="final order: sum:<w>, blend:<k>, rerank"
     )
     opts = ap.parse_args(argv)
+    if opts.embeddings is None:
+        opts.embeddings = "off,nachos" if opts.model else "off"
     opts.backends = [b.strip() for b in opts.embeddings.split(",") if b.strip()]
     unknown = [b for b in opts.backends if b not in BACKENDS]
     if unknown or not opts.backends:

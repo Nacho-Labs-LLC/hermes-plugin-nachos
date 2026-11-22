@@ -14,6 +14,11 @@
 - Shared `nachos_core.quality.flag_reason` reused by `nachos-maintain` and `tools/correct_summaries.py`.
 - `docs/memory-maintenance.md` covering profile selection, the read-only SQLite boundary, JSON contract, cron recipes, and human review workflow.
 
+- New `embedding_pooling`, `embedding_max_length` and `rerank_max_length` settings, and `embedding_query_prefix` / `embedding_document_prefix` now also override the nachos model's built-in prefixes (blank keeps the model's, `none` disables). Overrides are passed to the `nachos-embeddings` CLI only when set and are part of the model id, so changing one re-embeds. They need a CLI release with the matching flags. The model stays an explicit `embedding_model` (blank = backend default); there are no presets.
+- Safe model switching (`nachos_core/reindex.py`): the vector index keeps one row per entry and model (automatic in-place migration), so a switch keeps the old vectors until the new model has embedded every entry; more than 24 stale entries are re-embedded in time-bounded steps (`reindex_budget_ms`, default 250) while recall, duplicate checks and update hints stay lexical; on completion the old vectors are dropped and similarity thresholds are recalibrated. `/nachos-memory-status` shows progress.
+- `python -m nachos_hermes.models` (also `nachos-models`): `list` (effective model settings, and the `auxiliary.nachos_capture` / `auxiliary.nachos_summary` LLM models), read-only `status` (coverage per model, `needs_reindex`) and `reindex` (finish a switch now).
+- `python -m bench --model <id>` now runs the model beside the lexical baseline by default, with `--pooling`, `--max-length` and `--rerank-max-length` passthroughs. Docs: "Choosing a model" matrix in the README and docs/benchmark.md.
+
 ### Changed
 - Per-scope in-memory lexical cache (tokenised/stemmed title, summary and body term sets, postings and document frequencies) validated via cheap store fingerprints (`stat` for flatfile, `PRAGMA data_version` + write counter for SQLite) and updated/invalidated on all write paths, plus batched `record_hits` commits during search hydration.
 - SQLite `MemoryIndex` opens in WAL mode with `PRAGMA synchronous=NORMAL` for usage telemetry (checkpointed on close) while keeping `PRAGMA synchronous=FULL` for `changes` undo-log commits.
