@@ -22,6 +22,7 @@ class SqliteStore(MemoryStore):
 
     def __init__(self, path: str | os.PathLike[str], *, read_only: bool = False) -> None:
         self._path = str(path)
+        self._generation: int = 0
         self._temp_dir: tempfile.TemporaryDirectory[str] | None = None
         if read_only:
             self._conn, self._temp_dir = open_read_only_sqlite(path)
@@ -82,6 +83,12 @@ class SqliteStore(MemoryStore):
         )
         return [r["key"] for r in cur.fetchall()]
 
+    def fingerprint(self) -> tuple[int, int, int]:
+        """Cheap change token combining in-process writes and SQLite's data_version."""
+        row = self._conn.execute("PRAGMA data_version").fetchone()
+        data_version = int(row[0]) if row else 0
+        return (self._generation, self._conn.total_changes, data_version)
+
     def put(
         self,
         key: str,
@@ -100,10 +107,12 @@ class SqliteStore(MemoryStore):
             (key, title, summary, category, body),
         )
         self._conn.commit()
+        self._generation += 1
 
     def remove(self, key: str) -> None:
         self._conn.execute("DELETE FROM entries WHERE key = ?", (key,))
         self._conn.commit()
+        self._generation += 1
 
     def close(self) -> None:
         close_sqlite(self._conn, self._temp_dir)

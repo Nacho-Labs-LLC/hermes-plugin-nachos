@@ -63,3 +63,5 @@ Retention is by age (`checkpoint_max_age_days`), not count: the oldest checkpoin
 ## Usage telemetry
 
 The index counts first-seen time, exact-key recalls and query hits per entry. Nothing reads it on the hot path; it feeds `/nachos-memory-audit` and `tools/memory_audit.py` to surface never-recalled entries and near-duplicates. Deleting is left to a person or the agent.
+
+To keep recall latency low, `memory.index.db` opens in SQLite WAL mode with `PRAGMA synchronous=NORMAL` for usage telemetry (avoiding a per-query `fsync`) and checkpoints on normal close. On an abrupt crash or power loss before a WAL checkpoint, the last few seconds of usage counts may be lost, while `changes` undo-log writes stay committed immediately under `PRAGMA synchronous=FULL`.

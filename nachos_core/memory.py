@@ -40,7 +40,7 @@ from typing import Any, Callable
 
 from .embeddings import Embedder
 from .index import MemoryIndex, dot
-from .lexical import idf_weights, jaccard, query_terms, score_document, tokens
+from .lexical import LexicalIndex, jaccard
 from .quality import low_signal_reason
 from .store.base import Entry, MemoryStore
 from .store.md_store import slugify
@@ -105,12 +105,14 @@ class MemoryService:
         self.embedder_error: str | None = None
         self.session_id: str = ""
         self._seen_keys: dict[str, frozenset] = {}
+        self._lexical_cache: dict[str, tuple[object, LexicalIndex]] = {}
 
     @property
     def profile(self) -> Scope:
         return self.scopes[PROFILE]
 
     def close(self) -> None:
+        self._lexical_cache.clear()
         for scope in self.scopes.values():
             scope.close()
         if self.embedder is not None:
@@ -198,27 +200,44 @@ class MemoryService:
                 return s.name, body
         return None
 
+    def _invalidate_lexical(self, scope_name: str) -> None:
+        self._lexical_cache.pop(scope_name, None)
+
+    def _update_lexical_after_put(
+        self,
+        scope: Scope,
+        fp_before: object,
+        key: str,
+        *,
+        title: str,
+        summary: str,
+        category: str,
+    ) -> None:
+        cached = self._lexical_cache.get(scope.name)
+        if fp_before is None or cached is None or cached[0] != fp_before or "\n" in summary:
+            self._invalidate_lexical(scope.name)
+            return
+        stored_body = scope.store.get(key)
+        fp_after = scope.store.fingerprint()
+        if stored_body is None or fp_after is None:
+            self._invalidate_lexical(scope.name)
+            return
+        cached[1].upsert(key, title=title, summary=summary, category=category, body=stored_body)
+        self._lexical_cache[scope.name] = (fp_after, cached[1])
+
+    def _lexical_index(self, scope: Scope) -> LexicalIndex:
+        fp = scope.store.fingerprint()
+        if fp is not None:
+            cached = self._lexical_cache.get(scope.name)
+            if cached is not None and cached[0] == fp:
+                return cached[1]
+        index = LexicalIndex.build(scope.store.list(), scope.store.bodies())
+        if fp is not None:
+            self._lexical_cache[scope.name] = (fp, index)
+        return index
+
     def _lexical(self, scope: Scope, query: str) -> list[str]:
-        raw, terms = query_terms(query)
-        candidates = set(scope.store.search(query))
-        for term in sorted(raw | set(terms)):
-            candidates.update(scope.store.search(term))
-        if not candidates:
-            return []
-        labels = {k: (t, s) for k, t, s, _c in scope.store.list()}
-        bodies = scope.store.bodies()
-        label_words = {k: tokens(f"{t} {sm}") for k, (t, sm) in labels.items()}
-        doc_words = {k: label_words[k] | tokens(bodies.get(k) or "") for k in labels}
-        weights = idf_weights(terms, doc_words)
-        needle = query.lower()
-        scored = []
-        for key in candidates & doc_words.keys():
-            haystack = f"{labels[key][0]}\n{labels[key][1]}\n{bodies.get(key) or ''}".lower()
-            score = score_document(weights, doc_words[key], label_words[key], needle in haystack)
-            if score > 0:
-                scored.append((score, key))
-        scored.sort(key=lambda item: (-item[0], item[1]))
-        return [key for _score, key in scored]
+        return self._lexical_index(scope).search(query)
 
     def search(
         self, query: str, *, limit: int = 10, scope: str | None = None
@@ -272,12 +291,13 @@ class MemoryService:
     ) -> list[dict[str, Any]]:
         """Turn fused ranking rows into result dicts, recording a hit per returned entry."""
         results = []
+        hits_by_scope: dict[str, list[str]] = {}
         for (scope_name, key), row in ranked:
             s = self.scopes[scope_name]
             body = s.store.get(key)
             if body is None:
                 continue
-            s.index.record_hits([key])
+            hits_by_scope.setdefault(scope_name, []).append(key)
             result = {
                 "key": key,
                 "scope": scope_name,
@@ -287,6 +307,8 @@ class MemoryService:
             if "similarity" in row:
                 result["similarity"] = row["similarity"]
             results.append(result)
+        for scope_name, keys in hits_by_scope.items():
+            self.scopes[scope_name].index.record_hits(keys)
         return results
 
     # -- duplicates --------------------------------------------------------
@@ -304,19 +326,18 @@ class MemoryService:
         found: dict[tuple[str, str], dict[str, Any]] = {}
         label = f"{title} {summary}"
         for s in self.scopes.values():
-            titles = {k: (t, sm) for k, t, sm, _c in s.store.list()}
-            for key, (t, sm) in titles.items():
-                if (s.name, key) == exclude:
-                    continue
-                score = jaccard(label, f"{t} {sm}")
-                if score >= _LEXICAL_DUP_THRESHOLD:
-                    found[(s.name, key)] = {
-                        "key": key,
-                        "scope": s.name,
-                        "title": t,
-                        "similarity": round(score, 3),
-                        "match": "lexical",
-                    }
+            index = self._lexical_index(s)
+            excluded_key = exclude[1] if exclude and exclude[0] == s.name else None
+            for key, doc_title, score in index.similar_labels(
+                label, threshold=_LEXICAL_DUP_THRESHOLD, exclude=excluded_key
+            ):
+                found[(s.name, key)] = {
+                    "key": key,
+                    "scope": s.name,
+                    "title": doc_title,
+                    "similarity": round(score, 3),
+                    "match": "lexical",
+                }
             embedder = self._active_embedder()
             if vector is not None and embedder is not None:
                 for key, sim in s.index.search(vector, embedder.model_id, top_k=limit + 1):
@@ -324,10 +345,11 @@ class MemoryService:
                         continue
                     prev = found.get((s.name, key))
                     if prev is None or sim > prev["similarity"]:
+                        doc = index.docs.get(key)
                         found[(s.name, key)] = {
                             "key": key,
                             "scope": s.name,
-                            "title": titles.get(key, (key, ""))[0],
+                            "title": doc.title if doc is not None else key,
                             "similarity": round(sim, 3),
                             "match": "semantic",
                         }
@@ -460,6 +482,7 @@ class MemoryService:
             target.index.delete_vector(key)
             target.index.record_seen([key])
             restored = "restored"
+        self._invalidate_lexical(target.name)
         self._log(target, key, "revert", current)
         return {
             "reverted": change["id"],
@@ -561,7 +584,11 @@ class MemoryService:
         prev = self._snapshot(target, key)
         if not self._same(prev, (title, summary, category, body)):
             self._log(target, key, "update" if prev else "create", prev)
+        fp_before = target.store.fingerprint()
         target.store.put(key, title=title, summary=summary, category=category, body=body)
+        self._update_lexical_after_put(
+            target, fp_before, key, title=title, summary=summary, category=category
+        )
         embedder = self._active_embedder()
         if vector is not None and embedder is not None:
             target.index.upsert(key, text, embedder.model_id, vector)
@@ -589,6 +616,7 @@ class MemoryService:
             if s.store.get(key) is not None:
                 self._log(s, key, "remove", self._snapshot(s, key))
                 s.store.remove(key)
+                self._invalidate_lexical(s.name)
                 s.index.delete(key)
                 return s.name
         return None

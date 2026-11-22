@@ -9,6 +9,11 @@
 - Shared `nachos_core.quality.flag_reason` reused by `nachos-maintain` and `tools/correct_summaries.py`.
 - `docs/memory-maintenance.md` covering profile selection, the read-only SQLite boundary, JSON contract, cron recipes, and human review workflow.
 
+### Changed
+- Per-scope in-memory lexical cache (tokenised/stemmed title, summary and body term sets, postings and document frequencies) validated via cheap store fingerprints (`stat` for flatfile, `PRAGMA data_version` + write counter for SQLite) and updated/invalidated on all write paths, plus batched `record_hits` commits during search hydration.
+- SQLite `MemoryIndex` opens in WAL mode with `PRAGMA synchronous=NORMAL` for usage telemetry (checkpointed on close) while keeping `PRAGMA synchronous=FULL` for `changes` undo-log commits.
+- `MemoryService.find_similar` uses the cached `LexicalIndex` label postings to prune lexical duplicate candidates instead of scanning every entry, and `MDStore` caches parsed entries by fingerprint to avoid re-reading the file per hydrated search result.
+
 ## 0.6.0
 
 ### Added

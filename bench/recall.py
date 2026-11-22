@@ -19,6 +19,7 @@ import importlib.util
 import json
 import os
 import platform
+import random
 import shutil
 import subprocess
 import sys
@@ -63,6 +64,33 @@ def load_dataset(
     memories = json.loads((data_dir / "memories.json").read_text(encoding="utf-8"))
     queries = json.loads((data_dir / "queries.json").read_text(encoding="utf-8"))
     return memories, queries
+
+
+def expand_synthetic_memories(
+    base: list[dict[str, Any]], target: int, seed: int = 42
+) -> list[dict[str, Any]]:
+    """Deterministically expand ``base`` to ``target`` entries using in-memory distractors."""
+    if target <= len(base):
+        return list(base)
+    rng = random.Random(seed)  # noqa: S311 - deterministic synthetic benchmark fixture
+    vocab = sorted(
+        {w for m in base for w in f"{m['title']} {m['summary']} {m['body']}".split() if len(w) >= 3}
+    )
+    cats = ("projects", "infra", "decisions", "procedures", "history", "tools")
+    out = list(base)
+    idx = 0
+    while len(out) < target:
+        idx += 1
+        words = rng.choices(vocab, k=rng.randint(60, 140))
+        out.append(
+            {
+                "title": f"Synthetic entry {idx:04d} {words[0]} {words[1]}",
+                "summary": f"Notes on {words[2]} {words[3]} {words[4]} for {words[5]} subsystem.",
+                "category": cats[idx % len(cats)],
+                "body": " ".join(words),
+            }
+        )
+    return out
 
 
 # -- metrics (pure) --------------------------------------------------------
@@ -140,7 +168,20 @@ def build_service(directory: Path, embedder: Embedder | None) -> MemoryService:
     return MemoryService(OrderedDict([(PROFILE, scope)]), embedder=embedder)
 
 
-def load_memories(svc: MemoryService, memories: list[dict[str, Any]]) -> None:
+def load_memories(
+    svc: MemoryService, memories: list[dict[str, Any]], *, direct: bool = False
+) -> None:
+    if direct:
+        store = svc.profile.store
+        for mem in memories:
+            store.put(
+                slugify(mem["title"]),
+                title=mem["title"],
+                summary=mem["summary"],
+                category=mem["category"],
+                body=mem["body"],
+            )
+        return
     for mem in memories:
         result = svc.put(
             title=mem["title"],
@@ -236,7 +277,7 @@ def run_backend(
         svc = build_service(Path(tmp), embedder)
         try:
             start = time.perf_counter()
-            load_memories(svc, memories)
+            load_memories(svc, memories, direct=bool(getattr(opts, "synthetic", 0)))
             run["build_s"] = round(time.perf_counter() - start, 3)
             start = time.perf_counter()
             svc.sync_index(svc.profile)  # reconcile pass; ~0 when put() already embedded everything
@@ -344,6 +385,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     ap.add_argument("--command", default="nachos-embeddings", help="nachos-embeddings executable")
     ap.add_argument("--category", action="append", help="only run this query category (repeatable)")
     ap.add_argument("--repeat", type=int, default=1, help="searches per query for latency (median)")
+    ap.add_argument(
+        "--synthetic",
+        type=int,
+        default=0,
+        help="expand corpus in memory with synthetic distractors to N entries (0 = base fixture)",
+    )
     ap.add_argument("--json", metavar="PATH", help="write the full report as JSON ('-' = stdout)")
     ap.add_argument("--misses", action="store_true", help="list queries whose answer missed top 5")
     opts = ap.parse_args(argv)
@@ -357,6 +404,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     opts = parse_args(argv)
     memories, queries = load_dataset()
+    if opts.synthetic:
+        memories = expand_synthetic_memories(memories, opts.synthetic)
     if opts.category:
         queries = [q for q in queries if q["category"] in opts.category]
     if not queries:

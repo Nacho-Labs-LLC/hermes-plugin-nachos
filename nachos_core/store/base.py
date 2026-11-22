@@ -70,3 +70,12 @@ class MemoryStore(ABC):
             if body is not None:
                 out[key] = body
         return out
+
+    def fingerprint(self) -> object:
+        """Cheap token that changes whenever the store's contents change.
+
+        Used to validate in-memory caches (including against external edits).
+        Returns ``None`` if the driver cannot fingerprint its backing storage,
+        which disables cross-query caching for that driver.
+        """
+        return None
