@@ -478,3 +478,50 @@ Per category, hit@1 / hit@5 / MRR@10:
 - With links applied, lexical `outdated` still misses 4 of 24 at hit@5 (`db-prim-01 host`, `standup 09:45 Google Meet`, `redis-sess.internal 6379 allkeys-lru`, `lyon-app-02 deploiement jeudi`): the old wording is only in the now-hidden entry, so a keyword search has nothing to match. Embeddings recover them. Archiving an old entry makes its wording unfindable unless its text is folded into the successor.
 - Without links, `outdated` hit@1 is 0.125 (lexical) and 0.250 (MiniLM): the old entry usually outranks the new one because queries use its words.
 - No-answer: 13/15 (lexical) and 15/15 (MiniLM) of the no-answer queries still return results, since recall has no relevance floor. A caller cannot tell "nothing known" from "a weak match" from the result list alone.
+
+## Consolidated results (`memory-next` HEAD)
+
+Measured on `naterchrdsn/memory-next` (commit `9c662836bb`, integrating lexical + metadata caching, chunked body vectors with 0.05 chunk penalty, calibrated duplicate/update floors, `possible_updates` candidates with facet-qualifier reasons, superseded search redirect before reranking, and optional cross-encoder reranking). CLI built from `nachos-embeddings` archive `a0df123` (`rerank` branch), `q8` models (`Xenova/all-MiniLM-L6-v2`, `Alibaba-NLP/gte-modernbert-base`, `jinaai/jina-reranker-v1-tiny-en`), `--repeat 1`, supersedes applied on both fixtures.
+
+### Recall matrix (original + held-out adversarial, supersedes applied)
+
+| Backend | Rerank | Original hit@1 / hit@5 / MRR@10 | Original outdated hit@1 | Original p50 / p95 ms | Original build s | Adversarial hit@1 / hit@5 / MRR@10 | Adversarial outdated hit@1 | Adversarial p50 / p95 ms |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| lexical (`off`) | off | 0.695 / 0.812 / 0.748 | 0.867 | 0.2 / 0.3 | 1.14 | 0.975 / 1.000 / 0.986 | 1.000 | 0.1 / 0.2 |
+| MiniLM-L6 q8 | off | 0.758 / 0.924 / 0.832 | 1.000 | 7.3 / 8.4 | 4.72 | 0.988 / 1.000 / 0.994 | 1.000 | 4.5 / 5.0 |
+| MiniLM-L6 q8 | on (`sum:1`) | 0.784 / 0.926 / 0.845 | 0.967 | 181.8 / 490.6 | 4.49 | 0.951 / 1.000 / 0.975 | 0.875 | 122.5 / 149.0 |
+| **gte-modernbert q8** | **off** | **0.773 / 0.949 / 0.850** | **1.000** | **17.0 / 26.4** | **13.82** | **1.000 / 1.000 / 1.000** | **1.000** | **12.3 / 14.4** |
+| gte-modernbert q8 | on (`sum:1`) | 0.791 / 0.949 / 0.858 | 0.967 | 320.1 / 518.4 | 14.30 | 0.951 / 1.000 / 0.975 | 0.875 | 128.9 / 211.2 |
+
+Notes:
+- Original fixture has 208 memories, 393 answerable queries + 30 `negative` queries (`fp@1 / fp@5`: lexical `0.767 / 0.707`, semantic runs `1.000 / 1.000` with `similarity_floor: off`). Adversarial set has 128 memories, 81 answerable queries + 15 no-answer queries (`13/15` lexical, `15/15` semantic still returned results).
+- Search redirect (`superseded_by` chain substitution before reranking) eliminates the old-wording lexical gap: adversarial lexical `outdated` hit@1 jumps from `0.750` (before redirect) to `1.000` (`0.125` without supersedes), and both MiniLM q8 and gte-modernbert q8 reach `1.000` on `outdated` across both fixtures with rerank off.
+- Rerank trade-off on redirected queries: enabling the cross-encoder raises original `natural` (+0.08–0.10) and `keyword` (to `0.993`) hit@1, lifting overall original hit@1 by `+0.018` to `+0.026`, but drops adversarial `outdated` hit@1 (`1.000 -> 0.875`, 3/24 queries) because a redirected successor that no longer contains the query's old terms receives a low cross-encoder score.
+
+### `possible_updates` candidate evaluation (`--suggest-eval`)
+
+Replayed in order without `supersedes` (original tune set: 15 updates / 193 distinct puts; held-out adversarial set: 37 updates / 91 distinct puts). Calibrated floor reuses the index's cached `p99` random head-pair cosine when `>= 30` vectors are stored, falling back to `max(0.45, duplicate_threshold - 0.17)` (`0.48`) below 30 entries.
+
+| Backend | Floor | Original R@1 / R@3 | Original distinct fp@1 (non-dup) | Adversarial R@1 / R@3 | Adversarial distinct fp@1 |
+| --- | --- | --- | --- | --- | --- |
+| lexical (`off`) | IDF cosine `>= 0.25` | 0.933 / 1.000 | 0.233 (0.160) | 0.973 / 0.973 | 0.253 |
+| MiniLM-L6 q8 | uncalibrated (`0.48`) | 1.000 / 1.000 | 0.399 (0.331) | 1.000 / 1.000 | 0.275 |
+| MiniLM-L6 q8 | **calibrated (`p99`)** | **1.000 / 1.000** | **0.394 (0.331)** | **1.000 / 1.000** | **0.275** |
+| gte-modernbert q8 | uncalibrated (`0.48`) | 1.000 / 1.000 | 0.995 (0.994) | 1.000 / 1.000 | 0.989 |
+| gte-modernbert q8 | **calibrated (`p99`)** | **1.000 / 1.000** | **0.705 (0.692)** | **1.000 / 1.000** | **0.648** |
+
+Readings:
+- Replacing the brittle title/cue gate with similarity-ranked `possible_updates` candidates lifts held-out adversarial recall from `0.054 / 0.081` to **`0.973` (lexical, 36/37)** and **`1.000` (MiniLM q8 & gte-modernbert q8, 37/37 at rank 1)**.
+- Calibrating the semantic floor to `p99` is essential for shifted-range models like `gte-modernbert`: it cuts distinct `fp@1` by `29–34` percentage points (`0.995 -> 0.705` original, `0.989 -> 0.648` adversarial) with zero recall loss (`1.000` R@1 on both sets). Remaining `gte` distinct `fp@1` comes mainly from the cold-start window (`< 30` entries before calibration activates, where `0.48` sits below `gte`'s `p50` of `0.53`) and parallel siblings (which now carry an explicit `'different qualifier: ...'` warning in `reason`).
+
+### Recommended configuration
+
+| Profile | Settings | Download | Build (208) | Search p50 / p95 (orig) | Original hit@1 / hit@5 / MRR@10 | Adversarial hit@1 / hit@5 |
+| --- | --- | --- | --- | --- | --- | --- |
+| **Recommended (quality)** | `embeddings: nachos`, `embedding_model: Alibaba-NLP/gte-modernbert-base`, `embedding_dtype: q8`, `rerank: off`, `duplicate_calibration: auto`, `similarity_floor: off` | ~154 MB | 13.8 s | 17 / 26 ms | **0.773 / 0.949 / 0.850** | **1.000 / 1.000** |
+| **Lightweight (default)** | `embeddings: nachos`, `embedding_model: Xenova/all-MiniLM-L6-v2`, `embedding_dtype: q8`, `rerank: off`, `duplicate_calibration: auto`, `similarity_floor: off` | ~24 MB | 4.7 s | 7 / 8 ms | 0.758 / 0.924 / 0.832 | 0.988 / 1.000 |
+| Max original hit@1 (slower) | `gte-modernbert-base` q8 + `rerank: nachos`, `rerank_dtype: q8` | +35 MB | 14.3 s | 320 / 518 ms | 0.791 / 0.949 / 0.858 | 0.951 / 1.000 |
+| Zero-dependency | `embeddings: off` | none | 1.1 s | 0.2 / 0.3 ms | 0.695 / 0.812 / 0.748 | 0.975 / 1.000 |
+
+- **Keep `rerank: off` by default**: with supersedes + redirect active, `gte-modernbert-base` q8 (`rerank: off`) already hits `1.000` on `outdated`, `long-body`, `near-dup`, and every adversarial query at `12–17 ms` p50, while `rerank: on` costs `120–320 ms` per recall and slightly degrades redirected old-wording queries.
+- **Defaults in code**: `chunk_penalty = 0.05`, `duplicate_calibration = "auto"`, `calibrate_updates = True` (`p99` floor when calibrated), `similarity_floor = "off"`, `rerank = "off"`.
