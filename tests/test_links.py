@@ -13,9 +13,11 @@ import pytest
 
 from bench import recall
 from nachos_core.index import MemoryIndex
+from nachos_core.lexical import LexicalIndex
 from nachos_core.links import (
     EntityIndex,
     extract_entities,
+    lexical_similarities,
     name_vocabulary,
     parse_links,
     resolve_successor,
@@ -79,7 +81,7 @@ class TestParse:
 class TestEntities:
     TEXT = (
         "Primary is db-prim-02.internal (config /etc/pg/pg.conf), ask @ines. Alerts use PagerDuty "
-        "and Kafka. Release Please opens the PR; billing at secret/billing. Run dbt_hourly, "
+        "and Kafka. Better Stack opens the page; billing at secret/billing. Run dbt_hourly, "
         "see no-reply@lumenfold.io. Self-hosted, 24/7, and/or Mo-Fr."
     )
 
@@ -92,7 +94,7 @@ class TestEntities:
         assert found["/etc/pg/pg.conf"] == "path"
         assert found["secret/billing"] == "path"
         assert found["pagerduty"] == "camel"
-        assert found["release please"] == "multi"
+        assert found["better stack"] == "multi"
         assert found["kafka"] == "proper"
         assert found["lumenfold.io"] == "domain"  # bare domain: weak
 
@@ -625,3 +627,126 @@ def test_link_eval_cli_runs_on_the_adversarial_set(capsys):
     assert run["labelled_pairs"] > 40
     assert 0.0 <= run["precision"] <= 1.0
     assert Path(recall.DATA_DIR / "adversarial" / "links.json").exists()
+
+
+# -- similarity path and project-name precision --------------------------------
+
+
+class TestSimilarityPath:
+    N = 60
+
+    def sims(self, hot_z: dict[str, float], n: int = N):
+        """Similarities with a spread (mean ~0.2, sd ~0.1) and chosen outliers at given z."""
+        base = [(f"e{i}", 0.2 + 0.1 * ((i * 7) % 11 - 5) / 3.2) for i in range(n)]
+        values = [v for _k, v in base]
+        mean = sum(values) / n
+        sd = (sum((v - mean) ** 2 for v in values) / n) ** 0.5
+        return [(k, mean + hot_z[k] * sd if k in hot_z else v) for k, v in base]
+
+    def suggest(self, lexical, embedded=(), found_entities=None, n=None, **kw):
+        titles = {f"e{i}": f"Entry {i}" for i in range(n or self.N)}
+        index = EntityIndex()
+        for key, text in (found_entities or {}).items():
+            index.upsert(key, "s", text)
+        return suggest_links(
+            self_key="new",
+            title="New thing",
+            summary="s",
+            body=kw.pop("body", "plain prose without any entity"),
+            index=index,
+            titles=titles,
+            active=set(titles),
+            lexical=lexical,
+            embedded=embedded,
+            **kw,
+        )
+
+    def test_word_overlap_alone_links_an_outlier_and_gives_a_reason(self):
+        got = self.suggest(self.sims({"e3": 6.0}))
+        assert [g["key"] for g in got] == ["e3"]
+        assert got[0]["reason"] == "similar wording"
+
+    def test_a_moderate_similarity_needs_a_shared_entity(self):
+        lexical = self.sims({"e3": 4.0})
+        assert self.suggest(lexical) == []
+        got = self.suggest(
+            lexical,
+            body="mentions the db-lonely-01 box",
+            found_entities={"e3": "runs on db-lonely-01"},
+        )
+        assert [g["key"] for g in got] == ["e3"]
+        assert got[0]["reason"] == "similar wording and shares db-lonely-01"
+
+    def test_embeddings_add_their_z_score_to_the_word_score(self):
+        lexical = self.sims({"e4": 3.8})
+        assert self.suggest(lexical) == []
+        got = self.suggest(lexical, embedded=self.sims({"e4": 5.0}))
+        assert got[0]["key"] == "e4"
+        assert got[0]["reason"] == "similar meaning and wording"
+
+    def test_small_stores_and_caps(self):
+        assert self.suggest(self.sims({"e3": 6.0}, n=10)) == []
+        hot = {f"e{i}": 15.0 for i in range(6)}
+        assert len(self.suggest(self.sims(hot, n=200), n=200)) == 3
+
+    def test_entity_only_rows_have_a_reason(self):
+        got = self.suggest(
+            (),
+            body="see db-lonely-01",
+            found_entities={"e1": "db-lonely-01 here"},
+        )
+        assert got[0]["reason"] == "shares db-lonely-01"
+
+    def test_lexical_similarities_rank_shared_rare_words_first(self):
+        entries = [(f"k{i}", f"Title {i}", f"filler summary {i}", "c") for i in range(25)]
+        bodies = {f"k{i}": f"common words only here number {i}" for i in range(25)}
+        bodies["k1"] = "webhook retries for the zeppelin gateway"
+        entries.append(("new", "Gateway", "gateway notes", "c"))
+        bodies["new"] = "zeppelin gateway webhook notes"
+        index = LexicalIndex.build(entries, bodies)
+        ranked = sorted(
+            lexical_similarities("new", index, set(bodies) - {"new"}), key=lambda r: -r[1]
+        )
+        assert ranked[0][0] == "k1"
+        assert ranked[0][1] > 0.2
+        assert all(sim == 0.0 for _k, sim in ranked[1:])
+
+    def test_service_suggests_by_wording_and_caps_at_three(self, svc):
+        for i in range(70):
+            put(
+                svc,
+                f"Filler entry {i}",
+                f"Unrelated content number {i} about assorted topics here.",
+            )
+        for i in range(2):
+            put(svc, f"Gateway part {i}", "Zeppelin gateway webhook retries and signing details.")
+        out = put(
+            svc, "Gateway overview", "Overview of the zeppelin gateway webhook retries and signing."
+        )
+        sugg = out["suggested_links"]
+        assert 1 <= len(sugg) <= 3
+        assert all(s["key"].startswith("gateway-part") for s in sugg)
+        assert all(s["reason"] for s in sugg)
+
+
+class TestProjectNamePrecision:
+    def test_generic_capitalised_nouns_are_not_project_names(self):
+        titles = {"a": "Incident on-call rotation", "b": "Meeting notes", "c": "Marrow search"}
+        assert name_vocabulary(titles) == {"marrow": "c"}
+
+    def test_a_name_must_be_used_by_another_entry_to_link_its_owner(self):
+        index = EntityIndex()
+        titles = {"o": "Marrow search", "x": "Reader one"}
+        index.upsert("x", "s", "plain prose about something else")
+        args = {
+            "self_key": "new",
+            "title": "Notes",
+            "summary": "s",
+            "body": "The Marrow cluster is slow.",
+            "index": index,
+            "titles": titles,
+            "active": set(titles),
+        }
+        assert suggest_links(**args) == []  # only the new entry mentions it
+        index.upsert("x", "s", "The Marrow cluster needs a disk upgrade.")
+        assert [g["key"] for g in suggest_links(**args)] == ["o"]

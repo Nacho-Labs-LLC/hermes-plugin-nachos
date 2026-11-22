@@ -14,6 +14,7 @@ from .graph import ScopeGraph, describe
 from .links import (
     EntityIndex,
     broken_links,
+    lexical_similarities,
     orphan_hubs,
     parse_links,
     suggest_links,
@@ -105,11 +106,29 @@ def attach_related(
 
 
 def link_hints(
-    view: ScopeGraph, key: str, title: str, summary: str, body: str, *, skip: set[str]
+    view: ScopeGraph,
+    key: str,
+    title: str,
+    summary: str,
+    body: str,
+    *,
+    skip: set[str],
+    vector: list[float] | None = None,
+    model_id: str | None = None,
 ) -> dict[str, Any]:
-    """``suggested_links`` (shared entities) and ``broken_links`` for a freshly written entry."""
+    """``suggested_links`` and ``broken_links`` for a freshly written entry.
+
+    With a head ``vector`` its similarity to every other entry joins the entity rules
+    (see ``suggest_links``).
+    """
     targets = parse_links(body)
     resolved = {view.resolve(t) for t in targets}
+    metas = view.metas()
+    active = {k for k, m in metas.items() if not m.superseded_by}
+    embedded: list[tuple[str, float]] = []
+    if vector is not None and model_id is not None:
+        found = view.index.search(vector, model_id, top_k=10**9, exclude=key, head_only=True)
+        embedded = [(k, sim) for k, sim in found if k in active]
     suggested = suggest_links(
         self_key=key,
         title=title,
@@ -117,13 +136,12 @@ def link_hints(
         body=body,
         index=view.entities(),
         titles=view.titles(),
-        active={k for k, m in view.metas().items() if not m.superseded_by},
+        active=active,
         skip=skip | {r for r in resolved if r},
+        lexical=lexical_similarities(key, view.lexical(), active),
+        embedded=embedded,
     )
-    return {
-        "suggested_links": suggested,
-        "broken_links": [t for t in targets if t not in view.metas()],
-    }
+    return {"suggested_links": suggested, "broken_links": [t for t in targets if t not in metas]}
 
 
 def link_report(view: ScopeGraph) -> dict[str, Any]:

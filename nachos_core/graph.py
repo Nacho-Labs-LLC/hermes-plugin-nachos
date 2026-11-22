@@ -14,6 +14,7 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from .index import MemoryIndex
+from .lexical import LexicalIndex
 from .links import EntityIndex, parse_links, resolve_successor, resolved_edges
 from .store.base import EntryMeta, MemoryStore
 
@@ -26,12 +27,14 @@ class ScopeGraph:
         index: MemoryIndex,
         metas: Callable[[], Mapping[str, EntryMeta]],
         titles: Callable[[], dict[str, str]],
+        lexical: Callable[[], LexicalIndex],
     ) -> None:
         self.name = name
         self.store = store
         self.index = index
         self.metas = metas  # current entry metadata (superseded_by, ...) of the scope
         self.titles = titles  # key -> title of the scope's entries
+        self.lexical = lexical  # the scope's cached lexical index
         self._links_fp: object = None
         self._entities: tuple[object, EntityIndex] | None = None
 

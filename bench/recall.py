@@ -618,9 +618,16 @@ def _link_roots(memories: list[dict[str, Any]]) -> dict[str, str]:
 
 
 def _score_links(
-    svc: MemoryService, memories: list[dict[str, Any]], positives: list[dict[str, Any]]
+    svc: MemoryService,
+    memories: list[dict[str, Any]],
+    positives: list[dict[str, Any]],
+    negatives: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     root = _link_roots(memories)
+    hard = {
+        frozenset((root.get(n["a"], n["a"]), root.get(n["b"], n["b"]))) for n in negatives or []
+    }
+    hard_fp = 0
     wanted = {frozenset((root.get(p["a"], p["a"]), root.get(p["b"], p["b"]))) for p in positives}
     found: set[frozenset[str]] = set()
     tp = fp = neutral = 0
@@ -631,7 +638,7 @@ def _score_links(
             summary=mem["summary"],
             category=mem["category"],
             body=mem["body"],
-            supersedes=None,
+            supersedes=mem.get("supersedes"),
         )
         key = slugify(mem["title"])
         for sug in res.get("suggested_links") or []:
@@ -643,8 +650,9 @@ def _score_links(
                 found.add(pair)
             else:
                 fp += 1
+                hard_fp += pair in hard
                 false_positives.append(
-                    {"key": key, "suggested": sug["key"], "shared": sug["shared"]}
+                    {"key": key, "suggested": sug["key"], "reason": sug.get("reason", "")}
                 )
     return {
         "labelled_pairs": len(wanted),
@@ -652,6 +660,8 @@ def _score_links(
         "tp": tp,
         "fp": fp,
         "neutral": neutral,
+        "hard_fp": hard_fp,
+        "hard_negatives": len(hard),
         "precision": round(tp / (tp + fp), 4) if tp + fp else 1.0,
         "recall": round(len(found) / len(wanted), 4) if wanted else 1.0,
         "false_positives": false_positives,
@@ -661,7 +671,11 @@ def _score_links(
 def eval_link_backend(
     backend: str, opts: argparse.Namespace, memories: list[dict[str, Any]]
 ) -> dict[str, Any]:
-    """Replay ``memories`` through put() and score ``suggested_links`` against ``links.json``."""
+    """Replay ``memories`` through put() and score ``suggested_links`` against ``links.json``.
+
+    Labelled updates are applied as ``supersedes`` (as an agent following ``possible_updates``
+    would), so an old version is hidden and never competes with its replacement.
+    """
     run: dict[str, Any] = {"backend": opts.label or backend, "status": "ok"}
     path = opts.data_dir / "links.json"
     if not path.exists():
@@ -669,11 +683,12 @@ def eval_link_backend(
     embedder, reason = resolve_embedder(backend, opts)
     if reason:
         return {**run, "status": "skipped", "reason": reason}
-    positives = json.loads(path.read_text(encoding="utf-8"))["positives"]
+    labels = json.loads(path.read_text(encoding="utf-8"))
+    positives, negatives = labels["positives"], labels.get("negatives", [])
     with tempfile.TemporaryDirectory(prefix="nachos-links-") as tmp:
         svc = build_service(Path(tmp), embedder, **ranking_options(opts))
         try:
-            run.update(_score_links(svc, memories, positives))
+            run.update(_score_links(svc, memories, positives, negatives))
         finally:
             svc.close()
     return run
@@ -689,13 +704,13 @@ def format_link_report(report: dict[str, Any]) -> str:
             f"{r['precision']:.3f}",
             f"{r['recall']:.3f}",
             f"{r['tp']}/{r['fp']}",
-            str(r["neutral"]),
+            f"{r['hard_fp']}/{r['hard_negatives']}",
         ]
         for r in report["runs"]
         if r["status"] == "ok"
     ]
     lines += (
-        [_table(["backend", "pairs", "precision", "recall", "TP/FP", "neutral"], rows)]
+        [_table(["backend", "pairs", "precision", "recall", "TP/FP", "hard-neg FP"], rows)]
         if rows
         else []
     )
@@ -704,7 +719,7 @@ def format_link_report(report: dict[str, Any]) -> str:
     ]
     for r in report["runs"]:
         for fp in r.get("false_positives", [])[:40]:
-            lines.append(f"  FP {fp['key']} -> {fp['suggested']}  via {fp['shared']}")
+            lines.append(f"  FP {fp['key']} -> {fp['suggested']}  ({fp['reason']})")
     return "\n".join(lines) + "\n"
 
 
@@ -805,6 +820,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     ap.add_argument("--chunk-penalty", type=float, default=None, help="body-chunk score penalty")
     ap.add_argument(
         "--floor", default="off", help="similarity floor: off, auto (p75) or a profile key (p90)"
+    )
+    ap.add_argument(
+        "--calibrate-duplicates",
+        action="store_true",
+        help="raise duplicate_threshold to the model's calibrated p99 (the shipped default, "
+        "duplicate_calibration: auto)",
     )
     ap.add_argument(
         "--no-update-calibration",

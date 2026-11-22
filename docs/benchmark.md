@@ -543,7 +543,9 @@ Links, `related` expansion, entity suggestions and the `entity` filter were adde
 
 The only difference is one `natural` query on gte-modernbert (hit@1 -0.002, inside the CLI's own run-to-run noise: re-running the unchanged baseline gave 0.7735 against 0.768 the first time, and re-running the new code matched that 0.7735 exactly). Neither fixture contains `[[links]]`, so `related` never fires there; the fixtures cannot show a gain from linking, only that the extra machinery (graph reconcile, `related` pass) is inert when no links exist.
 
-### Link suggestions (`--link-eval`)
+### Link suggestions, first version: entity rules only (`--link-eval`)
+
+This is the first version, measured with supersedes not applied in the replay; the next section replaces it (its numbers on the current harness are in the before columns there).
 
 `bench/data/adversarial/links.json` holds 61 hand-labelled entry pairs (undirected) that a reader would want linked (same product and its replica, an incident and the system it hit, a plan and its support targets...), written before the suggester was run. Entries are compared by the root of their supersedes chain, so an updated version inherits its predecessor's labels, and two versions of the same fact are neutral. `--link-eval` replays all 128 entries through `put()` without supersedes and scores `suggested_links` as each entry arrives: precision is labelled-pair suggestions over all suggestions; recall is labelled pairs found at least once.
 
@@ -559,6 +561,33 @@ Notes:
 - **Strict labels overstate the false positives.** Three of the four FPs are `Postgres ...` entries sharing the leading project name (`Postgres read replica for analytics` to `Postgres primary host`, `Postgres connection usage` to both replicas): real relations that my labels omitted. With them counted, lexical precision would be 11/12 = 0.917. I did not relabel, so the table is the strict number. The remaining FP, `2024-05-03 search outage` to `Incident on-call rotation`, comes from the word "incident" being treated as a project name.
 - **This label set is not independent.** A first run scored precision 0.455 / recall 0.147 (12 FPs: `production`, `staging`, `primary` and `python` taken as project names; `lumenfold.io` and `@lumenfold/sdk` as strong entities; one shared product name such as `GitHub` as enough). The current rules were added after that run: a project name must never appear in lowercase anywhere in memory, bare domains and product names are weak (two needed), and `.internal` machine names are strong. Treat 0.667 as tuned on this data, and re-check on real memory.
 - The main fixture has no links file, so `--link-eval` skips it.
+
+### Link suggestions, second version: similarity path
+
+The first version found only 8 to 13 percent of the labelled pairs. This version adds a similarity path (`nachos_core/links.py`): IDF-weighted word-overlap cosine against every other active entry (always available, no dependency) and, with embeddings, head-vector cosine; each is turned into a z-score over that entry's own similarities, the two are added, and an entry is suggested alone above a high z (4.75 for words, 6.5 summed) or above a lower one (3.5 / 4.5) together with any shared non-generic entity, best first, at most 3, each with a `reason`. Z-scores are used instead of per-model cosine percentiles because the calibrated percentiles (a p99/p95 profile) need 30+ stored entries, drift as the store grows, and gave precision 0.22 to 0.33 in the first tries. Fewer than 20 active entries gives no similarity suggestions (the entity rules still apply). The project-name rule was tightened: a stoplist of common capitalised nouns (`Incident`, `Meeting`, `Service`...) and the owner of a name is only a hit when another entry uses the name.
+
+Method. A second link set, `bench/data/links-heldout/` (76 entries on a different fictional company, 78 labelled pairs, 15 hard negatives such as two HR policies or two style guides), was written and committed first, before this code existed, and not tuned against. The thresholds were chosen on the adversarial set's labels. `--link-eval` now applies labelled updates as `supersedes` (an agent following `possible_updates`), reports hard-negative false positives, and takes `--calibrate-duplicates` (used for the embedding rows, the shipped `duplicate_calibration: auto` setting). Before = the previous commit on the same harness.
+
+| Set | Backend | Before precision / recall (TP/FP) | After precision / recall (TP/FP) | Hard-negative FPs after |
+| --- | --- | --- | --- | --- |
+| adversarial (tuning set, 61 pairs) | lexical | 0.727 / 0.098 (8/3) | 0.660 / 0.459 (35/18) | n/a |
+| adversarial | MiniLM q8 | 0.667 / 0.066 (6/3) | 0.631 / 0.557 (41/24) | n/a |
+| adversarial | gte-modernbert q8 | 0.625 / 0.066 (5/3) | 0.646 / 0.557 (42/23) | n/a |
+| held-out (78 pairs) | lexical | 0.571 / 0.154 (12/9) | 0.480 / 0.154 (12/13) | 0 / 15 |
+| held-out | MiniLM q8 | 0.471 / 0.103 (8/9) | 0.550 / 0.282 (22/18) | 0 / 15 |
+| held-out | gte-modernbert q8 | 0.500 / 0.090 (7/7) | 0.538 / 0.269 (21/18) | 2 / 15 |
+
+Result: the target (recall at least 0.5 at precision at least 0.6) is met on the set the thresholds were chosen on and **not met on the held-out set**: MiniLM 0.282 recall at 0.550 precision, gte 0.269 at 0.538, lexical 0.154 at 0.480 (unchanged recall, lower precision).
+
+What I can say about the gap, without having tuned on it:
+
+- A threshold sweep on the held-out set for diagnosis only (not applied) shows no setting of this signal family reaches both numbers there. The best MiniLM/gte trade-offs were about 0.35 recall at 0.59 precision (summed z of 5.5), 0.46 recall at 0.46 to 0.51 precision, and 0.5 recall only at about 0.35 to 0.38 precision. The held-out relations are mostly topic-adjacent entries with little shared wording (a refund policy and the payments service, a deploy workflow and the hosting platform), which wording and sentence-embedding similarity cannot separate from same-topic unrelated entries at the cap of 3.
+- Precision is understated by incomplete labels. Of the 18 MiniLM false positives, at least 6 are relations I would accept on review but did not label (`shipping-rates` to `checkout-flow`, `bike-grading` to `pricing-rules`, `ci-pipelines` to `kestrel-storefront`, `secrets-handling` to `sendcloud-setup` through Vault, `moneybird-integration` to `sendcloud-setup`, `warehouse-printers` to `warehouse-layout`). I did not relabel. The labelled hard negatives were mostly respected (0 of 15 for lexical and MiniLM; gte linked `python-conventions` with `typescript-conventions` and `holiday-policy` with `onboarding`).
+- Lexical on the held-out set is unchanged at 0.154 recall because the held-out store is small (76 entries): few entries stand out by wording alone at z 4.75, and a z-score over about 60 candidates cannot exceed roughly 7.7 (a cluster of five related entries caps each at about 3.3).
+- The first embedding attempts also lost most of their recall to `possible_duplicates` and `possible_updates` filtering: with the calibrated p99 bands, the high-similarity neighbours are exactly the entries listed there. Excluding both lists from `suggested_links` gave MiniLM 0.50 / 0.28 and gte 0.42 / 0.08 on the adversarial set against 0.63 / 0.56 and 0.65 / 0.56 now, so suggestions may repeat an entry that `possible_updates` or `possible_duplicates` also lists. That deviates from "below the duplicate/update band" on purpose; the agent decides between merging, superseding and linking.
+- Process note: the held-out set was run twice with identical results; the second run followed fixing the project-name stoplist, which had silently not been applied in the first (the edit did not match after reformatting). The `Incident` false positive is gone on the adversarial set.
+
+Recall before / after on the two recall fixtures (hit@1 / hit@5 / MRR@10) is unchanged for lexical and MiniLM on both sets; gte on the main set moved from 0.768 / 0.949 / 0.848 to 0.773 / 0.949 / 0.850 (+0.005 hit@1), inside that backend's run-to-run noise (0.768 and 0.7735 on identical code earlier). Ranking code was not touched. Build time with the link path is not measurably different from before (lexical 208-entry build 1.5 s against 1.6 s; the embedding builds were dominated by embedding time and varied by 2x between identical runs on the loaded machine). The cost per put is one pass over every active entry's word set and head vector.
 
 ### Graph boost: tried, dropped
 

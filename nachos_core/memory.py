@@ -195,6 +195,7 @@ class MemoryService:
                 s.index,
                 lambda s=s: self._scope_meta(s),  # type: ignore[misc]
                 lambda s=s: self._titles(s),  # type: ignore[misc]
+                lambda s=s: self._lexical_index(s),  # type: ignore[misc]
             )
             for name, s in scopes.items()
         }
@@ -818,7 +819,9 @@ class MemoryService:
                 title,
                 summary,
                 body,
-                skip={u["key"] for u in possible} | set(applied),
+                skip=set(applied),
+                vector=vector,
+                model_id=embedder.model_id if embedder is not None else None,
             ),
         )
 
