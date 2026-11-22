@@ -64,6 +64,7 @@ Run `hermes memory setup` or edit `$HERMES_HOME/nachos/config.json`. Settings ar
 | `rerank_max_length` | `0` | Cross-encoder input length in tokens (`0` = the model's default: 1024 for the jina reranker, 512 otherwise). |
 | `rerank_candidates` | `25` | How many top fused results the reranker re-scores. |
 | `reindex_budget_ms` | `250` | After an embedding model change, how long one recall or write may spend re-embedding (see [Switching models](#switching-models)). |
+| `related_per_hit` | `3` | Linked entries (one hop) attached as `related` to each recall result, at most 8 per query. `0` turns related expansion off. |
 | `shared_store` | `off` | `on` adds a memory scope shared by every profile on the machine. |
 | `shared_store_path` | blank | Shared store directory (blank = `<hermes root>/nachos-shared`). |
 | `redact_secrets` | `on` | Redact secrets in everything written to memory. |
@@ -72,6 +73,17 @@ Run `hermes memory setup` or edit `$HERMES_HOME/nachos/config.json`. Settings ar
 | `history_context_after` | `1` | Turns returned after each matched message. |
 | `history_max_chars` | `6000` | Cap on the total text one `nachos_history_search` call returns. |
 | `capture` | `review` | `review` suggests memories from finished sessions into a review inbox; `off` disables. |
+
+## Linked memory
+
+Entries can reference each other. Write `[[key]]` (or `[[Entry Title]]`, or `[[key|label]]`) in a body; links inside code spans and fenced blocks are ignored.
+
+- **Stored in the sidecar** (`links` table, forward edges, backlinks by indexed lookup) and kept in step on put, edit, remove, revert and supersede, and reconciled against hand edits. A link to a superseded entry resolves to its active successor; a link to nothing is *broken*, tolerated, and reported by `put` (`broken_links`) and exact-key recall.
+- **Exact-key recall** (`nachos_memory_recall key=...`) also returns `links`, `backlinks` and `broken_links`.
+- **Query recall** may attach `related` to a result: up to `related_per_hit` (default 3) one-hop neighbours, at most 8 per query, never an entry already in the result list, outgoing links in body order then backlinks by key. Links do not change ranking: a graph boost was measured and rejected (`docs/benchmark.md`).
+- **Entities without an LLM.** Identifiers (`db-prim-02`, `dbt_hourly`), machine hostnames, paths, `@handles`, CamelCase and capitalised multiword names, mid-sentence capitalised words and project names used as titles are extracted with regexes into an entity to entries index. `nachos_memory_put` returns up to 3 `suggested_links`, each with a short `reason` ("shares `db-prim-02.internal`", "similar meaning and wording"). Two signals: a shared identifier, host, path, handle or project name (topical entities need two; entities found in many entries are ignored as generic), and similarity that stands out from the rest of memory (IDF-weighted word overlap, plus embedding cosine when embeddings are on, each judged as a z-score against that entry's own similarities, so it needs no per-model threshold; moderate similarity also needs a shared entity). Lexical-only mode uses the word-overlap and entity rules and works with no extra dependency. A project name must be a title's first word, never seen in lowercase, and used by another entry. `nachos_memory_recall entity=...` filters a query to entries that mention an entity, or lists them when there is no query.
+- **Manifest.** Entries with links get a `[n links]` suffix only if the annotated manifest still fits `manifest_char_budget` without shortening anything more than the plain one needs.
+- **Maintenance.** `nachos-maintain links` reports broken links, orphan hubs (entries named in several others that nothing links to) and entries that strongly share entities but are not linked. Report-only.
 
 ## Embeddings
 
@@ -185,7 +197,7 @@ command with explicit profile selection:
 
 ```bash
 /path/to/venv/bin/nachos-maintain --profile-home /absolute/path/to/profile --json all
-# Independently schedulable: inbox | summaries | duplicates | unused | superseded | suspicious_supersedes | provenance | all
+# Independently schedulable: inbox | summaries | duplicates | unused | superseded | suspicious_supersedes | provenance | links | all
 /path/to/venv/bin/nachos-maintain --profile-home /absolute/path/to/profile --days 90 unused
 ```
 

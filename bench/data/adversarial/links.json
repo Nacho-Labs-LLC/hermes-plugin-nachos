@@ -1,0 +1,315 @@
+{
+ "description": "Hand-labelled pairs of entries a reader would want linked (undirected). Entries are compared by the root of their supersedes chain, so an updated version inherits the labels of the entry it replaces.",
+ "positives": [
+  {
+   "a": "nimbus-billing-api",
+   "b": "nimbus-billing-api-rate-limits",
+   "reason": "same API"
+  },
+  {
+   "a": "nimbus-billing-api",
+   "b": "payment-processor",
+   "reason": "billing API fronts the payment processor"
+  },
+  {
+   "a": "payment-processor",
+   "b": "payment-processing-fees",
+   "reason": "fees of the card processor"
+  },
+  {
+   "a": "payment-processing-fees",
+   "b": "payments-checkout-provider",
+   "reason": "fees note names the new provider"
+  },
+  {
+   "a": "staging-has-no-real-payments",
+   "b": "payments-checkout-provider",
+   "reason": "sandbox mode of the provider"
+  },
+  {
+   "a": "billing-slo-alert",
+   "b": "nimbus-billing-api",
+   "reason": "SLO alert on the billing API"
+  },
+  {
+   "a": "postgres-primary-host",
+   "b": "postgres-read-replica",
+   "reason": "primary and its replica"
+  },
+  {
+   "a": "postgres-read-replica",
+   "b": "postgres-read-replica-for-analytics",
+   "reason": "replicas"
+  },
+  {
+   "a": "postgres-primary-host",
+   "b": "postgres-connection-usage",
+   "reason": "connection usage of the primary"
+  },
+  {
+   "a": "postgres-primary-host",
+   "b": "staging-database-host",
+   "reason": "prod vs staging database"
+  },
+  {
+   "a": "redis-session-cache",
+   "b": "redis-job-queue",
+   "reason": "two Redis instances"
+  },
+  {
+   "a": "redis-session-cache",
+   "b": "session-cache-memory-usage",
+   "reason": "usage of the session cache"
+  },
+  {
+   "a": "kubernetes-cluster-prod",
+   "b": "kubernetes-cluster-staging",
+   "reason": "clusters"
+  },
+  {
+   "a": "kubernetes-cluster-prod",
+   "b": "kubernetes-cluster-dev",
+   "reason": "clusters"
+  },
+  {
+   "a": "kubernetes-cluster-staging",
+   "b": "kubernetes-cluster-dev",
+   "reason": "clusters"
+  },
+  {
+   "a": "staging-environment-url",
+   "b": "production-environment-url",
+   "reason": "environments"
+  },
+  {
+   "a": "staging-environment-url",
+   "b": "dev-environment-url",
+   "reason": "environments"
+  },
+  {
+   "a": "production-environment-url",
+   "b": "admin-console-url",
+   "reason": "admin console of prod"
+  },
+  {
+   "a": "incident-on-call-rotation",
+   "b": "pagerduty-escalation",
+   "reason": "on-call and escalation"
+  },
+  {
+   "a": "incident-on-call-rotation",
+   "b": "staging-on-call-rotation",
+   "reason": "prod vs staging rotation"
+  },
+  {
+   "a": "incident-on-call-rotation",
+   "b": "alertmanager-routing",
+   "reason": "who gets paged"
+  },
+  {
+   "a": "alertmanager-routing",
+   "b": "pagerduty-escalation",
+   "reason": "paging chain"
+  },
+  {
+   "a": "alertmanager-routing",
+   "b": "billing-slo-alert",
+   "reason": "alert routing for an SLO alert"
+  },
+  {
+   "a": "auth-service",
+   "b": "keycloak-admin-access",
+   "reason": "same product"
+  },
+  {
+   "a": "sundial-cron-scheduler",
+   "b": "backup-restore-drill",
+   "reason": "backup and restore"
+  },
+  {
+   "a": "sundial-cron-scheduler",
+   "b": "backup-size",
+   "reason": "backup job and its size"
+  },
+  {
+   "a": "backup-restore-drill",
+   "b": "backup-size",
+   "reason": "restore needs the dump size"
+  },
+  {
+   "a": "marrow-search-cluster",
+   "b": "search-relevance-tuning",
+   "reason": "cluster and ranking"
+  },
+  {
+   "a": "marrow-search-cluster",
+   "b": "search-load-test",
+   "reason": "cluster load test"
+  },
+  {
+   "a": "marrow-search-cluster",
+   "b": "marrow-has-no-kibana",
+   "reason": "cluster tooling"
+  },
+  {
+   "a": "marrow-search-cluster",
+   "b": "2024-05-03-search-outage",
+   "reason": "cluster incident"
+  },
+  {
+   "a": "search-load-test",
+   "b": "2024-05-03-search-outage",
+   "reason": "same cluster"
+  },
+  {
+   "a": "orchard-mobile-app",
+   "b": "mobile-ci-pipeline",
+   "reason": "app and its CI"
+  },
+  {
+   "a": "orchard-mobile-app",
+   "b": "orchard-does-not-use-expo",
+   "reason": "app stack"
+  },
+  {
+   "a": "orchard-mobile-app",
+   "b": "notification-service",
+   "reason": "app push notifications"
+  },
+  {
+   "a": "api-client-sdks",
+   "b": "python-sdk-release-process",
+   "reason": "SDK release"
+  },
+  {
+   "a": "api-client-sdks",
+   "b": "api-documentation",
+   "reason": "client libs and API docs"
+  },
+  {
+   "a": "analytics-warehouse",
+   "b": "dbt-project",
+   "reason": "warehouse and its models"
+  },
+  {
+   "a": "dbt-project",
+   "b": "airflow-deployment",
+   "reason": "dbt runs in Airflow"
+  },
+  {
+   "a": "ci-runner-pool",
+   "b": "ci-runner-pool-for-macos",
+   "reason": "runner pools"
+  },
+  {
+   "a": "ci-runner-pool",
+   "b": "retro-notes-sprint-14",
+   "reason": "runner queue time"
+  },
+  {
+   "a": "onboarding-checklist",
+   "b": "onboarding-survey-results",
+   "reason": "onboarding"
+  },
+  {
+   "a": "onboarding-checklist",
+   "b": "laptop-policy",
+   "reason": "day-one laptop"
+  },
+  {
+   "a": "berlin-office-address",
+   "b": "office-wifi",
+   "reason": "office"
+  },
+  {
+   "a": "berlin-office-address",
+   "b": "lunch-spots-near-the-berlin-office",
+   "reason": "office surroundings"
+  },
+  {
+   "a": "berlin-office-address",
+   "b": "bike-parking",
+   "reason": "office"
+  },
+  {
+   "a": "office-wifi",
+   "b": "bike-parking",
+   "reason": "office"
+  },
+  {
+   "a": "customer-support-sla",
+   "b": "support-response-targets-for-enterprise",
+   "reason": "support targets by plan"
+  },
+  {
+   "a": "customer-support-sla",
+   "b": "pricing-tiers",
+   "reason": "plans"
+  },
+  {
+   "a": "pricing-tiers",
+   "b": "support-response-targets-for-enterprise",
+   "reason": "plans"
+  },
+  {
+   "a": "git-branching-convention",
+   "b": "release-freeze-policy",
+   "reason": "release workflow"
+  },
+  {
+   "a": "git-branching-convention",
+   "b": "release-notes-automation",
+   "reason": "release workflow"
+  },
+  {
+   "a": "release-freeze-policy",
+   "b": "release-notes-automation",
+   "reason": "release process"
+  },
+  {
+   "a": "coding-style-python",
+   "b": "coding-style-typescript",
+   "reason": "code style"
+  },
+  {
+   "a": "data-retention-policy",
+   "b": "analytics-warehouse",
+   "reason": "analytics retention"
+  },
+  {
+   "a": "data-retention-policy",
+   "b": "sundial-cron-scheduler",
+   "reason": "backup retention"
+  },
+  {
+   "a": "security-contact",
+   "b": "keycloak-admin-access",
+   "reason": "security contact and admin access"
+  },
+  {
+   "a": "feature-flag-service",
+   "b": "frontend-build-tooling",
+   "reason": "frontend flag proxy"
+  },
+  {
+   "a": "metrics-dashboards",
+   "b": "alertmanager-routing",
+   "reason": "dashboards and alerts"
+  },
+  {
+   "a": "load-test-results",
+   "b": "kubernetes-cluster-prod",
+   "reason": "load test of prod"
+  },
+  {
+   "a": "load-test-results",
+   "b": "search-load-test",
+   "reason": "load tests"
+  },
+  {
+   "a": "kundendienst-zeiten",
+   "b": "customer-support-sla",
+   "reason": "support hours and targets"
+  }
+ ]
+}

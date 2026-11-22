@@ -1,0 +1,458 @@
+[
+ {
+  "title": "Kestrel storefront",
+  "summary": "Customer-facing web shop for refurbished bikes",
+  "category": "projects",
+  "body": "The shop is a Next.js app in the kestrel/web repo, served from Vercel on kestrelbikes.shop. Priya owns it. Product pages are rendered from the shop database and the Typesense index."
+ },
+ {
+  "title": "Checkout flow",
+  "summary": "How a customer pays",
+  "category": "projects",
+  "body": "The cart posts to the payments service and then redirects to the hosted payment page. Apple Pay and iDEAL are enabled. Shipping cost is added before the redirect and orders under 150 EUR pay for delivery."
+ },
+ {
+  "title": "Payments service",
+  "summary": "Go service handling payments",
+  "category": "projects",
+  "body": "pay-svc is a Go service that creates Mollie payments and receives the webhook at /hooks/mollie. It writes to the pay_prod database and runs as the Fly app kestrel-pay."
+ },
+ {
+  "title": "Refund policy",
+  "summary": "Return window and refunds",
+  "category": "process",
+  "body": "Customers can return a bike within 30 days. Refunds go back to the original payment method and are triggered from the Mollie dashboard, normally within three working days of the inspection."
+ },
+ {
+  "title": "Inventory sync",
+  "summary": "Nightly stock import",
+  "category": "projects",
+  "body": "Every night a job pulls the supplier stock file over SFTP and updates the stock_levels table. If the file is older than 36 hours the job fails loudly instead of zeroing stock."
+ },
+ {
+  "title": "Supplier VeloTrade",
+  "summary": "Main bike supplier",
+  "category": "projects",
+  "body": "VeloTrade in Belgium supplies roughly 70 percent of used frames. Contact is Marta. Price lists arrive monthly as CSV and the stock file lives on their SFTP at sftp.velotrade.eu under the account kestrel-sync."
+ },
+ {
+  "title": "Stock alert thresholds",
+  "summary": "When low stock pings the team",
+  "category": "process",
+  "body": "A model with three or fewer units in stock triggers a message in the #ops-stock channel. Accessories use a threshold of ten."
+ },
+ {
+  "title": "Recommendation model v2",
+  "summary": "Weekly trained recommender",
+  "category": "projects",
+  "body": "Jonas trains a LightFM model on the events_clean table. Item and user embeddings are exported after each run and the model artifact is uploaded for the serving API to pick up."
+ },
+ {
+  "title": "Feature store",
+  "summary": "Online features for ranking",
+  "category": "projects",
+  "body": "Features are defined in Feast. The online store is Redis at redis-feat.internal:6380 and the offline store is the kestrel_ml dataset in BigQuery. Feature definitions live next to the training code."
+ },
+ {
+  "title": "Training schedule",
+  "summary": "When models retrain",
+  "category": "process",
+  "body": "Retraining runs on Sundays at 03:00 UTC so fresh weights are ready before Monday traffic. A failed run keeps serving last week's model."
+ },
+ {
+  "title": "GPU box",
+  "summary": "Training machine",
+  "category": "environment",
+  "body": "gpu-box-1 is a workstation with an RTX 4090 and 64 GB of RAM running Ubuntu 22.04. It sits in the office rack and is reachable only through the SSH jump host."
+ },
+ {
+  "title": "Jump host",
+  "summary": "Public SSH entry point",
+  "category": "environment",
+  "body": "jump.kestrelbikes.shop is the only machine with SSH open to the internet. Keys come from the team password manager and fail2ban bans after five bad attempts."
+ },
+ {
+  "title": "Data warehouse",
+  "summary": "BigQuery layout",
+  "category": "environment",
+  "body": "BigQuery project kestrel-analytics holds three datasets: raw_events for unprocessed tracking, events_clean for deduplicated sessions, and kestrel_ml for model outputs."
+ },
+ {
+  "title": "Event tracking plan",
+  "summary": "Which events the site sends",
+  "category": "process",
+  "body": "The storefront emits view_item, add_to_cart, begin_checkout and purchase through Rudderstack at /v1/track. Each event carries an anonymous id and, after login, the customer id."
+ },
+ {
+  "title": "Analytics dashboards",
+  "summary": "Metabase setup",
+  "category": "environment",
+  "body": "Metabase runs at bi.kestrelbikes.shop with two collections, Sales and Ops. Questions are written against events_clean and the orders views."
+ },
+ {
+  "title": "Weekly sales review",
+  "summary": "Monday sales meeting",
+  "category": "process",
+  "body": "Every Monday at 09:00 the team goes through last week's numbers from the Sales collection: revenue, conversion, return rate and the five best sellers."
+ },
+ {
+  "title": "Customer support tooling",
+  "summary": "Helpdesk and macros",
+  "category": "process",
+  "body": "Support runs in Zendesk. There are macros for returns, delivery delays and size advice. The target is a first reply within 24 hours on working days."
+ },
+ {
+  "title": "Returns process",
+  "summary": "What happens to a returned bike",
+  "category": "process",
+  "body": "Customers write to returns@kestrelbikes.shop, receive a prepaid label, and the bike is inspected in hall 2 when it arrives. Only after inspection does finance release the refund."
+ },
+ {
+  "title": "Sendcloud setup",
+  "summary": "Shipping label integration",
+  "category": "projects",
+  "body": "Labels are created through Sendcloud with DHL as the default carrier. The API key lives in Vault under kv/shipping and is read by the shop backend at startup."
+ },
+ {
+  "title": "Warehouse layout",
+  "summary": "Where things are stored",
+  "category": "environment",
+  "body": "Hall 1 holds parts and accessories in aisles A to C. Hall 2 holds complete bikes in aisles D to F plus the photo corner. Fast movers are kept nearest the packing desk."
+ },
+ {
+  "title": "Pick list generator",
+  "summary": "Daily pick lists",
+  "category": "projects",
+  "body": "A cron script prints the pick lists at 07:45 so the first shift can start at 08:00. Orders are sorted by aisle to minimise walking."
+ },
+ {
+  "title": "Warehouse printers",
+  "summary": "Label printers",
+  "category": "environment",
+  "body": "wh-printer-01 is a Brother QL label printer at 10.20.0.31 loaded with 62 mm rolls. A second spare printer is kept in the cupboard."
+ },
+ {
+  "title": "Ops scripts repo",
+  "summary": "Small operational scripts",
+  "category": "projects",
+  "body": "The kestrel/ops-scripts repository contains pick_lists.py, restock_report.py, ebay_sync.py and gdpr_delete.py. They are deployed by pulling main on the cron host."
+ },
+ {
+  "title": "Ops box",
+  "summary": "Cron host",
+  "category": "environment",
+  "body": "ops-box.internal is a small Debian 12 VM that runs every cron job. Lena owns it and updates it on the first Tuesday of each month."
+ },
+ {
+  "title": "Restock report",
+  "summary": "Weekly supplier order draft",
+  "category": "process",
+  "body": "On Thursdays the script restock_report.py emails a draft order to buyers@kestrelbikes.shop based on sales velocity and the stock thresholds. Buyers confirm before anything is sent to suppliers."
+ },
+ {
+  "title": "On-call arrangement",
+  "summary": "Who gets the pager",
+  "category": "process",
+  "body": "The on-call phone rotates weekly. Escalation goes to Priya first and then to Jonas. Nobody is expected to respond between midnight and 07:00 unless checkout is down."
+ },
+ {
+  "title": "Incident 2024-03 checkout outage",
+  "summary": "Checkout failing for 25 minutes",
+  "category": "history",
+  "body": "After a deploy on a Wednesday afternoon the checkout returned 502 for about 25 minutes. The new build had a wrong webhook path. We rolled back and added a smoke test for the payment redirect."
+ },
+ {
+  "title": "Deploying pay-svc",
+  "summary": "Release procedure for payments",
+  "category": "process",
+  "body": "A merge to main runs the deploy-pay.yml workflow, which builds the image and ships it to Fly. Deploys are avoided on Fridays and during the Monday sales rush."
+ },
+ {
+  "title": "Fly.io apps",
+  "summary": "What runs on Fly",
+  "category": "environment",
+  "body": "Two apps run on Fly in Amsterdam: kestrel-pay for payments and kestrel-rec for the recommendation API. Both use a single shared-cpu machine with autoscaling to three."
+ },
+ {
+  "title": "Storefront hosting",
+  "summary": "How the shop is deployed",
+  "category": "process",
+  "body": "Every pull request gets a Vercel preview URL. Merging to main promotes to production. Environment variables are set in the Vercel project, never in the repo."
+ },
+ {
+  "title": "Secrets handling",
+  "summary": "Where secrets live",
+  "category": "process",
+  "body": "Humans use the team password manager. Services read secrets from Vault at startup. Nothing secret goes into environment files that are committed."
+ },
+ {
+  "title": "Vault",
+  "summary": "Secret store",
+  "category": "environment",
+  "body": "Vault runs at vault.kestrelbikes.shop with a kv v2 engine. Each service has its own policy that only allows its own path."
+ },
+ {
+  "title": "Domains and DNS",
+  "summary": "Registrar and DNS provider",
+  "category": "environment",
+  "body": "The domains were bought at Gandi and DNS is hosted on Cloudflare. kestrel.bike redirects to the main shop domain."
+ },
+ {
+  "title": "TLS certificates",
+  "summary": "Certificate handling",
+  "category": "environment",
+  "body": "Public certificates are managed by Cloudflare. Internal services use certificates from the step-ca instance at ca.internal, renewed automatically every 24 hours."
+ },
+ {
+  "title": "Database backups",
+  "summary": "Nightly dumps",
+  "category": "process",
+  "body": "pg_dump runs every night and writes to the Backblaze bucket kestrel-pg-backups. Backups are kept for 30 days and encrypted before upload."
+ },
+ {
+  "title": "Postgres hosts",
+  "summary": "Database servers",
+  "category": "environment",
+  "body": "The main Postgres 16 server is db-main.internal and hosts pay_prod and shop_prod. A read replica db-ro.internal serves reporting queries."
+ },
+ {
+  "title": "Shop database",
+  "summary": "Orders and customers",
+  "category": "environment",
+  "body": "shop_prod stores customers, orders, products and promo codes. Priya owns the schema and every migration needs her review."
+ },
+ {
+  "title": "Restore drill",
+  "summary": "Quarterly restore test",
+  "category": "history",
+  "body": "Once a quarter someone restores the latest backup into a scratch database and runs the sanity queries. The last drill took 18 minutes end to end."
+ },
+ {
+  "title": "GDPR requests",
+  "summary": "Deletion and export requests",
+  "category": "process",
+  "body": "People ask via privacy@kestrelbikes.shop. The script gdpr_delete.py anonymises the customer and removes marketing consent. We have 30 days to answer."
+ },
+ {
+  "title": "Newsletter",
+  "summary": "Mailchimp newsletter",
+  "category": "process",
+  "body": "The newsletter goes out on Tuesdays through Mailchimp. The main segment is bike-owners and every issue carries the current welcome discount."
+ },
+ {
+  "title": "Promo codes",
+  "summary": "Discount codes",
+  "category": "process",
+  "body": "Codes are rows in the promo_codes table. WELCOME10 gives ten percent off a first order. Codes expire automatically at the end date."
+ },
+ {
+  "title": "Admin panel",
+  "summary": "Internal back office",
+  "category": "environment",
+  "body": "The back office is a Retool app at admin.kestrelbikes.shop. Roles decide who can edit orders, products or promo codes; refunds cannot be issued from it."
+ },
+ {
+  "title": "Pricing rules",
+  "summary": "How refurbished bikes are priced",
+  "category": "process",
+  "body": "The shelf price is the supplier price times 1.35, with a minimum margin of 80 EUR. Grade C bikes get a further 15 percent off."
+ },
+ {
+  "title": "Bike grading",
+  "summary": "Condition grades",
+  "category": "process",
+  "body": "Grade A is like new, B has light scratches, C has visible wear but is fully functional. The grader notes frame damage and component wear on the intake sheet."
+ },
+ {
+  "title": "Photo workflow",
+  "summary": "Product photos",
+  "category": "process",
+  "body": "Each bike is shot in the photo corner with eight standard angles. Pictures are uploaded to the Cloudinary folder bikes/ and named after the SKU."
+ },
+ {
+  "title": "Cloudinary",
+  "summary": "Image hosting",
+  "category": "environment",
+  "body": "The Cloudinary account kestrel serves all product images. The transformation preset listing_1600 resizes to 1600 pixels and converts to webp."
+ },
+ {
+  "title": "Product listing template",
+  "summary": "What every listing needs",
+  "category": "process",
+  "body": "A listing needs the grade, frame size, a short condition note and at least six photos. Sizes follow the manufacturer chart, not the supplier's labels."
+ },
+ {
+  "title": "Marketplace listings",
+  "summary": "eBay and Marktplaats",
+  "category": "projects",
+  "body": "A weekly script mirrors selected bikes to eBay and Marktplaats. It skips anything with fewer than six photos and removes sold bikes within a day."
+ },
+ {
+  "title": "Ad budget",
+  "summary": "Paid marketing",
+  "category": "process",
+  "body": "Maya runs Google Ads at about 1200 EUR per month and Meta at 600 EUR. Spend is reviewed on the first Monday of every month."
+ },
+ {
+  "title": "Brand guidelines",
+  "summary": "Colours and type",
+  "category": "process",
+  "body": "The brand colour is Kestrel orange, hex E4572E, on white. Headlines use Inter semibold and body text Inter regular."
+ },
+ {
+  "title": "Design tokens",
+  "summary": "Shared tokens package",
+  "category": "projects",
+  "body": "The kestrel/tokens repository exports colours, spacing and type scales as the npm package @kestrel/tokens, consumed by the storefront and the admin panel."
+ },
+ {
+  "title": "TypeScript conventions",
+  "summary": "Rules for TS code",
+  "category": "process",
+  "body": "Strict mode is on. No default exports. The shared lint config @kestrel/eslint-config is mandatory and CI fails on warnings."
+ },
+ {
+  "title": "Python conventions",
+  "summary": "Rules for Python scripts",
+  "category": "process",
+  "body": "Python 3.11, formatted with ruff. Scripts use uv for dependencies and carry a short module docstring that explains what they do."
+ },
+ {
+  "title": "Git workflow",
+  "summary": "Branches and reviews",
+  "category": "process",
+  "body": "Trunk-based. Small pull requests, one approving review, squash merge. Branch names start with the ticket id."
+ },
+ {
+  "title": "CI pipelines",
+  "summary": "GitHub Actions workflows",
+  "category": "process",
+  "body": "Both kestrel/web and kestrel/pay-svc have a ci.yml that runs lint and tests on every pull request. Required checks block the merge button."
+ },
+ {
+  "title": "Test data",
+  "summary": "Dev databases",
+  "category": "process",
+  "body": "Developers seed local databases with seed_dev.sql. Once a week an anonymised dump of shop_prod is produced for staging."
+ },
+ {
+  "title": "Dev environment",
+  "summary": "Local setup",
+  "category": "process",
+  "body": "The kestrel/dev-env repo has a docker compose file: the web app on port 3000, Postgres on 5433 and a Typesense container. Run make up and you are ready."
+ },
+ {
+  "title": "Onboarding",
+  "summary": "First week plan",
+  "category": "process",
+  "body": "Day one is accounts and hardware, day two the dev environment, and by Friday a first small pull request should be merged."
+ },
+ {
+  "title": "Utrecht coworking",
+  "summary": "Office space",
+  "category": "environment",
+  "body": "The team rents desks in a coworking space at Oudegracht 120 in Utrecht. Desks are booked through Deskbird and the wifi password is on the kitchen wall."
+ },
+ {
+  "title": "Holiday policy",
+  "summary": "Vacation days",
+  "category": "process",
+  "body": "Full-time staff get 25 days a year plus public holidays. Requests above two weeks need agreement from the team lead."
+ },
+ {
+  "title": "Expense policy",
+  "summary": "Reimbursing costs",
+  "category": "process",
+  "body": "Spend through Pleo wherever possible. Receipts are photographed in the app the same day; unreceipted items are not reimbursed."
+ },
+ {
+  "title": "Company cards",
+  "summary": "Pleo cards",
+  "category": "process",
+  "body": "Every employee can get a Pleo card with a monthly limit of 500 EUR. Limits for buyers are higher and are set by Lena."
+ },
+ {
+  "title": "Accountant",
+  "summary": "External bookkeeping",
+  "category": "process",
+  "body": "Eva at Boekhouder BV does the books and the annual accounts. Sales invoices are issued from Moneybird."
+ },
+ {
+  "title": "VAT handling",
+  "summary": "Cross-border VAT",
+  "category": "process",
+  "body": "Sales to other EU countries are declared through the OSS scheme, filed quarterly by the accountant."
+ },
+ {
+  "title": "Moneybird integration",
+  "summary": "Invoicing API",
+  "category": "projects",
+  "body": "A monthly job syncs Mollie payouts into Moneybird. The API token is stored in Vault at kv/finance and rotated yearly."
+ },
+ {
+  "title": "Mollie payouts",
+  "summary": "Settlement of card payments",
+  "category": "environment",
+  "body": "Mollie pays out daily to the business account and charges about 1.8 percent per card transaction. The payout report is exported for finance every month."
+ },
+ {
+  "title": "Shipping rates",
+  "summary": "Delivery prices",
+  "category": "process",
+  "body": "DHL parcel delivery within the Netherlands costs 6.95 EUR; orders over 150 EUR ship free. Bulky frames use a pallet service quoted per order."
+ },
+ {
+  "title": "Recommendation API",
+  "summary": "Serving endpoint",
+  "category": "projects",
+  "body": "rec-api answers /v1/recs?item= with a p95 of about 40 ms. It loads the newest model artifact at startup and runs as the Fly app kestrel-rec."
+ },
+ {
+  "title": "A/B testing",
+  "summary": "Experiment platform",
+  "category": "environment",
+  "body": "Experiments run on GrowthBook at ab.kestrelbikes.shop. Users are assigned by a hash of their anonymous id so assignment is stable across devices."
+ },
+ {
+  "title": "Experiment log: recommender v2",
+  "summary": "Result of the first test",
+  "category": "history",
+  "body": "The v2 recommender raised add-to-cart by four percent over two weeks of testing, with no change in return rate. We shipped it to everyone afterwards."
+ },
+ {
+  "title": "Typesense search",
+  "summary": "Product search engine",
+  "category": "environment",
+  "body": "Typesense at search.internal holds one collection, products. Synonyms such as gravel/cx live in synonyms.json and are loaded on deploy."
+ },
+ {
+  "title": "Search sync",
+  "summary": "Keeping search current",
+  "category": "projects",
+  "body": "sync_search.py reads changed rows from shop_prod every five minutes and upserts them into the products collection. Deleted bikes are removed on the same run."
+ },
+ {
+  "title": "Monitoring",
+  "summary": "Metrics and uptime",
+  "category": "environment",
+  "body": "Grafana Cloud holds the dashboards and Better Stack watches uptime from three regions. Alerts post to #alerts."
+ },
+ {
+  "title": "Alert rules",
+  "summary": "What pages a human",
+  "category": "process",
+  "body": "A checkout error rate above 2 percent for five minutes pages the on-call. Everything else posts to #alerts and waits for office hours."
+ },
+ {
+  "title": "Status page",
+  "summary": "Public status",
+  "category": "environment",
+  "body": "status.kestrelbikes.shop is a Better Stack page. Incidents are posted by whoever is on call within fifteen minutes."
+ },
+ {
+  "title": "Postmortem template",
+  "summary": "Blameless review format",
+  "category": "process",
+  "body": "Postmortems have four sections: timeline, impact, causes and follow-ups. They are written within three days and discussed in the Monday meeting."
+ }
+]

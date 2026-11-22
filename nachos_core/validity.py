@@ -406,8 +406,10 @@ def format_put_result(
     applied_supersedes: list[str],
     similar: list[dict[str, Any]],
     possible_updates: list[dict[str, Any]],
+    suggested_links: list[dict[str, Any]] | None = None,
+    broken_links: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Assemble the ``MemoryService.put`` response dict with duplicate/update hints."""
+    """Assemble the ``MemoryService.put`` response dict with duplicate/update/link hints."""
     result: dict[str, Any] = {
         "stored": key,
         "title": title,
@@ -433,6 +435,10 @@ def format_put_result(
             "the content into one entry (put with the existing title) and "
             "remove the other."
         )
+    if suggested_links:
+        result["suggested_links"] = suggested_links
+    if broken_links:
+        result["broken_links"] = broken_links
     return result
 
 

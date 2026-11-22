@@ -46,8 +46,18 @@ from .chunking import (
     embed_text,
 )
 from .embeddings import DOCUMENT, QUERY, Embedder
+from .graph import ScopeGraph
 from .index import MemoryIndex
 from .lexical import LexicalIndex
+from .linked import (
+    attach_related,
+    entity_matches,
+    entity_rows,
+    link_fields,
+    link_hints,
+    link_report,
+    merged_link_counts,
+)
 from .provenance import MANUAL, MAX_QUOTE_CHARS, source_view
 from .quality import low_signal_reason
 from .ranking import (
@@ -66,6 +76,7 @@ from .ranking import (
 from .reindex import DEFAULT_BUDGET_S, embed_stale, finish, scope_models
 from .store.base import Entry, EntryMeta, MemoryStore
 from .store.md_store import slugify
+from .support import refresh_after_put, same_content, snapshot
 from .validity import (
     RECENCY_MIN_GAP_SECONDS,
     RECENCY_TIE_EPS,
@@ -160,6 +171,8 @@ class MemoryService:
         rerank_mode: str = DEFAULT_BLEND,
         reindex_budget_s: float = DEFAULT_BUDGET_S,
         rerank_borderline: bool = False,
+        related_per_hit: int = 3,
+        related_max: int = 8,
     ):
         if PROFILE not in scopes:
             raise ValueError("a 'profile' scope is required")
@@ -182,6 +195,20 @@ class MemoryService:
         self.rerank_mode = rerank_mode
         #: When True (rerank="borderline"), skip full reranking and only verify borderline queries.
         self.rerank_borderline = rerank_borderline
+        #: ``related`` entries attached to each result (0 disables), and over the whole result list.
+        self.related_per_hit = related_per_hit
+        self.related_max = related_max
+        self._graphs = {
+            name: ScopeGraph(
+                name,
+                s.store,
+                s.index,
+                lambda s=s: self._scope_meta(s),  # type: ignore[misc]
+                lambda s=s: self._titles(s),  # type: ignore[misc]
+                lambda s=s: self._lexical_index(s),  # type: ignore[misc]
+            )
+            for name, s in scopes.items()
+        }
         self._rerank_error: str | None = None
         #: Seconds one recall or write may spend advancing a bulk re-embed (see ``reindex``).
         self.reindex_budget_s = reindex_budget_s
@@ -202,6 +229,7 @@ class MemoryService:
     def close(self) -> None:
         self._lexical_cache.clear()
         self._meta_cache.clear()
+        self._graphs.clear()
         for scope in self.scopes.values():
             scope.close()
         if self.embedder is not None:
@@ -370,6 +398,7 @@ class MemoryService:
             source = source_view(self._provenance(s, [key]).get(key), evidence=True)
             if source:
                 payload["source"] = source
+            payload.update(link_fields(self._graphs[s.name], key))
             return payload
         return None
 
@@ -380,6 +409,9 @@ class MemoryService:
         except Exception as e:  # provenance is advisory; never break a read
             logger.debug("Nachos provenance read failed: %s", e)
             return {}
+
+    def _titles(self, s: Scope) -> dict[str, str]:
+        return {key: doc.title for key, doc in self._lexical_index(s).docs.items()}
 
     def _invalidate_lexical(self, scope_name: str) -> None:
         self._lexical_cache.pop(scope_name, None)
@@ -395,38 +427,6 @@ class MemoryService:
         if fp is not None:
             self._meta_cache[scope.name] = (fp, metas)
         return metas
-
-    def _update_lexical_after_put(
-        self,
-        scope: Scope,
-        fp_before: object,
-        key: str,
-        *,
-        title: str,
-        summary: str,
-        category: str,
-    ) -> None:
-        cached = self._lexical_cache.get(scope.name)
-        meta_cached = self._meta_cache.get(scope.name)
-        if fp_before is None or cached is None or cached[0] != fp_before or "\n" in summary:
-            self._invalidate_lexical(scope.name)
-            return
-        stored_body = scope.store.get(key)
-        fp_after = scope.store.fingerprint()
-        if stored_body is None or fp_after is None:
-            self._invalidate_lexical(scope.name)
-            return
-        cached[1].upsert(key, title=title, summary=summary, category=category, body=stored_body)
-        self._lexical_cache[scope.name] = (fp_after, cached[1])
-        if meta_cached is not None and meta_cached[0] == fp_before:
-            new_meta = scope.store.get_meta(key)
-            if new_meta is not None:
-                meta_cached[1][key] = new_meta
-                self._meta_cache[scope.name] = (fp_after, meta_cached[1])
-            else:
-                self._meta_cache.pop(scope.name, None)
-        else:
-            self._meta_cache.pop(scope.name, None)
 
     def _lexical_index(self, scope: Scope) -> LexicalIndex:
         fp = scope.store.fingerprint()
@@ -469,9 +469,16 @@ class MemoryService:
         limit: int = 10,
         scope: str | None = None,
         include_superseded: bool = False,
+        entity: str | None = None,
     ) -> list[dict[str, Any]]:
+        """Hybrid recall; ``entity`` keeps only entries that mention it (query may be empty)."""
         results, _query_list, _stats, _chunks = self._run_search(
-            query, queries=queries, limit=limit, scope=scope, include_superseded=include_superseded
+            query,
+            queries=queries,
+            limit=limit,
+            scope=scope,
+            include_superseded=include_superseded,
+            entity=entity,
         )
         return results
 
@@ -483,17 +490,36 @@ class MemoryService:
         limit: int = 10,
         scope: str | None = None,
         include_superseded: bool = False,
+        entity: str | None = None,
         mode: str = "on",
     ) -> dict[str, Any]:
         """Search and attach a per-query confidence assessment + explicit abstention signal."""
+        entity_clean = (entity or "").strip()
         results, query_list, stats, chunks = self._run_search(
             query,
             queries=queries,
             limit=limit,
             scope=scope,
             include_superseded=include_superseded,
+            entity=entity_clean or None,
             collect_stats=True,
         )
+        if not query_list and entity_clean:
+            confident = bool(results)
+            payload: dict[str, Any] = {
+                "query": "",
+                "entity": entity_clean,
+                "confident": confident,
+                "confidence": "high" if confident else "none",
+                "confidence_score": 1.0 if confident else 0.0,
+                "signals": {"entity": entity_clean},
+                "count": len(results),
+                "results": results,
+            }
+            if not confident:
+                payload["no_confident_match"] = True
+                payload["note"] = "No matching memory found."
+            return payload
         payload, error = build_confidence_response(
             query_list,
             results,
@@ -506,6 +532,8 @@ class MemoryService:
             rerank_borderline=self.rerank_borderline and self._reranking(),
             mode=mode,
         )
+        if entity_clean:
+            payload["entity"] = entity_clean
         if error is not None:
             self._rerank_error = error
         return payload
@@ -518,6 +546,7 @@ class MemoryService:
         limit: int = 10,
         scope: str | None = None,
         include_superseded: bool = False,
+        entity: str | None = None,
         collect_stats: bool = False,
     ) -> tuple[
         list[dict[str, Any]],
@@ -526,29 +555,46 @@ class MemoryService:
         dict[tuple[str, str], int],
     ]:
         query_list = normalize_queries(query, queries)
-        if not query_list:
-            return [], [], [], {}
+        entity_clean = (entity or "").strip()
         targets = self._scopes_for(scope)
+        allowed = (
+            entity_matches([self._graphs[t.name] for t in targets], entity_clean)
+            if entity_clean
+            else None
+        )
+        if not query_list:
+            if allowed is None:
+                return [], [], [], {}
+            rows = entity_rows(allowed, self._graphs, include_superseded=include_superseded)
+            hydrated = hydrate_ranked(rows[:limit], self.scopes, self._scope_meta, self._provenance)
+            return self._related(hydrated), [], [], {}
         qvecs = self._query_vectors(targets, query_list)
+        depth = limit if allowed is None else limit * 5
         fused, stats_list = fuse_multi_query(
             query_list,
             qvecs,
             targets,
             self._ranked_hits,
-            limit=limit,
+            limit=depth,
             include_superseded=include_superseded,
             collect_stats=collect_stats,
             rrf_k=_RRF_K,
         )
-
+        if allowed is not None:
+            fused = {k: v for k, v in fused.items() if k in allowed}
         reranking = self._reranking() and not self.rerank_borderline
         pool_limit = max(limit, self.rerank_candidates) if reranking else limit
         ranked = self._select_ranked(fused, limit=pool_limit, include_superseded=include_superseded)
         if reranking:
             ranked = self._rerank(query_list, ranked, limit)
         chunks = {pair: int(row.get("chunk", 0)) for pair, row in ranked}
-        results = hydrate_ranked(ranked, self.scopes, self._scope_meta, self._provenance)
+        results = self._related(
+            hydrate_ranked(ranked, self.scopes, self._scope_meta, self._provenance)
+        )
         return results, query_list, stats_list, chunks
+
+    def _related(self, results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return attach_related(results, self._graphs, self.related_per_hit, self.related_max)
 
     def _reranking(self) -> bool:
         embedder = self._active_embedder()
@@ -683,28 +729,6 @@ class MemoryService:
 
     # -- change log --------------------------------------------------------
 
-    @staticmethod
-    def _snapshot(scope: Scope, key: str) -> tuple[str, str, str, str] | None:
-        """(title, summary, category, body) for ``key``, or None if absent."""
-        body = scope.store.get(key)
-        if body is None:
-            return None
-        for k, title, summary, category in scope.store.list():
-            if k == key:
-                return title, summary, category, body
-        return None
-
-    @staticmethod
-    def _same(prev: tuple[str, str, str, str] | None, new: tuple[str, str, str, str]) -> bool:
-        if prev is None:
-            return False
-        if prev == new:
-            return True
-        # The flat-file store stores the summary as the first line of the body.
-        title, summary, category, body = new
-        led = summary + ("\n\n" + body if body else "")
-        return prev == (title, summary, category, led)
-
     def _log(
         self,
         scope: Scope,
@@ -740,11 +764,13 @@ class MemoryService:
         if change is None:
             return {"error": f"No change {change_id!r} in scope {scope!r}."}
         key = change["key"]
-        current = self._snapshot(target, key)
+        current = snapshot(target.store, key)
         cur_meta = target.store.get_meta(key)
         cur_superseded = cur_meta.superseded_by if cur_meta is not None else None
+        fp_before = target.store.fingerprint()
         restored = restore_from_change(target.store, target.index, change, current is not None)
         self._invalidate_lexical(target.name)
+        self._graphs[target.name].after_write(fp_before, key)
         self._log(target, key, "revert", current, prev_superseded_by=cur_superseded)
         return {
             "reverted": change["id"],
@@ -813,7 +839,7 @@ class MemoryService:
     def _apply_supersedes(self, scope: Scope, new_key: str, targets: list[str]) -> list[str]:
         applied: list[str] = []
         for old_key in targets:
-            prev = self._snapshot(scope, old_key)
+            prev = snapshot(scope.store, old_key)
             if prev is None:
                 continue
             old_meta = scope.store.get_meta(old_key)
@@ -863,10 +889,10 @@ class MemoryService:
                 vector = chunk_vectors[0] if chunk_vectors else None
         similar = self.find_similar(title, summary, exclude=(scope, key), vector=vector)
 
-        prev = self._snapshot(target, key)
+        prev = snapshot(target.store, key)
         prev_meta = target.store.get_meta(key)
-        draft_tuple = (title, summary, category, body)
-        if not self._same(prev, draft_tuple):
+        unchanged = prev is not None and same_content(prev, (title, summary, category, body))
+        if not unchanged:
             self._log(
                 target,
                 key,
@@ -876,16 +902,24 @@ class MemoryService:
             )
         fp_before = target.store.fingerprint()
         target.store.put(key, title=title, summary=summary, category=category, body=body)
-        self._update_lexical_after_put(
-            target, fp_before, key, title=title, summary=summary, category=category
-        )
+        if not refresh_after_put(
+            self._lexical_cache,
+            self._meta_cache,
+            target.store,
+            scope,
+            fp_before,
+            key,
+            title=title,
+            summary=summary,
+            category=category,
+        ):
+            self._invalidate_lexical(scope)
+        self._graphs[scope].after_write(fp_before, key, summary)
         embedder = self._active_embedder()
         if chunk_vectors is not None and embedder is not None:
             target.index.upsert_chunks(key, chunks, embedder.model_id, chunk_vectors)
         target.index.record_seen([key])
-        self._record_provenance(
-            target, key, provenance, unchanged=prev is not None and self._same(prev, draft_tuple)
-        )
+        self._record_provenance(target, key, provenance, unchanged=unchanged)
 
         applied = self._apply_supersedes(target, key, normalize_supersedes(supersedes, key))
         base_update_threshold = max(0.45, self.duplicate_threshold - 0.17)
@@ -924,6 +958,16 @@ class MemoryService:
             applied_supersedes=applied,
             similar=similar,
             possible_updates=possible,
+            **link_hints(
+                self._graphs[target.name],
+                key,
+                title,
+                summary,
+                body,
+                skip=set(applied),
+                vector=vector,
+                model_id=embedder.model_id if embedder is not None else None,
+            ),
         )
 
     def _record_provenance(
@@ -954,14 +998,30 @@ class MemoryService:
                     s,
                     key,
                     "remove",
-                    self._snapshot(s, key),
+                    snapshot(s.store, key),
                     prev_superseded_by=meta.superseded_by if meta else None,
                 )
+                fp_before = s.store.fingerprint()
                 s.store.remove(key)
                 self._invalidate_lexical(s.name)
                 s.index.delete(key)
+                self._graphs[s.name].after_write(fp_before, key)
                 return s.name
         return None
+
+    # -- links -------------------------------------------------------------
+
+    def link_counts(self) -> dict[str, int]:
+        """Linked-neighbour counts per active entry (only entries that have any)."""
+        return merged_link_counts(self._graphs)
+
+    def link_report(self, scope: str = PROFILE) -> dict[str, Any]:
+        """Broken links, orphan hubs and unlinked entries sharing entities (read-only, offline).
+
+        Computed straight from the store, so it works on a read-only index and ignores the
+        sidecar ``links`` table.
+        """
+        return link_report(self._graphs[scope])
 
     # -- hygiene -----------------------------------------------------------
 

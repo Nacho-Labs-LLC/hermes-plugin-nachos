@@ -40,6 +40,7 @@ DEFAULTS: dict[str, Any] = {
     "rerank_max_length": 0,
     "rerank_candidates": 25,
     "reindex_budget_ms": 250,
+    "related_per_hit": 3,
     "shared_store": "off",
     "shared_store_path": "",
     "redact_secrets": "on",
@@ -180,6 +181,12 @@ CONFIG_SCHEMA: list[dict[str, Any]] = [
         "re-embedding entries (milliseconds; at least one small batch always runs). Recall is "
         "lexical until every entry is re-embedded; `python -m nachos_hermes.models reindex` "
         "finishes it at once.",
+    },
+    {
+        "key": "related_per_hit",
+        "type": "int",
+        "description": "Linked entries (one hop, via [[key]] links) attached as `related` to each "
+        "recall result, at most 8 per query; 0 turns related expansion off.",
     },
     {
         "key": "shared_store",

@@ -42,6 +42,11 @@ _RECALL_PARAMS: dict[str, Any] = {
                 "call). Use with or instead of 'query'."
             ),
         },
+        "entity": {
+            "type": "string",
+            "description": "Only entries that mention this identifier, host, path, @handle "
+            "or name; with no query, lists them.",
+        },
         "limit": {"type": "integer", "description": "Max results for a query (default 10)."},
         "include_superseded": {
             "type": "boolean",
@@ -53,12 +58,14 @@ _RECALL_PARAMS: dict[str, Any] = {
 _RECALL_BASE_DESC = (
     "Pull full memory entry content on demand. Provide 'key' for an exact "
     "entry from the manifest (superseded entries still return their content "
-    "plus a superseded_by pointer), or 'query' / 'queries' (up to 4 variants, "
-    "fused with RRF in one batched embedding call) to search: matches by keywords "
-    "and, when embeddings are enabled, by meaning, redirecting superseded hits "
-    "to their current successor unless include_superseded is true. Entries "
-    "saved with provenance carry a compact 'source' (session, date, ref); pass "
-    "its ref to nachos_history_search to reopen the original conversation. "
+    "plus a superseded_by pointer, links, backlinks and broken_links), or "
+    "'query' / 'queries' (up to 4 variants, fused with RRF in one batched "
+    "embedding call) / 'entity' to search: matches by keywords and, when "
+    "embeddings are enabled, by meaning, redirecting superseded hits to their "
+    "current successor unless include_superseded is true; query results may "
+    "carry `related` (linked entries one hop away). Entries saved with "
+    "provenance carry a compact 'source' (session, date, ref); pass its ref to "
+    "nachos_history_search to reopen the original conversation. "
 )
 
 RECALL_SCHEMA_HINT: dict[str, Any] = {
@@ -97,7 +104,10 @@ PUT_SCHEMA = {
         "up front when replacing an outdated entry so it stays archived out of "
         "default recall and the manifest. The response lists possible_duplicates "
         "and possible_updates; if one of possible_updates is an older version of "
-        "the same fact, call put again with supersedes=[key]. Secrets are "
+        "the same fact, call put again with supersedes=[key]. Link related entries by "
+        "writing [[key]] (or [[Entry Title]]) in the body; suggested_links lists entries "
+        "that share identifiers, hosts or names with the new one, and broken_links any "
+        "[[...]] that points nowhere. Secrets are "
         "redacted before storage."
     ),
     "parameters": {

@@ -160,6 +160,7 @@ class NachosMemoryProvider(MemoryProvider):
                 rerank_candidates=max(1, int(self._cfg["rerank_candidates"])),
                 reindex_budget_s=max(0, int(self._cfg["reindex_budget_ms"])) / 1000,
                 rerank_borderline=self._cfg["rerank"] == "borderline",
+                related_per_hit=max(0, int(self._cfg["related_per_hit"])),
             )
             service.session_id = self._session_id
             return service
@@ -272,7 +273,9 @@ class NachosMemoryProvider(MemoryProvider):
             "`nachos_memory_put` (pass `supersedes` with the old key when replacing "
             "an outdated fact; if the response lists a `possible_updates` entry "
             "that is an older version of the same fact, call `nachos_memory_put` "
-            "again with `supersedes=[key]`); recall with `nachos_memory_recall`"
+            "again with `supersedes=[key]`; `suggested_links` names entries sharing "
+            "entities with the new one, add `[[key]]` to the body to link them); "
+            "recall with `nachos_memory_recall`"
             f"{recall_hint}, remove with "
             "`nachos_memory_remove`. Never use the built-in `memory` tool with "
             '`target: "memory"`: it is disabled and not shown to you. Persona and '
@@ -298,6 +301,7 @@ class NachosMemoryProvider(MemoryProvider):
         try:
             entries = self._service.manifest_entries()
             hidden = self._service.superseded_count()
+            link_counts = self._service.link_counts()
         except Exception as e:
             logger.debug("Nachos manifest list failed: %s", e)
             return contract
@@ -307,6 +311,7 @@ class NachosMemoryProvider(MemoryProvider):
             entries,
             char_budget=self._cfg["manifest_char_budget"],
             superseded_count=hidden,
+            link_counts=link_counts,
         )
         return f"{contract}\n\n{manifest}" if manifest else contract
 
@@ -524,44 +529,58 @@ class NachosMemoryProvider(MemoryProvider):
 
     def _recall(self, service: MemoryService, args: dict[str, Any]) -> str:
         key = (args.get("key") or "").strip()
-        query = (args.get("query") or "").strip()
-        raw_queries = args.get("queries")
-        queries = [str(q) for q in raw_queries] if isinstance(raw_queries, list) else None
         scope = (args.get("scope") or "").strip() or None
         if key:
             entry = service.get_entry(key, scope)
             if entry is None:
                 return json.dumps({"error": f"No entry with key {key!r}"})
             return json.dumps(entry)
-        if query or (queries and any(q.strip() for q in queries)):
-            limit = clamp_int(args.get("limit"), 10, 1, 25)
-            include_superseded = bool(args.get("include_superseded", False))
-            abstain_mode = self._cfg.get("abstention", "hint")
-            if abstain_mode in ("hint", "on"):
-                payload = service.search_with_confidence(
-                    query,
-                    queries=queries,
-                    limit=limit,
-                    scope=scope,
-                    include_superseded=include_superseded,
-                    mode=abstain_mode,
-                )
-                return json.dumps(payload)
-            results = service.search(
+        query = (args.get("query") or "").strip()
+        raw_queries = args.get("queries")
+        queries = [str(q) for q in raw_queries] if isinstance(raw_queries, list) else None
+        entity = (args.get("entity") or "").strip()
+        if not (query or entity or (queries and any(q.strip() for q in queries))):
+            return json.dumps({"error": "Provide 'key', 'query', 'queries', or 'entity'."})
+        return json.dumps(self._recall_query(service, args, query, queries, entity, scope))
+
+    def _recall_query(
+        self,
+        service: MemoryService,
+        args: dict[str, Any],
+        query: str,
+        queries: list[str] | None,
+        entity: str,
+        scope: str | None,
+    ) -> dict[str, Any]:
+        limit = clamp_int(args.get("limit"), 10, 1, 25)
+        include_superseded = bool(args.get("include_superseded", False))
+        abstain_mode = self._cfg.get("abstention", "hint")
+        if abstain_mode in ("hint", "on"):
+            return service.search_with_confidence(
                 query,
                 queries=queries,
                 limit=limit,
                 scope=scope,
                 include_superseded=include_superseded,
+                entity=entity or None,
+                mode=abstain_mode,
             )
-            return json.dumps(
-                {
-                    "query": query or (queries[0].strip() if queries else ""),
-                    "count": len(results),
-                    "results": results,
-                }
-            )
-        return json.dumps({"error": "Provide 'key', 'query', or 'queries'."})
+        results = service.search(
+            query,
+            queries=queries,
+            limit=limit,
+            scope=scope,
+            include_superseded=include_superseded,
+            entity=entity or None,
+        )
+        out: dict[str, Any] = {
+            "query": query or (queries[0].strip() if queries else ""),
+            "count": len(results),
+            "results": results,
+        }
+        if entity:
+            out["entity"] = entity
+        return out
 
     def _put(self, service: MemoryService, args: dict[str, Any]) -> str:
         if not self._primary:
