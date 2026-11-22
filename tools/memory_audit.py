@@ -29,11 +29,12 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 from _common import default_store_path, open_service
 
 from nachos_core.embeddings import make_embedder
-from nachos_core.memory import PROFILE
+from nachos_core.memory import PROFILE, MemoryService
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -80,14 +81,14 @@ def _build_parser() -> argparse.ArgumentParser:
     return ap
 
 
-def _emit(args, payload: dict, lines: list[str]) -> None:
+def _emit(args: argparse.Namespace, payload: dict[str, Any], lines: list[str]) -> None:
     if args.json:
         print(json.dumps(payload, indent=2))
     else:
         print("\n".join(lines))
 
 
-def _cmd_duplicates(args, service) -> int:
+def _cmd_duplicates(args: argparse.Namespace, service: MemoryService) -> int:
     pairs = service.duplicate_pairs()
     lines = [f"Likely duplicates: {len(pairs)}"]
     lines += [
@@ -98,7 +99,7 @@ def _cmd_duplicates(args, service) -> int:
     return 0
 
 
-def _cmd_unused(args, service) -> int:
+def _cmd_unused(args: argparse.Namespace, service: MemoryService) -> int:
     rows = service.unused(args.days)
     lines = [f"Never recalled, first seen > {args.days:g} days ago: {len(rows)}"]
     lines += [f"  {r['age_days']:>6}d  {r['category']}/{r['key']}" for r in rows]
@@ -106,7 +107,7 @@ def _cmd_unused(args, service) -> int:
     return 0
 
 
-def _cmd_history(args, service) -> int:
+def _cmd_history(args: argparse.Namespace, service: MemoryService) -> int:
     rows = service.history(key=args.key, limit=args.limit)
     lines = [f"Recent changes: {len(rows)}"]
     lines += [
@@ -118,7 +119,7 @@ def _cmd_history(args, service) -> int:
     return 0
 
 
-def _cmd_revert(args, service) -> int:
+def _cmd_revert(args: argparse.Namespace, service: MemoryService) -> int:
     change = service.profile.index.get_change(args.id)
     if change is None:
         print(f"ERROR: no change {args.id}", file=sys.stderr)
@@ -139,7 +140,7 @@ def _cmd_revert(args, service) -> int:
     return 0
 
 
-def _cmd_remove_category(args, service) -> int:
+def _cmd_remove_category(args: argparse.Namespace, service: MemoryService) -> int:
     matches = [
         {"key": key, "title": title, "category": category}
         for key, title, _summary, category in service.profile.store.list()

@@ -30,9 +30,11 @@ import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 from _common import default_store_path, open_service
+
+from nachos_core.memory import MemoryService
 
 # Hermes' tools/memory_tool.py: ENTRY_DELIMITER, files under <home>/memories/.
 ENTRY_DELIMITER = "\n§\n"
@@ -181,8 +183,13 @@ def _collision_bucket(existing: str | None, body: str, overwrite: bool) -> str |
 
 
 def run_import(
-    service, items: list[Item], *, run: bool, overwrite: bool, category: str | None
-) -> dict[str, list]:
+    service: MemoryService,
+    items: list[Item],
+    *,
+    run: bool,
+    overwrite: bool,
+    category: str | None,
+) -> dict[str, list[Any]]:
     """Import ``items``; with ``run`` False nothing is written."""
     report: dict[str, list] = {
         "imported": [],

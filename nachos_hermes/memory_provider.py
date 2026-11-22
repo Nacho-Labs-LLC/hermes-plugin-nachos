@@ -51,6 +51,7 @@ except ModuleNotFoundError:  # pragma: no cover - exercised outside Hermes
         """Fallback base so the module stays importable outside Hermes."""
 
 
+from nachos_core.embeddings import Embedder
 from nachos_core.history import locate_quote, open_ref, parse_ref, prune_checkpoints, search_history
 from nachos_core.index import MemoryIndex, index_path_for
 from nachos_core.memory import PROFILE, SHARED, MemoryService, Scope
@@ -89,7 +90,7 @@ class NachosMemoryProvider(MemoryProvider):
 
     pre_compress_checkpoint_api_version = 2
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._service: MemoryService | None = None
         self._cfg: dict[str, Any] = dict(DEFAULTS)
         self._session_id = ""
@@ -108,14 +109,9 @@ class NachosMemoryProvider(MemoryProvider):
     def is_available(self) -> bool:
         return True  # local, always ready
 
-    @property
-    def _store(self):
-        """Profile store (kept for older callers)."""
-        return self._service.profile.store if self._service else None
-
     # -- lifecycle ---------------------------------------------------------
 
-    def initialize(self, session_id: str, **kwargs) -> None:
+    def initialize(self, session_id: str, **kwargs: Any) -> None:
         self._session_id = session_id or ""
         self._lineage = [self._session_id] if self._session_id else []
         self._primary = kwargs.get("agent_context", "primary") == "primary"
@@ -198,7 +194,7 @@ class NachosMemoryProvider(MemoryProvider):
         path = store_file(directory, self._cfg["store"])
         return Scope(name, get_store(self._cfg["store"], path), MemoryIndex(index_path_for(path)))
 
-    def _make_embedder(self):
+    def _make_embedder(self) -> Embedder | None:
         try:
             return make_embedder_from_config(self._cfg)
         except Exception as e:
@@ -452,7 +448,7 @@ class NachosMemoryProvider(MemoryProvider):
         parent_session_id: str = "",
         reset: bool = False,
         rewound: bool = False,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         """Track the logical conversation across session id rotations."""
         if not new_session_id:
@@ -474,7 +470,7 @@ class NachosMemoryProvider(MemoryProvider):
     # -- delegation --------------------------------------------------------
 
     def on_delegation(
-        self, task: str, result: str, *, child_session_id: str = "", **kwargs
+        self, task: str, result: str, *, child_session_id: str = "", **kwargs: Any
     ) -> None:
         """Record a finished subagent task/result so history search can find it. Never raises."""
         try:
@@ -510,7 +506,7 @@ class NachosMemoryProvider(MemoryProvider):
             schemas = [with_scope(s) for s in schemas]
         return [*schemas, HISTORY_SCHEMA, RECONCILE_SCHEMA]
 
-    def handle_tool_call(self, tool_name: str, args: dict[str, Any], **kwargs) -> str:
+    def handle_tool_call(self, tool_name: str, args: dict[str, Any], **kwargs: Any) -> str:
         if tool_name == "nachos_history_search":
             return self._history(args)
         service = self._service
@@ -677,7 +673,7 @@ class NachosMemoryProvider(MemoryProvider):
                 self._service.close()
 
 
-def register(ctx) -> None:
+def register(ctx: Any) -> None:
     provider = NachosMemoryProvider()
     ctx.register_memory_provider(provider)
     commands.register_commands(ctx, provider)
