@@ -71,6 +71,7 @@ class MDStore(MemoryStore):
     def __init__(self, path: str | os.PathLike[str]) -> None:
         self._path = Path(str(path))
         self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._generation: int = 0
 
     # -- parsing -----------------------------------------------------------
 
@@ -137,8 +138,17 @@ class MDStore(MemoryStore):
                 out.append("")
         text = "\n".join(out).rstrip() + "\n"
         self._path.write_text(text, encoding="utf-8")
+        self._generation += 1
 
     # -- interface ---------------------------------------------------------
+
+    def fingerprint(self) -> tuple[int, int, int, int, int]:
+        """Cheap change token combining in-process writes and file stat metadata."""
+        try:
+            st = self._path.stat()
+        except OSError:
+            return (self._generation, -1, -1, -1, -1)
+        return (self._generation, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
 
     def list(self) -> builtins.list[Entry]:
         records = self._read()

@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+- Per-scope in-memory lexical cache (tokenised/stemmed title, summary and body term sets, postings and document frequencies) validated via cheap store fingerprints (`stat` for flatfile, `PRAGMA data_version` + write counter for SQLite) and invalidated on all write paths, plus batched `record_hits` commits during search hydration.
+
 ## 0.6.0
 
 ### Added

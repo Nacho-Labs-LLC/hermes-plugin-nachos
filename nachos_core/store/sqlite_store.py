@@ -28,6 +28,7 @@ class SqliteStore(MemoryStore):
         # GIL for our tiny workloads.
         self._conn = sqlite3.connect(self._path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
+        self._generation: int = 0
         self._init_schema()
 
     def _init_schema(self) -> None:
@@ -76,6 +77,12 @@ class SqliteStore(MemoryStore):
         )
         return [r["key"] for r in cur.fetchall()]
 
+    def fingerprint(self) -> tuple[int, int, int]:
+        """Cheap change token combining in-process writes and SQLite's data_version."""
+        row = self._conn.execute("PRAGMA data_version").fetchone()
+        data_version = int(row[0]) if row else 0
+        return (self._generation, self._conn.total_changes, data_version)
+
     def put(
         self,
         key: str,
@@ -94,10 +101,12 @@ class SqliteStore(MemoryStore):
             (key, title, summary, category, body),
         )
         self._conn.commit()
+        self._generation += 1
 
     def remove(self, key: str) -> None:
         self._conn.execute("DELETE FROM entries WHERE key = ?", (key,))
         self._conn.commit()
+        self._generation += 1
 
     def close(self) -> None:
         with contextlib.suppress(Exception):

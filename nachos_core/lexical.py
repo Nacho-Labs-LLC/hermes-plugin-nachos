@@ -8,6 +8,8 @@ from __future__ import annotations
 import math
 import re
 from collections.abc import Iterable, Mapping
+from collections.abc import Set as AbstractSet
+from dataclasses import dataclass
 
 WORD_RE = re.compile(r"[a-z0-9][a-z0-9'_-]+")
 
@@ -102,7 +104,9 @@ def query_terms(query: str) -> tuple[set[str], list[str]]:
     return raw, sorted({stem(w) for w in raw})
 
 
-def idf_weights(terms: Iterable[str], doc_words: Mapping[str, set[str]]) -> dict[str, float]:
+def idf_weights(
+    terms: Iterable[str], doc_words: Mapping[str, AbstractSet[str]]
+) -> dict[str, float]:
     """Inverse-document-frequency weight for each term present in at least one document."""
     n_docs = len(doc_words) or 1
     weights: dict[str, float] = {}
@@ -114,11 +118,120 @@ def idf_weights(terms: Iterable[str], doc_words: Mapping[str, set[str]]) -> dict
 
 
 def score_document(
-    weights: Mapping[str, float], words: set[str], label: set[str], phrase_hit: bool
+    weights: Mapping[str, float],
+    words: AbstractSet[str],
+    label: AbstractSet[str],
+    phrase_hit: bool,
 ) -> float:
     """Weighted term hits (label hits count extra), plus a bonus for the whole phrase."""
-    score = sum(w for t, w in weights.items() if t in words)
-    score += sum(0.5 * w for t, w in weights.items() if t in label)
+    word_score = 0.0
+    label_score = 0.0
+    for t, w in weights.items():
+        if t in words:
+            word_score += w
+        if t in label:
+            label_score += 0.5 * w
+    score = word_score + label_score
     if score and phrase_hit:
         score += sum(weights.values())
     return score
+
+
+@dataclass(frozen=True)
+class DocumentTerms:
+    """Cached tokenised/stemmed term sets and lowercased text for one entry."""
+
+    title_words: frozenset[str]
+    summary_words: frozenset[str]
+    body_words: frozenset[str]
+    label_words: frozenset[str]
+    doc_words: frozenset[str]
+    haystack: str
+
+
+class LexicalIndex:
+    """In-memory per-scope lexical index: per-doc term sets, postings and doc frequencies."""
+
+    def __init__(
+        self,
+        docs: dict[str, DocumentTerms],
+        postings: dict[str, frozenset[str]],
+        doc_freq: dict[str, int],
+    ) -> None:
+        self.docs = docs
+        self.postings = postings
+        self.doc_freq = doc_freq
+
+    @classmethod
+    def build(
+        cls,
+        entries: Iterable[tuple[str, str, str, str]],
+        bodies: Mapping[str, str],
+    ) -> LexicalIndex:
+        docs: dict[str, DocumentTerms] = {}
+        postings_mut: dict[str, set[str]] = {}
+        for key, title, summary, _category in entries:
+            body = bodies.get(key) or ""
+            title_w = frozenset(tokens(title))
+            summary_w = frozenset(tokens(summary))
+            body_w = frozenset(tokens(body))
+            label_w = title_w | summary_w
+            doc_w = label_w | body_w
+            docs[key] = DocumentTerms(
+                title_words=title_w,
+                summary_words=summary_w,
+                body_words=body_w,
+                label_words=label_w,
+                doc_words=doc_w,
+                haystack=f"{title}\n{summary}\n{body}".lower(),
+            )
+            for term in doc_w:
+                postings_mut.setdefault(term, set()).add(key)
+        postings = {term: frozenset(keys) for term, keys in postings_mut.items()}
+        doc_freq = {term: len(keys) for term, keys in postings.items()}
+        return cls(docs, postings, doc_freq)
+
+    def idf(self, terms: Iterable[str]) -> dict[str, float]:
+        """Inverse-document-frequency weight for each term present in at least one document."""
+        n_docs = len(self.docs) or 1
+        weights: dict[str, float] = {}
+        for t in terms:
+            df = self.doc_freq.get(t, 0)
+            if df:
+                weights[t] = math.log(1 + n_docs / df)
+        return weights
+
+    def _matched_keys(
+        self,
+        weights: Mapping[str, float],
+        terms: list[str],
+        raw: set[str],
+        stripped: str,
+    ) -> set[str]:
+        matched: set[str] = set()
+        for t in weights:
+            matched.update(self.postings[t])
+        # Stemming only breaks literal substring matching for -ies -> -y plurals.
+        if not any(t.endswith("y") for t in weights):
+            return matched
+        probes = tuple(dict.fromkeys((*weights, *terms, *raw, stripped)))
+        return {k for k in matched if any(p in self.docs[k].haystack for p in probes)}
+
+    def search(self, query: str) -> list[str]:
+        """Rank matching document keys by IDF-weighted term overlap and phrase bonus."""
+        raw, terms = query_terms(query)
+        if not terms:
+            return []
+        weights = self.idf(terms)
+        if not weights:
+            return []
+        needle = query.lower()
+        matched = self._matched_keys(weights, terms, raw, needle.strip())
+        scored: list[tuple[float, str]] = []
+        for key in matched:
+            doc = self.docs[key]
+            score = score_document(weights, doc.doc_words, doc.label_words, needle in doc.haystack)
+            if score > 0:
+                scored.append((score, key))
+        scored.sort(key=lambda item: (-item[0], item[1]))
+        return [key for _score, key in scored]
