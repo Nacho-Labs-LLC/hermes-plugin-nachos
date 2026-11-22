@@ -90,6 +90,10 @@ max-complexity = 12
 "tests/test_import_memories.py" = ["E402"]
 "tests/test_memory_audit.py" = ["E402"]
 
+[tool.pytest.ini_options]
+# `bench` (the recall benchmark harness) sits at the repo root, outside the installed packages.
+pythonpath = ["."]
+
 [tool.vulture]
 paths = ["nachos_core", "nachos_hermes", "plugins/memory/nachos/__init__.py", "tools", ".vulture_allowlist.py"]
 min_confidence = 80
