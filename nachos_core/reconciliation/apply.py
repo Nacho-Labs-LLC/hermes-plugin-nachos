@@ -10,9 +10,11 @@ reference file edits stay with the primary session. Removal needs an explicit op
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from ..memory import PROFILE, MemoryService
+from ..store.md_store import slugify
 from .acquire import SourceSpec, read_current_sources
 from .boundary import AcquisitionError, SourceBoundary
 from .models import SCHEMAS, validate_document
@@ -20,6 +22,7 @@ from .validate import validate_plan_sources
 
 APPLY_SCHEMA = "nachos.reconciliation.apply.v1"
 _LINK_OPS = ("supersede", "unlink")
+_WIKILINK = re.compile(r"\[\[([^\[\]\n]+)\]\]")
 
 
 def _refusal(proposal_id: str, reason: str) -> dict[str, str]:
@@ -34,6 +37,12 @@ def _preflight(
     refusals: list[dict[str, str]] = []
     for approval in plan["approved"]:
         item = approval["proposal"]
+        edit_keys = [
+            c["before"]["key"]
+            for c in item["changes"]
+            if c["operation"] == "edit" and isinstance(c["before"], dict)
+        ]
+        survivor = edit_keys[0] if item.get("kind") == "merge" and edit_keys else ""
         for change in item["changes"]:
             reason = _check_change(service, change, allow_remove)
             if reason:
@@ -45,6 +54,7 @@ def _preflight(
                     "operation": change["operation"],
                     "key": change["before"]["key"] if isinstance(change["before"], dict) else "",
                     "change": change,
+                    "survivor": survivor if change["operation"] == "disable" else "",
                     "status": "planned",
                 }
             )
@@ -83,7 +93,42 @@ def _live_record_matches(
     return found is not None and found.sha256 == change["source_sha256"]
 
 
-def _perform(service: MemoryService, change: dict[str, Any]) -> dict[str, Any]:
+def _existing_provenance(service: MemoryService, key: str) -> dict[str, Any] | None:
+    try:
+        return service.scopes[PROFILE].index.get_provenance(key)
+    except Exception:
+        return None
+
+
+def _retarget_links(service: MemoryService, old_key: str, new_key: str) -> None:
+    """Rewrite active ``[[old_key]]`` wikilinks to ``[[new_key]]`` after a merge removes ``old_key``."""
+    scope = service.scopes[PROFILE]
+    entries = {k: (t, sm, cat) for k, t, sm, cat in scope.store.list()}
+    for ref_key, (title, summary, category) in entries.items():
+        if ref_key in (old_key, new_key):
+            continue
+        meta = scope.store.get_meta(ref_key)
+        if meta is not None and meta.superseded_by:
+            continue
+        body = scope.store.get(ref_key) or ""
+        updated = _WIKILINK.sub(
+            lambda m: f"[[{new_key}]]" if slugify(m.group(1).strip()) == old_key else m.group(0),
+            body,
+        )
+        if updated != body:
+            service.put(
+                title=title,
+                summary=summary,
+                category=category,
+                body=updated,
+                key=ref_key,
+                provenance=_existing_provenance(service, ref_key),
+            )
+
+
+def _perform(
+    service: MemoryService, change: dict[str, Any], *, survivor: str = ""
+) -> dict[str, Any]:
     op, before, after = change["operation"], change["before"], change["after"]
     key = before["key"]
     if op == "edit":
@@ -93,10 +138,18 @@ def _perform(service: MemoryService, change: dict[str, Any]) -> dict[str, Any]:
             summary=after["summary"],
             category=after["category"],
             key=key,
+            provenance=_existing_provenance(service, key),
         )
     if op == "disable":
+        old_prov = _existing_provenance(service, key) if survivor else None
         removed = service.remove(key, PROFILE)
-        return {"removed": removed} if removed else {"error": f"{key!r} not found"}
+        if not removed:
+            return {"error": f"{key!r} not found"}
+        if survivor:
+            if old_prov and _existing_provenance(service, survivor) is None:
+                service.scopes[PROFILE].index.set_provenance(survivor, **old_prov)
+            _retarget_links(service, key, survivor)
+        return {"removed": removed}
     if op == "supersede":
         return service.link_supersede(key, after["superseded_by"])
     return service.unlink_supersede(key, expect=after["superseded_by"])
@@ -159,7 +212,7 @@ def _execute(
         change = action["change"]
         if not _live_record_matches(boundary, spec, change):
             return _halt(actions, position, "source changed since validation")
-        result = _perform(service, change)
+        result = _perform(service, change, survivor=str(action.get("survivor") or ""))
         if "error" in result:
             return _halt(actions, position, str(result["error"]))
         action["status"] = "applied"
@@ -197,4 +250,4 @@ def _readback(service: MemoryService, change: dict[str, Any]) -> tuple[bool, boo
 
 
 def _public(action: dict[str, Any]) -> dict[str, Any]:
-    return {k: v for k, v in action.items() if k != "change"}
+    return {k: v for k, v in action.items() if k not in ("change", "survivor")}

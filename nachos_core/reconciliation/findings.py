@@ -21,6 +21,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
+from ..provenance import source_view
 from ..quality import (
     fact_change,
     flag_reason,
@@ -29,12 +30,14 @@ from ..quality import (
     qualifier_difference,
     temporal_progression,
 )
+from ..store.md_store import slugify
 from .hashing import file_sha256
 from .models import timestamp
 
 MAX_PROPOSALS = 200
 _SUMMARY_CHARS = 200
 _WORD = re.compile(r"\w+")
+_WIKILINK = re.compile(r"\[\[([^\[\]\n]+)\]\]")
 _RANK = {"high": 0, "medium": 1, "low": 2}
 
 Drafter = Callable[[dict[str, str], dict[str, str]], "dict[str, str] | None"]
@@ -48,6 +51,8 @@ class AuditSignals:
     suspicious_supersedes: list[dict[str, Any]] = field(default_factory=list)
     # key -> (updated_at or None, superseded_by or None)
     metas: Mapping[str, tuple[float | None, str | None]] = field(default_factory=dict)
+    broken_links: list[dict[str, Any]] = field(default_factory=list)
+    provenance: Mapping[str, dict[str, Any]] = field(default_factory=dict)
 
 
 @dataclass
@@ -115,6 +120,19 @@ class _Builder:
 
     def finding(self, kind: str, keys: list[str], rationale: str, claim: str) -> dict[str, Any]:
         ids = [self.by_key[k]["id"] for k in keys]
+        evidence = [_observation(ids, claim, "Raised by the offline audit; unverified.", self.at)]
+        for k in keys:
+            src = source_view(self.signals.provenance.get(k))
+            if src:
+                parts = [f"{field}={val}" for field, val in sorted(src.items())]
+                evidence.append(
+                    _observation(
+                        [self.by_key[k]["id"]],
+                        f"Recorded provenance for '{k}'.",
+                        "Source: " + ", ".join(parts),
+                        self.at,
+                    )
+                )
         return {
             "id": _digest_id("find", kind, *sorted(keys)),
             "type": kind,
@@ -123,9 +141,7 @@ class _Builder:
                 {"source_id": self.by_key[k]["id"], "text": _excerpt(self.record(k))} for k in keys
             ],
             "rationale": rationale,
-            "evidence": [
-                _observation(ids, claim, "Raised by the offline audit; unverified.", self.at)
-            ],
+            "evidence": evidence,
             "limitations": [
                 "Heuristic over stored text only; no usage or freshness evidence was consulted.",
                 "Confidence is a ranking aid, not evidence. Verify against full bodies.",
@@ -298,6 +314,32 @@ class _Builder:
             self.add(
                 "unlink", "medium", finding, [self.change(old, "unlink", {"superseded_by": new})]
             )
+        broken_by_key: dict[str, list[str]] = {}
+        for row in self.signals.broken_links:
+            src, target = str(row.get("key") or ""), str(row.get("target") or "")
+            if src in self.by_key and target and not self.superseded(src):
+                broken_by_key.setdefault(src, []).append(target)
+        for src in sorted(broken_by_key):
+            targets = sorted(set(broken_by_key[src]))
+            record = self.record(src)
+            fixed_body = _strip_broken_links(record["body"], set(targets))
+            finding = self.finding(
+                "unsupported",
+                [src],
+                f"'{src}' contains broken wikilink(s) to missing entry "
+                f"{', '.join(repr(t) for t in targets)}. Proposed: strip broken brackets "
+                "to plain text (reversible).",
+                f"Broken link target(s): {', '.join(targets)}.",
+            )
+            if fixed_body == record["body"]:
+                self.flag_only(finding)
+                continue
+            self.add(
+                "rewrite",
+                "medium",
+                finding,
+                [self.change(src, "edit", {**record, "body": fixed_body})],
+            )
 
     # -- quality -----------------------------------------------------------
 
@@ -337,6 +379,16 @@ class _Builder:
                 finding,
                 [self.change(key, "edit", {**record, "summary": summary})],
             )
+
+
+def _strip_broken_links(body: str, missing: set[str]) -> str:
+    """Replace ``[[target]]`` wikilinks whose slug is in ``missing`` with plain text ``target``."""
+
+    def _repl(match: re.Match[str]) -> str:
+        raw = match.group(1).strip()
+        return raw if slugify(raw) in missing else match.group(0)
+
+    return _WIKILINK.sub(_repl, body)
 
 
 def _merge(survivor: dict[str, str], other: dict[str, str]) -> dict[str, str]:

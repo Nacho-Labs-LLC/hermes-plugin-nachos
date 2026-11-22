@@ -43,8 +43,15 @@ def collect_signals(service: MemoryService) -> AuditSignals:
                 },
             )
     ordered = sorted(pairs.values(), key=lambda p: (-p["similarity"], p["a"]["key"], p["b"]["key"]))
+    keys = [key for key, *_rest in scope.store.list()]
+    try:
+        provenance = scope.index.get_provenance_many(keys)
+    except Exception:  # read-only / unmigrated index without provenance table
+        provenance = {}
     return AuditSignals(
         duplicate_pairs=ordered,
         suspicious_supersedes=service.suspicious_supersedes(),
         metas=metas,
+        broken_links=service.link_report().get("broken_links", []),
+        provenance=provenance,
     )

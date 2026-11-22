@@ -14,6 +14,8 @@ from nachos_core.capture import pending_jobs
 from nachos_core.index import MemoryIndex, index_path_for
 from nachos_core.memory import PROFILE, MemoryService, Scope
 from nachos_core.quality import flag_reason
+from nachos_core.reconciliation.findings import generate_findings
+from nachos_core.reconciliation.signals import collect_signals
 from nachos_core.store import MDStore, SqliteStore
 
 _CHECKS = (
@@ -24,6 +26,7 @@ _CHECKS = (
     "suspicious_supersedes",
     "provenance",
     "links",
+    "reconciliation",
     "inbox",
 )
 
@@ -48,6 +51,50 @@ def _links(service):
     return {"count": len(items), "items": items, **{f: len(report[f]) for _k, f in kinds}}
 
 
+def _reconciliation(service: MemoryService) -> dict[str, object]:
+    """Compact summary of deterministic reconciliation proposals (read-only, offline)."""
+    store = service.profile.store
+    sources = []
+    for key, title, summary, category in store.list():
+        body = store.get(key) or ""
+        sources.append(
+            {
+                "id": f"memory:{key}",
+                "kind": "memory_record",
+                "sha256": "0" * 64,
+                "before": {
+                    "key": key,
+                    "title": title,
+                    "summary": summary,
+                    "category": category,
+                    "body": body,
+                },
+            }
+        )
+    gen = generate_findings(
+        {"sources": sources},
+        collect_signals(service),
+        observed_at="1970-01-01T00:00:00+00:00",
+    )
+    by_kind: dict[str, int] = {}
+    items = []
+    for prop in gen.proposals:
+        kind = str(prop.get("kind", "other"))
+        by_kind[kind] = by_kind.get(kind, 0) + 1
+        keys = sorted(
+            {c["before"]["key"] for c in prop["changes"] if isinstance(c["before"], dict)}
+        )
+        items.append(
+            {"id": prop["id"], "kind": kind, "confidence": prop["confidence"], "keys": keys}
+        )
+    return {
+        "count": len(items),
+        "findings": len(gen.findings),
+        "by_kind": dict(sorted(by_kind.items())),
+        "items": items,
+    }
+
+
 def _store_check(name, service):
     """Checks that read only the store (no usage telemetry)."""
     if name == "summaries":
@@ -57,6 +104,8 @@ def _store_check(name, service):
         return {"count": len(pairs), "items": pairs, "matching": "lexical"}
     if name == "links":
         return _links(service)
+    if name == "reconciliation":
+        return _reconciliation(service)
     return None
 
 
