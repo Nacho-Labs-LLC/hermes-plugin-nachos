@@ -33,9 +33,11 @@ nachos = "nachos_hermes.memory_provider:register"
 dev = [
     "build==1.6.1",
     # Range (not a pin): catalog installs must stay compatible with Hermes' pytest 9;
-    # see tests/test_catalog_wrapper.py. CI pins pytest==8.4.2 explicitly.
-    "pytest>=8,<10",
-    "ruff==0.16.8",
+    # see tests/test_catalog_wrapper.py. >=9.0.3 is the tmpdir security fix (Dependabot
+    # #1); pytest 9.x needs Python >=3.10, which is where the dev tooling runs (see [tool.uv]).
+    # CI pins pytest==9.2.0 explicitly.
+    "pytest>=9.0.3,<10",
+    "ruff==0.17.4",
     "vulture==2.16",
     "radon==6.0.1",
     "xenon==0.9.3",
@@ -48,7 +50,7 @@ dev = [
 # so the default check stays dependency-light. After installing, run
 # `python -m playwright install chromium`. Keep the pin in sync with release-gate.yml.
 browser = [
-    "playwright==1.58.0",
+    "playwright==1.64.1",
 ]
 
 [tool.setuptools.packages.find]
