@@ -645,3 +645,115 @@ class TestFindSimilarEquivalence:
             assert incremental.docs == fresh.docs
         finally:
             svc.close()
+
+
+class TestMDStoreReadCache:
+    def test_hydrate_avoids_rereading_flatfile_per_result(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        svc = _make_service(tmp_path, kind="flatfile")
+        try:
+            for i in range(5):
+                svc.put(
+                    title=f"Cluster node {i}",
+                    summary=f"Nomad worker node {i} configuration",
+                    body=f"Nomad cluster worker node {i} runs container workloads.",
+                )
+
+            store = svc.profile.store
+            orig_parse = store._parse
+            parse_calls = 0
+
+            def _counting_parse(text: str):
+                nonlocal parse_calls
+                parse_calls += 1
+                return orig_parse(text)
+
+            monkeypatch.setattr(store, "_parse", _counting_parse)
+
+            # First search hydrates 5 results with at most 1 parse (cache may already be warm).
+            results = svc.search("nomad worker", limit=10)
+            assert len(results) == 5
+            assert parse_calls <= 1
+
+            # Subsequent searches hydrating all 5 results do zero re-parses.
+            parse_calls = 0
+            results_again = svc.search("nomad container", limit=10)
+            assert len(results_again) == 5
+            assert parse_calls == 0
+        finally:
+            svc.close()
+
+    def test_mdstore_parsed_cache_sees_external_edit(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        svc = _make_service(tmp_path, kind="flatfile")
+        md_path = tmp_path / PROFILE / "memory.md"
+        try:
+            svc.put(
+                title="Ingress proxy",
+                summary="Traefik reverse proxy setup",
+                body="Ingress routes HTTP traffic through Traefik edge routers.",
+            )
+            assert "Traefik" in (svc.profile.store.get("ingress-proxy") or "")
+            assert _keys(svc, "traefik") == ["ingress-proxy"]
+
+            # Externally edit the file on disk.
+            edited = (
+                "# general\n\n"
+                "## Ingress proxy\n"
+                "Envoy reverse proxy setup.\n\n"
+                "Ingress routes HTTP traffic through Envoy edge gateways.\n\n"
+                "## DNS zone\n"
+                "CoreDNS internal split-horizon resolver.\n"
+            )
+            md_path.write_text(edited, encoding="utf-8")
+            st = md_path.stat()
+            os.utime(md_path, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000))
+
+            # Both direct store reads and MemoryService.search see the external edit immediately.
+            assert "Envoy" in (svc.profile.store.get("ingress-proxy") or "")
+            assert "CoreDNS" in (svc.profile.store.get("dns-zone") or "")
+            assert _keys(svc, "traefik") == []
+            assert _keys(svc, "envoy") == ["ingress-proxy"]
+            assert _keys(svc, "coredns") == ["dns-zone"]
+
+            # Subsequent reads reuse the refreshed cache without re-parsing.
+            store = svc.profile.store
+            orig_parse = store._parse
+            parse_calls = 0
+
+            def _counting_parse(text: str):
+                nonlocal parse_calls
+                parse_calls += 1
+                return orig_parse(text)
+
+            monkeypatch.setattr(store, "_parse", _counting_parse)
+            assert "Envoy" in (store.get("ingress-proxy") or "")
+            assert "CoreDNS" in (store.get("dns-zone") or "")
+            assert parse_calls == 0
+        finally:
+            svc.close()
+
+    def test_mdstore_failed_put_does_not_corrupt_parsed_cache(self, tmp_path: Path) -> None:
+        svc = _make_service(tmp_path, kind="flatfile")
+        try:
+            svc.put(
+                title="Safe entry",
+                summary="Initial clean entry",
+                body="Original verified markdown entry body.",
+            )
+            assert svc.profile.store.get("safe-entry") is not None
+
+            with pytest.raises(ValueError, match="Markdown injection"):
+                svc.profile.store.put(
+                    "bad-entry",
+                    title="Bad entry",
+                    summary="Injected",
+                    category="general",
+                    body="# Injected header",
+                )
+            assert svc.profile.store.get("bad-entry") is None
+            assert svc.profile.store.get("safe-entry") is not None
+        finally:
+            svc.close()

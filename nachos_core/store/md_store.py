@@ -72,16 +72,13 @@ class MDStore(MemoryStore):
         self._path = Path(str(path))
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._generation: int = 0
+        self._parsed_cache: tuple[tuple[int, int, int, int, int], dict[str, _Record]] | None = None
 
     # -- parsing -----------------------------------------------------------
 
-    def _read(self) -> dict[str, _Record]:
-        """Parse the file into {key: _Record}. Missing file -> empty."""
+    @staticmethod
+    def _parse(text: str) -> dict[str, _Record]:
         records: dict[str, _Record] = {}
-        if not self._path.exists():
-            return records
-        text = self._path.read_text(encoding="utf-8")
-
         category = _DEFAULT_CATEGORY
         title: str | None = None
         body_lines: list[str] = []
@@ -118,6 +115,21 @@ class MDStore(MemoryStore):
         _flush()
         return records
 
+    def _read(self) -> dict[str, _Record]:
+        """Parse the file into {key: _Record}, cached by fingerprint. Missing file -> empty."""
+        fp = self.fingerprint()
+        if self._parsed_cache is not None and self._parsed_cache[0] == fp:
+            return self._parsed_cache[1]
+        if fp[1] == -1:
+            records: dict[str, _Record] = {}
+        else:
+            try:
+                records = self._parse(self._path.read_text(encoding="utf-8"))
+            except FileNotFoundError:
+                return {}
+        self._parsed_cache = (fp, records)
+        return records
+
     # -- serialization -----------------------------------------------------
 
     def _write(self, records: dict[str, _Record]) -> None:
@@ -139,6 +151,7 @@ class MDStore(MemoryStore):
         text = "\n".join(out).rstrip() + "\n"
         self._path.write_text(text, encoding="utf-8")
         self._generation += 1
+        self._parsed_cache = None
 
     # -- interface ---------------------------------------------------------
 
@@ -191,7 +204,7 @@ class MDStore(MemoryStore):
             raise ValueError("Markdown injection detected: newlines not allowed in category")
 
         body = (body or "").strip()
-        records = self._read()
+        records = dict(self._read())
         # summary is derived from the first body line on read; ensure the
         # body leads with the given summary so round-trips are stable.
         if summary and _first_line(body) != summary.strip():
@@ -211,7 +224,7 @@ class MDStore(MemoryStore):
         self._write(records)
 
     def remove(self, key: str) -> None:
-        records = self._read()
+        records = dict(self._read())
         if key in records:
             del records[key]
             self._write(records)
