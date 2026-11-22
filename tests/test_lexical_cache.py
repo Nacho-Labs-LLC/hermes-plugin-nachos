@@ -12,7 +12,14 @@ import pytest
 
 from bench import recall
 from nachos_core.index import MemoryIndex
-from nachos_core.lexical import idf_weights, query_terms, score_document, tokens
+from nachos_core.lexical import (
+    LexicalIndex,
+    idf_weights,
+    jaccard,
+    query_terms,
+    score_document,
+    tokens,
+)
 from nachos_core.memory import PROFILE, SHARED, MemoryService, Scope
 from nachos_core.store import Entry, MemoryStore, get_store
 
@@ -362,7 +369,8 @@ class TestCacheInvalidation:
                 scope=SHARED,
             )
             svc.search("ripgrep")
-            shared_index = svc._lexical_cache[SHARED][1]
+            profile_fp_before = svc._lexical_cache[PROFILE][0]
+            shared_entry_before = svc._lexical_cache[SHARED]
 
             svc.put(
                 title="Profile editor",
@@ -370,10 +378,11 @@ class TestCacheInvalidation:
                 body="Profile scope uses helix editor for quick edits.",
                 scope=PROFILE,
             )
-            assert PROFILE not in svc._lexical_cache
-            assert svc._lexical_cache[SHARED][1] is shared_index
+            assert svc._lexical_cache[PROFILE][0] != profile_fp_before
+            assert "profile-editor" in svc._lexical_cache[PROFILE][1].docs
+            assert svc._lexical_cache[SHARED] == shared_entry_before
             assert _keys(svc, "helix") == ["profile-editor"]
-            assert svc._lexical_cache[SHARED][1] is shared_index
+            assert svc._lexical_cache[SHARED][1] is shared_entry_before[1]
         finally:
             svc.close()
 
@@ -510,5 +519,129 @@ class TestTelemetryDurability:
             finally:
                 reader.close()
             assert actions == ["create", "update", "remove"]
+        finally:
+            svc.close()
+
+
+def _uncached_find_similar(
+    svc: MemoryService,
+    title: str,
+    summary: str,
+    *,
+    exclude: tuple[str, str] | None = None,
+    limit: int = 3,
+) -> list[dict[str, object]]:
+    """Reference implementation matching the pre-cache find_similar lexical scan."""
+    found: dict[tuple[str, str], dict[str, object]] = {}
+    label = f"{title} {summary}"
+    for s in svc.scopes.values():
+        for key, doc_title, doc_summary, _cat in s.store.list():
+            if (s.name, key) == exclude:
+                continue
+            score = jaccard(label, f"{doc_title} {doc_summary}")
+            if score >= 0.6:
+                found[(s.name, key)] = {
+                    "key": key,
+                    "scope": s.name,
+                    "title": doc_title,
+                    "similarity": round(score, 3),
+                    "match": "lexical",
+                }
+    return sorted(found.values(), key=lambda d: -float(d["similarity"]))[:limit]
+
+
+class TestFindSimilarEquivalence:
+    def test_find_similar_matches_uncached_over_full_bench_corpus(self, tmp_path: Path) -> None:
+        memories, _ = recall.load_dataset()
+        svc = recall.build_service(tmp_path, None)
+        try:
+            recall.load_memories(svc, memories)
+            for mem in memories:
+                key = svc.prepare(
+                    title=mem["title"],
+                    summary=mem["summary"],
+                    body=mem["body"],
+                    category=mem["category"],
+                ).key
+                for exclude in ((PROFILE, key), None):
+                    expected = _uncached_find_similar(
+                        svc, mem["title"], mem["summary"], exclude=exclude
+                    )
+                    actual = svc.find_similar(mem["title"], mem["summary"], exclude=exclude)
+                    assert actual == expected, (key, exclude)
+
+            # Perturbed probes: drop/add words, empty/stopword labels, non-matching labels.
+            probes = [
+                ("the and of", "to in for"),
+                ("Staging deploy checklist", "Staging deploy checklist for production rollouts"),
+                ("Completely unrelated zzyzx", "Nothing in the corpus shares qqqxv terms"),
+            ]
+            for title, summary in probes:
+                assert svc.find_similar(title, summary) == _uncached_find_similar(
+                    svc, title, summary
+                )
+        finally:
+            svc.close()
+
+    def test_find_similar_ties_and_multi_scope_match_uncached(self, tmp_path: Path) -> None:
+        svc = _make_service(tmp_path, shared=True)
+        try:
+            svc.put(
+                title="Alpha deploy",
+                summary="Kubernetes blue green rollout guide",
+                body="Detailed alpha kubernetes blue green rollout guide.",
+                category="ops",
+                scope=PROFILE,
+            )
+            svc.put(
+                title="Beta deploy",
+                summary="Kubernetes blue green rollout guide",
+                body="Detailed beta kubernetes blue green rollout guide.",
+                category="ops",
+                scope=PROFILE,
+            )
+            svc.put(
+                title="Gamma deploy",
+                summary="Kubernetes blue green rollout guide",
+                body="Detailed gamma kubernetes blue green rollout guide.",
+                category="ops",
+                scope=SHARED,
+            )
+            expected = _uncached_find_similar(
+                svc, "Delta deploy", "Kubernetes blue green rollout guide"
+            )
+            actual = svc.find_similar("Delta deploy", "Kubernetes blue green rollout guide")
+            assert actual == expected
+            assert len(actual) == 3
+        finally:
+            svc.close()
+
+    @pytest.mark.parametrize("kind", ["sqlite", "flatfile"])
+    def test_incremental_upsert_matches_fresh_index(self, tmp_path: Path, kind: str) -> None:
+        svc = _make_service(tmp_path, kind=kind)
+        try:
+            svc.put(
+                title="Cache design",
+                summary="In-memory inverted index for lexical recall",
+                body="Inverted postings keep lexical lookup fast across thousands of memories.",
+            )
+            svc.put(
+                title="Queue tuning",
+                summary="Worker concurrency settings",
+                body="Workers pull jobs from Redis streams with bounded prefetch.",
+            )
+            # Update an existing entry so old tokens are removed and new ones inserted.
+            svc.put(
+                title="Queue tuning",
+                summary="Kafka consumer lag targets",
+                body="Consumers read events from Kafka partitions with manual offset commits.",
+            )
+
+            incremental = svc._lexical_cache[PROFILE][1]
+            fresh = LexicalIndex.build(svc.profile.store.list(), svc.profile.store.bodies())
+            assert incremental.doc_freq == fresh.doc_freq
+            assert incremental.postings == fresh.postings
+            assert incremental.label_postings == fresh.label_postings
+            assert incremental.docs == fresh.docs
         finally:
             svc.close()

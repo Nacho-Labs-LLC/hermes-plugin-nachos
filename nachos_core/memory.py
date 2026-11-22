@@ -203,6 +203,28 @@ class MemoryService:
     def _invalidate_lexical(self, scope_name: str) -> None:
         self._lexical_cache.pop(scope_name, None)
 
+    def _update_lexical_after_put(
+        self,
+        scope: Scope,
+        fp_before: object,
+        key: str,
+        *,
+        title: str,
+        summary: str,
+        category: str,
+    ) -> None:
+        cached = self._lexical_cache.get(scope.name)
+        if fp_before is None or cached is None or cached[0] != fp_before or "\n" in summary:
+            self._invalidate_lexical(scope.name)
+            return
+        stored_body = scope.store.get(key)
+        fp_after = scope.store.fingerprint()
+        if stored_body is None or fp_after is None:
+            self._invalidate_lexical(scope.name)
+            return
+        cached[1].upsert(key, title=title, summary=summary, category=category, body=stored_body)
+        self._lexical_cache[scope.name] = (fp_after, cached[1])
+
     def _lexical_index(self, scope: Scope) -> LexicalIndex:
         fp = scope.store.fingerprint()
         if fp is not None:
@@ -304,19 +326,18 @@ class MemoryService:
         found: dict[tuple[str, str], dict[str, Any]] = {}
         label = f"{title} {summary}"
         for s in self.scopes.values():
-            titles = {k: (t, sm) for k, t, sm, _c in s.store.list()}
-            for key, (t, sm) in titles.items():
-                if (s.name, key) == exclude:
-                    continue
-                score = jaccard(label, f"{t} {sm}")
-                if score >= _LEXICAL_DUP_THRESHOLD:
-                    found[(s.name, key)] = {
-                        "key": key,
-                        "scope": s.name,
-                        "title": t,
-                        "similarity": round(score, 3),
-                        "match": "lexical",
-                    }
+            index = self._lexical_index(s)
+            excluded_key = exclude[1] if exclude and exclude[0] == s.name else None
+            for key, doc_title, score in index.similar_labels(
+                label, threshold=_LEXICAL_DUP_THRESHOLD, exclude=excluded_key
+            ):
+                found[(s.name, key)] = {
+                    "key": key,
+                    "scope": s.name,
+                    "title": doc_title,
+                    "similarity": round(score, 3),
+                    "match": "lexical",
+                }
             embedder = self._active_embedder()
             if vector is not None and embedder is not None:
                 for key, sim in s.index.search(vector, embedder.model_id, top_k=limit + 1):
@@ -324,10 +345,11 @@ class MemoryService:
                         continue
                     prev = found.get((s.name, key))
                     if prev is None or sim > prev["similarity"]:
+                        doc = index.docs.get(key)
                         found[(s.name, key)] = {
                             "key": key,
                             "scope": s.name,
-                            "title": titles.get(key, (key, ""))[0],
+                            "title": doc.title if doc is not None else key,
                             "similarity": round(sim, 3),
                             "match": "semantic",
                         }
@@ -557,8 +579,11 @@ class MemoryService:
         prev = self._snapshot(target, key)
         if not self._same(prev, (title, summary, category, body)):
             self._log(target, key, "update" if prev else "create", prev)
+        fp_before = target.store.fingerprint()
         target.store.put(key, title=title, summary=summary, category=category, body=body)
-        self._invalidate_lexical(target.name)
+        self._update_lexical_after_put(
+            target, fp_before, key, title=title, summary=summary, category=category
+        )
         embedder = self._active_embedder()
         if vector is not None and embedder is not None:
             target.index.upsert(key, text, embedder.model_id, vector)
