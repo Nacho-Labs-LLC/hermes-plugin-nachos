@@ -169,18 +169,26 @@ def build_service(directory: Path, embedder: Embedder | None) -> MemoryService:
 
 
 def load_memories(
-    svc: MemoryService, memories: list[dict[str, Any]], *, direct: bool = False
+    svc: MemoryService,
+    memories: list[dict[str, Any]],
+    *,
+    direct: bool = False,
+    apply_supersedes: bool = True,
 ) -> None:
     if direct:
         store = svc.profile.store
         for mem in memories:
+            key = slugify(mem["title"])
             store.put(
-                slugify(mem["title"]),
+                key,
                 title=mem["title"],
                 summary=mem["summary"],
                 category=mem["category"],
                 body=mem["body"],
             )
+            if apply_supersedes:
+                for old_key in mem.get("supersedes") or ():
+                    store.set_superseded_by(old_key, key)
         return
     for mem in memories:
         result = svc.put(
@@ -188,6 +196,7 @@ def load_memories(
             summary=mem["summary"],
             category=mem["category"],
             body=mem["body"],
+            supersedes=mem.get("supersedes") if apply_supersedes else None,
         )
         if "error" in result:
             raise ValueError(f"fixture entry {mem['title']!r} rejected: {result['error']}")
@@ -281,7 +290,12 @@ def run_backend(
         svc = build_service(Path(tmp), embedder)
         try:
             start = time.perf_counter()
-            load_memories(svc, memories, direct=bool(getattr(opts, "synthetic", 0)))
+            load_memories(
+                svc,
+                memories,
+                direct=bool(getattr(opts, "synthetic", 0)),
+                apply_supersedes=not bool(getattr(opts, "no_supersedes", False)),
+            )
             run["build_s"] = round(time.perf_counter() - start, 3)
             start = time.perf_counter()
             svc.sync_index(svc.profile)  # reconcile pass; ~0 when put() already embedded everything
@@ -392,6 +406,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--no-types",
         action="store_true",
         help="nachos backend: never send the query/document type (pre-0.7 behaviour)",
+    )
+    ap.add_argument(
+        "--no-supersedes",
+        action="store_true",
+        help="load fixture without applying supersedes links (measure timestamps alone)",
     )
     ap.add_argument(
         "--label", default="", help="name for this run in the report (default: backend)"

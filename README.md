@@ -82,8 +82,8 @@ Any OpenAI-compatible `/embeddings` endpoint works (Ollama above); for a hosted 
 
 | Name | Purpose |
 | --- | --- |
-| `nachos_memory_recall` | Fetch an entry by `key`, or search with `query` (`limit`). |
-| `nachos_memory_put` | Add or update an entry (`title`, `body`, optional `summary`, `category`); rejects low-signal text, lists `possible_duplicates`. |
+| `nachos_memory_recall` | Fetch an entry by `key` (returns a `superseded_by` note if superseded), or search with `query` (`limit`, optional `include_superseded`). |
+| `nachos_memory_put` | Add or update an entry (`title`, `body`, optional `summary`, `category`, `supersedes`); rejects low-signal text, lists `possible_duplicates` and `suggested_supersedes`. |
 | `nachos_memory_remove` | Delete an entry by `key` or `title`. |
 | `nachos_history_search` | Recover details compression removed from the current conversation, including subagent results (`query`, `scope`: `conversation` or `all`, `limit`). For past sessions use Hermes' `session_search`. |
 
@@ -95,8 +95,8 @@ With `shared_store: on`, recall, put and remove also take `scope: "shared"`; the
 | --- | --- |
 | `/nachos-memory-status` | Store, embedding backend, entries per scope, checkpoints, capture queue. |
 | `/nachos-memory-list` | Render the current manifest. |
-| `/nachos-memory-audit [days]` | Likely duplicates and entries not recalled in N days (default 30). |
-| `/nachos-memory-history [key]` | Recent memory changes (all scopes), each with a `scope:id` handle. |
+| `/nachos-memory-audit [days]` | Likely duplicates, entries not recalled in N days, and long-superseded entries (default 30). |
+| `/nachos-memory-history [key]` | Recent memory changes (create/update/supersede/remove/revert, all scopes), each with a `scope:id` handle. |
 | `/nachos-memory-revert <scope:id>` | Undo a change; a revert can itself be reverted. |
 | `/nachos-memory-inbox [show <id> \| approve <id\|all> \| reject <id\|all>]` | Review memories suggested from past sessions. |
 
@@ -113,7 +113,7 @@ command with explicit profile selection:
 
 ```bash
 /path/to/venv/bin/nachos-maintain --profile-home /absolute/path/to/profile --json all
-# Independently schedulable: inbox | summaries | duplicates | unused | all
+# Independently schedulable: inbox | summaries | duplicates | unused | superseded | all
 /path/to/venv/bin/nachos-maintain --profile-home /absolute/path/to/profile --days 90 unused
 ```
 

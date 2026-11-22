@@ -16,7 +16,7 @@ from nachos_core.memory import PROFILE, MemoryService, Scope
 from nachos_core.quality import flag_reason
 from nachos_core.store import MDStore, SqliteStore
 
-_CHECKS = ("summaries", "duplicates", "unused", "inbox")
+_CHECKS = ("summaries", "duplicates", "unused", "superseded", "inbox")
 
 
 def _summaries(store):
@@ -46,6 +46,9 @@ def _check(name, service, home, days, index_available):
             "days": days,
             "telemetry_available": index_available,
         }
+    if name == "superseded":
+        rows = service.superseded(days)
+        return {"count": len(rows), "items": rows, "days": days}
     inbox = home / "nachos" / "inbox"
     return {
         "pending_candidates": index.count_inbox() if index_available else None,
@@ -86,7 +89,11 @@ def _report(args):
     _validate_profile_paths(home, path, args.store)
     if not path.is_file():
         raise ValueError(f"no store at {path}")
-    store = SqliteStore(path, read_only=True) if args.store == "sqlite" else MDStore(path)
+    store = (
+        SqliteStore(path, read_only=True)
+        if args.store == "sqlite"
+        else MDStore(path, read_only=True)
+    )
     index_path = index_path_for(path)
     try:
         index = (

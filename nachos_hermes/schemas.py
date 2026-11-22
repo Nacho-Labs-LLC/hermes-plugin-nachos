@@ -33,10 +33,11 @@ RECALL_SCHEMA = {
     "name": "nachos_memory_recall",
     "description": (
         "Pull full memory entry content on demand. Provide 'key' for an exact "
-        "entry from the manifest, or 'query' to search: matches by keywords and, "
-        "when embeddings are enabled, by meaning, so a paraphrase still finds the "
-        "entry. Use when the manifest shows a relevant entry or you suspect one "
-        "exists."
+        "entry from the manifest (superseded entries still return their content "
+        "plus a superseded_by pointer), or 'query' to search: matches by keywords "
+        "and, when embeddings are enabled, by meaning, excluding superseded entries "
+        "unless include_superseded is true. Use when the manifest shows a relevant "
+        "entry or you suspect one exists."
     ),
     "parameters": {
         "type": "object",
@@ -44,6 +45,10 @@ RECALL_SCHEMA = {
             "key": {"type": "string", "description": "Exact entry key (slug of title)."},
             "query": {"type": "string", "description": "Natural-language or keyword search."},
             "limit": {"type": "integer", "description": "Max results for a query (default 10)."},
+            "include_superseded": {
+                "type": "boolean",
+                "description": "Include superseded entries in query results (default false).",
+            },
         },
     },
 }
@@ -55,9 +60,11 @@ PUT_SCHEMA = {
         "putting an existing title updates that entry. If summary is omitted it is "
         "taken from the first line of body, so write body summary-first. category "
         "groups the entry in the manifest. Low-signal body/summary (empty, "
-        "placeholder, too short) is rejected. The response lists "
-        "possible_duplicates when similar entries exist: merge rather than keep "
-        "near-copies. Secrets are redacted before storage."
+        "placeholder, too short) is rejected. Pass supersedes (key or list of keys) "
+        "when replacing an outdated entry so the old entry stays archived out of "
+        "default recall and the manifest. The response lists possible_duplicates "
+        "(and suggested_supersedes when it looks like an update). Secrets are "
+        "redacted before storage."
     ),
     "parameters": {
         "type": "object",
@@ -72,6 +79,14 @@ PUT_SCHEMA = {
                 "description": "Manifest group (e.g. 'project-x', 'user'). Default 'general'.",
             },
             "body": {"type": "string", "description": "Full entry content."},
+            "supersedes": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "Optional key or list of keys this entry replaces; marks old entries "
+                    "superseded without deleting them."
+                ),
+            },
         },
         "required": ["title", "body"],
     },

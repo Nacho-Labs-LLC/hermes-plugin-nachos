@@ -535,8 +535,9 @@ def _uncached_find_similar(
     found: dict[tuple[str, str], dict[str, object]] = {}
     label = f"{title} {summary}"
     for s in svc.scopes.values():
+        metas = s.store.all_meta()
         for key, doc_title, doc_summary, _cat in s.store.list():
-            if (s.name, key) == exclude:
+            if (s.name, key) == exclude or (metas.get(key) and metas[key].superseded_by):
                 continue
             score = jaccard(label, f"{doc_title} {doc_summary}")
             if score >= 0.6:

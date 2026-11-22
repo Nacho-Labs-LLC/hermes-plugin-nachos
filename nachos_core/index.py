@@ -172,6 +172,7 @@ class MemoryIndex:
         if read_only:
             self._conn, self._temp_dir = open_read_only_sqlite(path)
             self._chunked = "chunk_no" in self._table_columns("vectors")
+            self._has_prev_superseded = "prev_superseded_by" in self._table_columns("changes")
             return
         if self._path != ":memory:":
             Path(self._path).parent.mkdir(parents=True, exist_ok=True)
@@ -197,15 +198,16 @@ class MemoryIndex:
                 last_used    REAL
             );
             CREATE TABLE IF NOT EXISTS changes (
-                id            INTEGER PRIMARY KEY AUTOINCREMENT,
-                ts            REAL NOT NULL,
-                key           TEXT NOT NULL,
-                action        TEXT NOT NULL,
-                session_id    TEXT,
-                prev_title    TEXT,
-                prev_summary  TEXT,
-                prev_category TEXT,
-                prev_body     TEXT
+                id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts                 REAL NOT NULL,
+                key                TEXT NOT NULL,
+                action             TEXT NOT NULL,
+                session_id         TEXT,
+                prev_title         TEXT,
+                prev_summary       TEXT,
+                prev_category      TEXT,
+                prev_body          TEXT,
+                prev_superseded_by TEXT
             );
             CREATE INDEX IF NOT EXISTS changes_key ON changes (key);
             CREATE TABLE IF NOT EXISTS inbox (
@@ -224,10 +226,22 @@ class MemoryIndex:
         )
         self._conn.commit()
         self._migrate_vectors_table()
+        self._migrate_changes_table()
         self._chunked = True
+        self._has_prev_superseded = True
+
+    @property
+    def read_only(self) -> bool:
+        return self._read_only
 
     def _table_columns(self, table: str) -> set[str]:
         return {str(row[1]) for row in self._conn.execute(f"PRAGMA table_info({table})").fetchall()}
+
+    def _migrate_changes_table(self) -> None:
+        cols = self._table_columns("changes")
+        if cols and "prev_superseded_by" not in cols:
+            self._conn.execute("ALTER TABLE changes ADD COLUMN prev_superseded_by TEXT")
+            self._conn.commit()
 
     def _migrate_vectors_table(self) -> None:
         cols = self._table_columns("vectors")
@@ -445,6 +459,7 @@ class MemoryIndex:
         action: str,
         session_id: str = "",
         prev: tuple[str, str, str, str] | None = None,
+        prev_superseded_by: str | None = None,
     ) -> int:
         """Log a change. ``prev`` is (title, summary, category, body) as it was
         BEFORE the change, or None when the entry did not exist."""
@@ -454,8 +469,19 @@ class MemoryIndex:
         try:
             cur = self._conn.execute(
                 "INSERT INTO changes (ts, key, action, session_id, prev_title, "
-                "prev_summary, prev_category, prev_body) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (time.time(), key, action, session_id or "", title, summary, category, body),
+                "prev_summary, prev_category, prev_body, prev_superseded_by) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    time.time(),
+                    key,
+                    action,
+                    session_id or "",
+                    title,
+                    summary,
+                    category,
+                    body,
+                    prev_superseded_by,
+                ),
             )
             self._conn.commit()
         finally:
@@ -467,6 +493,10 @@ class MemoryIndex:
         return change_id
 
     _CHANGE_COLS = (
+        "id, ts, key, action, session_id, prev_title, prev_summary, "
+        "prev_category, prev_body, prev_superseded_by"
+    )
+    _LEGACY_CHANGE_COLS = (
         "id, ts, key, action, session_id, prev_title, prev_summary, prev_category, prev_body"
     )
 
@@ -482,12 +512,18 @@ class MemoryIndex:
             "prev_summary",
             "prev_category",
             "prev_body",
+            "prev_superseded_by",
         )
-        return dict(zip(names, row))
+        out = dict(zip(names, row))
+        out.setdefault("prev_superseded_by", None)
+        return out
+
+    def _change_cols(self) -> str:
+        return self._CHANGE_COLS if self._has_prev_superseded else self._LEGACY_CHANGE_COLS
 
     def changes(self, key: str | None = None, limit: int = 20) -> list[dict[str, Any]]:
         """Recent changes, newest first, optionally for one key."""
-        sql = f"SELECT {self._CHANGE_COLS} FROM changes"
+        sql = f"SELECT {self._change_cols()} FROM changes"
         params: list[str | int] = []
         if key is not None:
             sql += " WHERE key = ?"
@@ -498,10 +534,15 @@ class MemoryIndex:
 
     def get_change(self, change_id: int) -> dict[str, Any] | None:
         row = self._conn.execute(
-            f"SELECT {self._CHANGE_COLS} FROM changes WHERE id = ?",
+            f"SELECT {self._change_cols()} FROM changes WHERE id = ?",
             (change_id,),
         ).fetchone()
         return self._change_row(row) if row else None
+
+    def change_timestamps(self) -> dict[str, tuple[float, float]]:
+        """Return ``{key: (earliest_ts, latest_ts)}`` from the change log."""
+        rows = self._conn.execute("SELECT key, MIN(ts), MAX(ts) FROM changes GROUP BY key")
+        return {str(k): (float(mn), float(mx)) for k, mn, mx in rows if mn is not None}
 
     def count_changes(self) -> int:
         return int(self._conn.execute("SELECT COUNT(*) FROM changes").fetchone()[0])

@@ -92,3 +92,32 @@ def shares_vocabulary(summary: str, body: str, *, min_overlap: int = 1) -> bool:
     if not summary_words:
         return False
     return len(summary_words & body_words) >= min_overlap
+
+
+_UPDATE_CUES_RE = re.compile(
+    r"\b(?:now|no longer|moved to|moved from|replaced|migrated to|migrated from|"
+    r"switched to|retired|deprecated|cancelled|canceled|end of life|supersedes|"
+    r"instead of|formerly|updated to|changed to)\b",
+    re.IGNORECASE,
+)
+_FACT_NUMBER_RE = re.compile(r"\b(?:v?\d+(?:[.:-]\d+)+|\d{4}-\d{2}-\d{2}|\d+)\b")
+_FACT_PATH_RE = re.compile(r"(?:https?://[^\s,;)]+|(?:/[\w.-]+){2,}|[a-z0-9_.-]+/[a-z0-9_.-]+)")
+
+
+def _factual_tokens(text: str) -> set[str]:
+    lowered = (text or "").lower()
+    return set(_FACT_NUMBER_RE.findall(lowered)) | set(_FACT_PATH_RE.findall(lowered))
+
+
+def looks_like_update(old_text: str, new_text: str) -> bool:
+    """Deterministic heuristic: True when ``new_text`` reads like an update of ``old_text``.
+
+    Fires on explicit replacement wording ("now", "no longer", "moved to", "replaced", ...)
+    or changed numeric/date/version/path tokens between the two entries. Pure rephrasings
+    with identical factual tokens and no replacement cues return False.
+    """
+    if _UPDATE_CUES_RE.search(new_text or ""):
+        return True
+    old_facts = _factual_tokens(old_text)
+    new_facts = _factual_tokens(new_text)
+    return bool(old_facts and new_facts and old_facts != new_facts)

@@ -36,8 +36,13 @@ def status_text(
     lines.append(f"  embeddings  : {emb}")
     for name, s in status["scopes"].items():
         indexed = f", {s['indexed']} embedded" if service.embedder else ""
+        sup = f", {s['superseded']} superseded" if s.get("superseded") else ""
+        approx = (
+            f", {s['approx_timestamps']} approx timestamps" if s.get("approx_timestamps") else ""
+        )
         lines.append(
-            f"  {name:<11} : {s['entries']} entries{indexed}, {s['never_used']} never recalled"
+            f"  {name:<11} : {s['entries']} entries{indexed}{sup}, "
+            f"{s['never_used']} never recalled{approx}"
         )
     if checkpoint_root:
         cp = checkpoint_stats(checkpoint_root)
@@ -67,7 +72,7 @@ def changes_text(service: MemoryService | None, key: str = "") -> str:
         when = time.strftime("%m-%d %H:%M", time.localtime(r["ts"]))
         sess = f" [{r['session_id'][:8]}]" if r["session_id"] else ""
         prev = f" (was: {r['preview']})" if r["preview"] else ""
-        lines.append(f"  {r['scope']}:{r['id']} {when} {r['action']:<6} {r['key']}{sess}{prev}")
+        lines.append(f"  {r['scope']}:{r['id']} {when} {r['action']:<9} {r['key']}{sess}{prev}")
     return "\n".join(lines)
 
 
@@ -88,6 +93,7 @@ def audit_text(service: MemoryService | None, older_than_days: float = 30) -> st
         return UNAVAILABLE
     pairs = service.duplicate_pairs()
     unused = service.unused(older_than_days)
+    superseded = service.superseded(older_than_days)
     lines = [f"Likely duplicates: {len(pairs)}"]
     lines.extend(
         f"  {p['similarity']:.2f} {p['match']:<8} {p['a']['scope']}:{p['a']['key']}"
@@ -97,6 +103,14 @@ def audit_text(service: MemoryService | None, older_than_days: float = 30) -> st
     lines.append("")
     lines.append(f"Never recalled, first seen > {older_than_days:g} days ago: {len(unused)}")
     lines.extend(f"  {row['age_days']:>6}d  {row['scope']}:{row['key']}" for row in unused[:15])
+    lines.append("")
+    lines.append(
+        f"Superseded > {older_than_days:g} days ago (candidates for removal): {len(superseded)}"
+    )
+    lines.extend(
+        f"  {row['age_days']:>6}d  {row['scope']}:{row['key']}  ->  {row['superseded_by']}"
+        for row in superseded[:15]
+    )
     return "\n".join(lines)
 
 
