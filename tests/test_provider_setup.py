@@ -54,6 +54,9 @@ def test_setup_schema_describes_all_non_secret_provider_settings():
         "shared_store_path",
         "redact_secrets",
         "checkpoint_max_age_days",
+        "history_context_before",
+        "history_context_after",
+        "history_max_chars",
         "capture",
     }
     assert all("default" in field for field in schema)

@@ -16,7 +16,15 @@ from nachos_core.memory import PROFILE, MemoryService, Scope
 from nachos_core.quality import flag_reason
 from nachos_core.store import MDStore, SqliteStore
 
-_CHECKS = ("summaries", "duplicates", "unused", "superseded", "suspicious_supersedes", "inbox")
+_CHECKS = (
+    "summaries",
+    "duplicates",
+    "unused",
+    "superseded",
+    "suspicious_supersedes",
+    "provenance",
+    "inbox",
+)
 
 
 def _summaries(store):
@@ -31,6 +39,8 @@ def _summaries(store):
 def _check(name, service, home, days, index_available):
     if name == "summaries":
         return _summaries(service.profile.store)
+    if name == "provenance":
+        return _provenance(service, index_available)
     if name == "duplicates":
         pairs = service.duplicate_pairs(sync=False)
         return {"count": len(pairs), "items": pairs, "matching": "lexical"}
@@ -46,18 +56,29 @@ def _check(name, service, home, days, index_available):
             "days": days,
             "telemetry_available": index_available,
         }
-    if name == "superseded":
-        rows = service.superseded(days)
-        return {"count": len(rows), "items": rows, "days": days}
-    if name == "suspicious_supersedes":
-        rows = service.suspicious_supersedes()
-        return {"count": len(rows), "items": rows}
+    if name in ("superseded", "suspicious_supersedes"):
+        rows = service.superseded(days) if name == "superseded" else service.suspicious_supersedes()
+        return {
+            "count": len(rows),
+            "items": rows,
+            **({"days": days} if name == "superseded" else {}),
+        }
     inbox = home / "nachos" / "inbox"
     return {
         "pending_candidates": index.count_inbox() if index_available else None,
         "pending_jobs": len(pending_jobs(inbox)),
         "processing_jobs": len(list((inbox / "processing").glob("*.json.gz"))),
     }
+
+
+def _provenance(service, index_available):
+    """Entries without a recorded origin. Informational only: older entries never had one."""
+    if not index_available:
+        return {"count": 0, "items": [], "severity": "info", "available": False}
+    keys = [k for k, *_ in service.profile.store.list()]
+    have = service.profile.index.get_provenance_many(keys)
+    missing = [{"key": k} for k in keys if k not in have]
+    return {"count": len(missing), "items": missing, "severity": "info", "available": True}
 
 
 def _validate_profile_paths(home: Path, path: Path, store_kind: str) -> None:
@@ -133,7 +154,7 @@ def _human_report(report):
         if name == "inbox":
             lines.append(f"inbox: {json.dumps(result, sort_keys=True)}")
             continue
-        lines.append(f"{name}: {result['count']}")
+        lines.append(f"{name}: {result['count']}" + (" (info)" if name == "provenance" else ""))
         lines.extend("  " + json.dumps(item, sort_keys=True) for item in result["items"])
         if name == "unused":
             lines.append(f"  untracked keys: {json.dumps(result['untracked_keys'])}")

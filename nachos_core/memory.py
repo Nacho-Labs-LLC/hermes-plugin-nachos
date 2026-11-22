@@ -48,6 +48,7 @@ from .chunking import (
 from .embeddings import DOCUMENT, QUERY, Embedder
 from .index import MemoryIndex
 from .lexical import LexicalIndex
+from .provenance import MANUAL, MAX_QUOTE_CHARS, source_view
 from .quality import low_signal_reason
 from .ranking import (
     DEFAULT_BLEND,
@@ -302,8 +303,20 @@ class MemoryService:
             if body is None:
                 continue
             s.index.record_recall(key)
-            return entry_payload(key, s.name, body, s.store.get_meta(key) or EntryMeta())
+            payload = entry_payload(key, s.name, body, s.store.get_meta(key) or EntryMeta())
+            source = source_view(self._provenance(s, [key]).get(key), evidence=True)
+            if source:
+                payload["source"] = source
+            return payload
         return None
+
+    @staticmethod
+    def _provenance(scope: Scope, keys: list[str]) -> dict[str, dict[str, Any]]:
+        try:
+            return scope.index.get_provenance_many(keys)
+        except Exception as e:  # provenance is advisory; never break a read
+            logger.debug("Nachos provenance read failed: %s", e)
+            return {}
 
     def _invalidate_lexical(self, scope_name: str) -> None:
         self._lexical_cache.pop(scope_name, None)
@@ -487,7 +500,7 @@ class MemoryService:
         self, ranked: list[tuple[tuple[str, str], dict[str, Any]]]
     ) -> list[dict[str, Any]]:
         """Turn fused ranking rows into result dicts, recording a hit per returned entry."""
-        results = []
+        results: list[dict[str, Any]] = []
         hits_by_scope: dict[str, list[str]] = {}
         for (scope_name, key), row in ranked:
             s = self.scopes[scope_name]
@@ -495,7 +508,7 @@ class MemoryService:
             if body is None:
                 continue
             hits_by_scope.setdefault(scope_name, []).append(key)
-            result = {
+            result: dict[str, Any] = {
                 "key": key,
                 "scope": scope_name,
                 "body": body,
@@ -511,6 +524,11 @@ class MemoryService:
             results.append(result)
         for scope_name, keys in hits_by_scope.items():
             self.scopes[scope_name].index.record_hits(keys)
+        sources = {n: self._provenance(self.scopes[n], ks) for n, ks in hits_by_scope.items()}
+        for result in results:
+            source = source_view(sources.get(result["scope"], {}).get(result["key"]))
+            if source:
+                result["source"] = source
         return results
 
     # -- duplicates --------------------------------------------------------
@@ -725,7 +743,9 @@ class MemoryService:
         category: str = "general",
         scope: str = PROFILE,
         supersedes: str | list[str] | None = None,
+        provenance: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        """Save an entry. ``provenance`` (capture approvals) overrides the default manual record."""
         draft = self.prepare(
             title=title, body=body, summary=summary, category=category, scope=scope
         )
@@ -753,7 +773,8 @@ class MemoryService:
 
         prev = self._snapshot(target, key)
         prev_meta = target.store.get_meta(key)
-        if not self._same(prev, (title, summary, category, body)):
+        draft_tuple = (title, summary, category, body)
+        if not self._same(prev, draft_tuple):
             self._log(
                 target,
                 key,
@@ -770,6 +791,9 @@ class MemoryService:
         if chunk_vectors is not None and embedder is not None:
             target.index.upsert_chunks(key, chunks, embedder.model_id, chunk_vectors)
         target.index.record_seen([key])
+        self._record_provenance(
+            target, key, provenance, unchanged=prev is not None and self._same(prev, draft_tuple)
+        )
 
         applied = self._apply_supersedes(target, key, normalize_supersedes(supersedes, key))
         base_update_threshold = max(0.45, self.duplicate_threshold - 0.17)
@@ -809,6 +833,25 @@ class MemoryService:
             similar=similar,
             possible_updates=possible,
         )
+
+    def _record_provenance(
+        self, scope: Scope, key: str, provenance: dict[str, Any] | None, *, unchanged: bool
+    ) -> None:
+        """Store where ``key`` came from; never blocks a write.
+
+        A manual re-save of identical content keeps the existing record (it may hold a capture
+        quote); any other save replaces it, since the content it described has changed.
+        """
+        try:
+            if provenance is None:
+                if unchanged and scope.index.get_provenance(key) is not None:
+                    return
+                provenance = {"source": MANUAL, "session_id": self.session_id}
+            row = dict(provenance)
+            row["quote"] = self.redact(str(row.get("quote") or ""))[:MAX_QUOTE_CHARS]
+            scope.index.set_provenance(key, **row)
+        except Exception as e:
+            logger.warning("Nachos provenance write failed: %s", e)
 
     def remove(self, key: str, scope: str | None = None) -> str | None:
         """Remove ``key``; returns the scope it was removed from, or None."""

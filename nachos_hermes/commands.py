@@ -129,13 +129,20 @@ def _inbox_item(index, target: str) -> dict[str, Any] | None:
     return index.get_inbox(int(ident)) if ident.isdigit() else None
 
 
-def _inbox_hint(dups: list[dict[str, Any]]) -> str:
+def _inbox_hint(dups: list[dict[str, Any]], grounded: bool | None = True) -> str:
+    flag = " [ungrounded]" if grounded is False else ""
     if not dups:
-        return ""
+        return flag
     top = dups[0]
-    return (
+    note = (
         f" [updates {top['key']}]" if top.get("match") == "update" else f" [similar: {top['key']}]"
     )
+    return note + flag
+
+
+def _is_grounded(row: dict[str, Any]) -> bool | None:
+    """False only for a candidate whose quote failed verification (None = captured before grounding)."""
+    return row.get("grounded")
 
 
 def _inbox_list(index, queued: int) -> str:
@@ -149,7 +156,8 @@ def _inbox_list(index, queued: int) -> str:
         return "No suggested memories awaiting review." + note
     lines = [f"{len(rows)} suggested memories (/nachos-memory-inbox show|approve|reject <id|all>)"]
     lines.extend(
-        f"  #{r['id']} {r['title']}{_inbox_hint(r['duplicates'])}\n      {r['summary']}"
+        f"  #{r['id']} {r['title']}{_inbox_hint(r['duplicates'], _is_grounded(r))}"
+        f"\n      {r['summary']}"
         f"\n      why: {r['reason'] or '-'}"
         for r in rows
     )
@@ -161,10 +169,17 @@ def _inbox_show(index, target: str) -> str:
     if not row:
         return f"No inbox item {target}."
     dups = ", ".join(f"{d['key']} ({d['match']} {d['similarity']})" for d in row["duplicates"])
+    if row.get("grounded") is None:
+        evidence = "-"
+    elif row["grounded"]:
+        evidence = f'"{row["quote"]}"'
+    else:
+        evidence = f"UNGROUNDED (not found in the transcript): {row['quote'] or 'no quote given'}"
     return (
         f"#{row['id']} [{row['status']}] {row['title']}\n"
         f"category: {row['category']}\nsummary: {row['summary']}\n"
-        f"why: {row['reason'] or '-'}\nsimilar: {dups or '-'}\n\n{row['body']}"
+        f"why: {row['reason'] or '-'}\nevidence: {evidence}\nsimilar: {dups or '-'}\n\n"
+        f"{row['body']}"
     )
 
 
@@ -179,6 +194,16 @@ def _inbox_decide(service: MemoryService, action: str, target: str) -> str:
             return f"No pending inbox item {target}."
     if not rows:
         return "No suggested memories awaiting review."
+    if action == "approve" and target.lower() == "all":
+        # An ungrounded suggestion may be invented: it needs an explicit, per-item approval.
+        skipped = [r for r in rows if _is_grounded(r) is False]
+        rows = [r for r in rows if _is_grounded(r) is not False]
+        lines = [_inbox_apply(service, action, r) for r in rows]
+        lines.extend(
+            f"Skipped #{r['id']} {r['title']} (ungrounded: approve it by id after reading it)"
+            for r in skipped
+        )
+        return "\n".join(lines)
     return "\n".join(_inbox_apply(service, action, r) for r in rows)
 
 
@@ -193,6 +218,15 @@ def _inbox_apply(service: MemoryService, action: str, r: dict[str, Any]) -> str:
         summary=r["summary"],
         category=r["category"],
         scope=PROFILE,
+        provenance={
+            "source": "capture",
+            "session_id": r.get("session_id") or "",
+            "captured_at": r.get("created_ts"),
+            "checkpoint_id": r.get("checkpoint_id"),
+            "message_index": r.get("message_index"),
+            "quote": r.get("quote") if r.get("grounded") else "",
+            "grounded": r.get("grounded"),
+        },
     )
     if "error" in res:
         return f"Could not approve #{r['id']} {r['title']}: {res['error']}"

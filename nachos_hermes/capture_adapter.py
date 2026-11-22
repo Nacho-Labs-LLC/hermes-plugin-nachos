@@ -85,10 +85,13 @@ class CaptureWorker:
         service: MemoryService,
         llm: LLM,
         user_facts: list[str] | None = None,
+        locate: _capture.Locate | None = None,
     ) -> dict[str, int]:
         """Process every pending job now (thread-free)."""
         with self._lock:
-            return _capture.process_pending(inbox_dir, service, llm, user_facts=user_facts)
+            return _capture.process_pending(
+                inbox_dir, service, llm, user_facts=user_facts, locate=locate
+            )
 
     def start(self, inbox_dir: Path, target: Callable[[], Any]) -> None:
         """Start the daemon worker running ``target`` if jobs are pending and none is running."""

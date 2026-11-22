@@ -199,6 +199,7 @@ class MemoryIndex:
             self._conn, self._temp_dir = open_read_only_sqlite(path)
             self._chunked = "chunk_no" in self._table_columns("vectors")
             self._has_prev_superseded = "prev_superseded_by" in self._table_columns("changes")
+            self._inbox_cols = self._existing_inbox_cols()
             return
         if self._path != ":memory:":
             Path(self._path).parent.mkdir(parents=True, exist_ok=True)
@@ -253,11 +254,23 @@ class MemoryIndex:
                 duplicates_json TEXT NOT NULL DEFAULT '[]',
                 status          TEXT NOT NULL DEFAULT 'pending'
             );
+            CREATE TABLE IF NOT EXISTS provenance (
+                key           TEXT PRIMARY KEY,
+                session_id    TEXT NOT NULL DEFAULT '',
+                captured_at   REAL NOT NULL,
+                source        TEXT NOT NULL DEFAULT 'manual',
+                checkpoint_id TEXT,
+                message_index INTEGER,
+                quote         TEXT,
+                grounded      INTEGER
+            );
             """
         )
         self._conn.commit()
         self._migrate_vectors_table()
         self._migrate_changes_table()
+        self._migrate_inbox_table()
+        self._inbox_cols = self._existing_inbox_cols()
         self._chunked = True
         self._has_prev_superseded = True
 
@@ -273,6 +286,17 @@ class MemoryIndex:
         if cols and "prev_superseded_by" not in cols:
             self._conn.execute("ALTER TABLE changes ADD COLUMN prev_superseded_by TEXT")
             self._conn.commit()
+
+    def _migrate_inbox_table(self) -> None:
+        cols = self._table_columns("inbox")
+        for name, decl in self._INBOX_EXTRA:
+            if name not in cols:
+                self._conn.execute(f"ALTER TABLE inbox ADD COLUMN {name} {decl}")
+        self._conn.commit()
+
+    def _existing_inbox_cols(self) -> tuple[str, ...]:
+        have = self._table_columns("inbox")
+        return tuple(c for c in self._INBOX_COLS if c in have)
 
     def _migrate_vectors_table(self) -> None:
         cols = self._table_columns("vectors")
@@ -339,6 +363,7 @@ class MemoryIndex:
     def delete(self, key: str) -> None:
         self._conn.execute("DELETE FROM vectors WHERE key = ?", (key,))
         self._conn.execute("DELETE FROM usage WHERE key = ?", (key,))
+        self.delete_provenance(key)
         self._conn.commit()
         self._cache = None
 
@@ -356,10 +381,12 @@ class MemoryIndex:
         live = set(keys)
         indexed = {k for (k,) in self._conn.execute("SELECT DISTINCT key FROM vectors")}
         tracked = {k for (k,) in self._conn.execute("SELECT key FROM usage")}
-        gone = (indexed | tracked) - live
+        sourced = {k for (k,) in self._conn.execute("SELECT key FROM provenance")}
+        gone = (indexed | tracked | sourced) - live
         for key in gone:
             self._conn.execute("DELETE FROM vectors WHERE key = ?", (key,))
             self._conn.execute("DELETE FROM usage WHERE key = ?", (key,))
+            self._conn.execute("DELETE FROM provenance WHERE key = ?", (key,))
         self._conn.commit()
         if gone & indexed:
             self._cache = None
@@ -668,10 +695,23 @@ class MemoryIndex:
         "reason",
         "duplicates_json",
         "status",
+        "quote",
+        "grounded",
+        "checkpoint_id",
+        "message_index",
+    )
+    #: Columns added after the first release; ``_migrate_inbox_table`` adds them to old files.
+    _INBOX_EXTRA = (
+        ("quote", "TEXT"),
+        ("grounded", "INTEGER"),
+        ("checkpoint_id", "TEXT"),
+        ("message_index", "INTEGER"),
     )
 
     def _inbox_row(self, row: Any) -> dict[str, Any]:
-        d = dict(zip(self._INBOX_COLS, row))
+        d: dict[str, Any] = dict.fromkeys(self._INBOX_COLS)
+        d.update(zip(self._inbox_cols, row))
+        d["grounded"] = None if d["grounded"] is None else bool(d["grounded"])
         try:
             d["duplicates"] = json.loads(d.pop("duplicates_json") or "[]")
         except ValueError:
@@ -688,10 +728,15 @@ class MemoryIndex:
         body: str,
         reason: str = "",
         duplicates: list | None = None,
+        quote: str = "",
+        grounded: bool | None = None,
+        checkpoint_id: str | None = None,
+        message_index: int | None = None,
     ) -> int:
         cur = self._conn.execute(
             "INSERT INTO inbox (created_ts, session_id, title, summary, category, body, "
-            "reason, duplicates_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "reason, duplicates_json, quote, grounded, checkpoint_id, message_index) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 time.time(),
                 session_id or "",
@@ -701,13 +746,17 @@ class MemoryIndex:
                 body,
                 reason or "",
                 json.dumps(duplicates or []),
+                quote or "",
+                None if grounded is None else int(grounded),
+                checkpoint_id,
+                message_index,
             ),
         )
         self._conn.commit()
         return int(cur.lastrowid or 0)
 
     def list_inbox(self, status: str | None = "pending") -> list[dict[str, Any]]:
-        sql = f"SELECT {', '.join(self._INBOX_COLS)} FROM inbox"
+        sql = f"SELECT {', '.join(self._inbox_cols)} FROM inbox"
         params: list[str] = []
         if status:
             sql += " WHERE status = ?"
@@ -716,7 +765,7 @@ class MemoryIndex:
 
     def get_inbox(self, inbox_id: int) -> dict[str, Any] | None:
         row = self._conn.execute(
-            f"SELECT {', '.join(self._INBOX_COLS)} FROM inbox WHERE id = ?",
+            f"SELECT {', '.join(self._inbox_cols)} FROM inbox WHERE id = ?",
             (inbox_id,),
         ).fetchone()
         return self._inbox_row(row) if row else None
@@ -740,6 +789,77 @@ class MemoryIndex:
         )
         self._conn.commit()
         return cur.rowcount
+
+    # -- provenance (where a saved entry came from) --------------------------
+
+    def set_provenance(
+        self,
+        key: str,
+        *,
+        session_id: str = "",
+        captured_at: float | None = None,
+        source: str = "manual",
+        checkpoint_id: str | None = None,
+        message_index: int | None = None,
+        quote: str = "",
+        grounded: bool | None = None,
+    ) -> None:
+        self._conn.execute(
+            "INSERT OR REPLACE INTO provenance (key, session_id, captured_at, source, "
+            "checkpoint_id, message_index, quote, grounded) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                key,
+                session_id or "",
+                captured_at if captured_at is not None else time.time(),
+                source,
+                checkpoint_id,
+                message_index,
+                quote or None,
+                None if grounded is None else int(grounded),
+            ),
+        )
+        self._conn.commit()
+
+    def get_provenance_many(self, keys: Iterable[str]) -> dict[str, dict[str, Any]]:
+        """``{key: provenance}`` for the keys that have any (empty on files without the table)."""
+        wanted = list(dict.fromkeys(keys))
+        if not wanted or "provenance" not in self._provenance_tables():
+            return {}
+        out: dict[str, dict[str, Any]] = {}
+        for i in range(0, len(wanted), 500):
+            batch = wanted[i : i + 500]
+            marks = ", ".join("?" * len(batch))
+            rows = self._conn.execute(
+                "SELECT key, session_id, captured_at, source, checkpoint_id, message_index, "
+                f"quote, grounded FROM provenance WHERE key IN ({marks})",
+                batch,
+            )
+            for key, sid, at, source, cp, idx, quote, grounded in rows:
+                out[str(key)] = {
+                    "session_id": sid or "",
+                    "captured_at": float(at),
+                    "source": source,
+                    "checkpoint_id": cp,
+                    "message_index": idx,
+                    "quote": quote or "",
+                    "grounded": None if grounded is None else bool(grounded),
+                }
+        return out
+
+    def get_provenance(self, key: str) -> dict[str, Any] | None:
+        return self.get_provenance_many([key]).get(key)
+
+    def delete_provenance(self, key: str) -> None:
+        self._conn.execute("DELETE FROM provenance WHERE key = ?", (key,))
+        self._conn.commit()
+
+    def _provenance_tables(self) -> set[str]:
+        return {
+            str(r[0])
+            for r in self._conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'provenance'"
+            )
+        }
 
     def close(self) -> None:
         if not self._read_only and self._path != ":memory:":
