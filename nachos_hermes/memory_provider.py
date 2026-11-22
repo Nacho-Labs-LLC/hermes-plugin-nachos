@@ -256,8 +256,11 @@ class NachosMemoryProvider(MemoryProvider):
             "`memory.memory_enabled: false`). Facts about the user (preferences, "
             "style, personal details) go to the built-in user profile: the `memory` "
             'tool with `target: "user"`. All other durable knowledge goes to '
-            "`nachos_memory_put`; recall with `nachos_memory_recall`, remove with "
-            "`nachos_memory_remove`. Never use the built-in `memory` tool with "
+            "`nachos_memory_put` (pass `supersedes` with the old key when replacing "
+            "an outdated fact; if the response lists a `possible_updates` entry "
+            "that is an older version of the same fact, call `nachos_memory_put` "
+            "again with `supersedes=[key]`); recall with `nachos_memory_recall`, "
+            "remove with `nachos_memory_remove`. Never use the built-in `memory` tool with "
             '`target: "memory"`: it is disabled and not shown to you. Persona and '
             "identity belong to SOUL.md and are not memory. Earlier conversation that was "
             "compressed out of THIS conversation can be recovered with "
@@ -280,12 +283,17 @@ class NachosMemoryProvider(MemoryProvider):
             )
         try:
             entries = self._service.manifest_entries()
+            hidden = self._service.superseded_count()
         except Exception as e:
             logger.debug("Nachos manifest list failed: %s", e)
             return contract
-        if not entries:
+        if not entries and not hidden:
             return contract
-        manifest = render_toc(entries, char_budget=self._cfg["manifest_char_budget"])
+        manifest = render_toc(
+            entries,
+            char_budget=self._cfg["manifest_char_budget"],
+            superseded_count=hidden,
+        )
         return f"{contract}\n\n{manifest}" if manifest else contract
 
     # -- checkpoints -------------------------------------------------------
@@ -497,13 +505,16 @@ class NachosMemoryProvider(MemoryProvider):
         query = (args.get("query") or "").strip()
         scope = (args.get("scope") or "").strip() or None
         if key:
-            found = service.get(key, scope)
-            if found is None:
+            entry = service.get_entry(key, scope)
+            if entry is None:
                 return json.dumps({"error": f"No entry with key {key!r}"})
-            return json.dumps({"key": key, "scope": found[0], "body": found[1]})
+            return json.dumps(entry)
         if query:
             limit = clamp_int(args.get("limit"), 10, 1, 25)
-            results = service.search(query, limit=limit, scope=scope)
+            include_superseded = bool(args.get("include_superseded", False))
+            results = service.search(
+                query, limit=limit, scope=scope, include_superseded=include_superseded
+            )
             return json.dumps({"query": query, "count": len(results), "results": results})
         return json.dumps({"error": "Provide 'key' or 'query'."})
 
@@ -517,6 +528,7 @@ class NachosMemoryProvider(MemoryProvider):
                 summary=args.get("summary") or "",
                 category=args.get("category") or "general",
                 scope=(args.get("scope") or PROFILE).strip(),
+                supersedes=args.get("supersedes"),
             )
         except Exception as e:
             result = {"error": str(e)}

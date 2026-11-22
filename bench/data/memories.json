@@ -1,1250 +1,1295 @@
 [
- {
-  "title": "Harbor billing service",
-  "summary": "Go service that issues invoices and handles payment webhooks",
-  "category": "projects",
-  "body": "Harbor lives in the billing/harbor repo. Go 1.23, Postgres 16, owned by the payments team. Exposes a gRPC API to the storefront and consumes webhooks from the card processor."
- },
- {
-  "title": "Lumen analytics dashboard",
-  "summary": "React and TypeScript dashboard for product metrics",
-  "category": "projects",
-  "body": "Lumen is the internal metrics UI. Vite build, React 18, charts drawn with visx. Reads from the Orrery feature API and renders weekly retention cohorts."
- },
- {
-  "title": "Tidepool data pipeline",
-  "summary": "Airflow DAGs that load warehouse tables nightly",
-  "category": "projects",
-  "body": "Tidepool runs on Airflow 2.9. Nightly DAGs pull from the OLTP replicas into the warehouse, then run dbt models. A failed DAG pages the data on-call."
- },
- {
-  "title": "Quill documentation site",
-  "summary": "Static docs site built with Astro and deployed to the CDN",
-  "category": "projects",
-  "body": "Quill renders the public developer docs from markdown in the quill-docs repo. Astro 4, search by Pagefind, preview builds for every pull request."
- },
- {
-  "title": "Brindle mobile app",
-  "summary": "Kotlin Multiplatform app for iOS and Android",
-  "category": "projects",
-  "body": "Brindle shares business logic in Kotlin Multiplatform with native Compose and SwiftUI shells. Releases ship every second Tuesday through TestFlight and the Play internal track."
- },
- {
-  "title": "Cairn infrastructure repo",
-  "summary": "Terraform modules for networks, clusters and DNS",
-  "category": "projects",
-  "body": "Cairn holds all Terraform. State is remote with locking, one workspace per environment. Changes need a plan reviewed by a second engineer before apply."
- },
- {
-  "title": "Orrery feature store",
-  "summary": "Python service serving ML features with low latency",
-  "category": "projects",
-  "body": "Orrery serves precomputed model features over HTTP. FastAPI plus Redis for hot keys, parquet snapshots in object storage for backfills. p99 target is 20 ms."
- },
- {
-  "title": "Sundial scheduler",
-  "summary": "Rust cron replacement that triggers internal jobs",
-  "category": "projects",
-  "body": "Sundial reads job definitions from YAML, fires them through the queue and records run history in SQLite. Written in Rust, single static binary."
- },
- {
-  "title": "Mosaic design system",
-  "summary": "Shared component library and tokens for all web apps",
-  "category": "projects",
-  "body": "Mosaic publishes @acme/mosaic to the private registry. Tokens come from Figma exports; components are tested with Storybook and Chromatic snapshots."
- },
- {
-  "title": "Lantern auth gateway",
-  "summary": "OIDC gateway in front of internal tools",
-  "category": "projects",
-  "body": "Lantern terminates single sign-on for internal web tools using OIDC against the corporate identity provider. Sessions last 8 hours; group claims map to tool roles."
- },
- {
-  "title": "Ferrule CLI",
-  "summary": "Developer command line for scaffolding services",
-  "category": "projects",
-  "body": "Ferrule generates service skeletons, wires CI and registers the service in the catalog. Distributed as a Homebrew tap; written in Go with cobra."
- },
- {
-  "title": "Pavilion storefront",
-  "summary": "Next.js customer storefront",
-  "category": "projects",
-  "body": "Pavilion is the public shop. Next.js 14 app router, product data from the catalog API, checkout calls Harbor. Deployed on the edge runtime."
- },
- {
-  "title": "Catalog API",
-  "summary": "GraphQL service for products, prices and inventory",
-  "category": "projects",
-  "body": "Catalog API is a GraphQL layer over the product database and the inventory service. Persisted queries only in production; schema changes go through a contract check."
- },
- {
-  "title": "Notifier service",
-  "summary": "Sends email, push and SMS from queue messages",
-  "category": "projects",
-  "body": "Notifier consumes the notifications queue and fans out to the email vendor, push gateway and SMS provider. Templates live in the notifier-templates repo; rate limits are per channel."
- },
- {
-  "title": "Ledgerlint checker",
-  "summary": "Nightly job that reconciles invoices against payouts",
-  "category": "projects",
-  "body": "Ledgerlint compares Harbor invoices with bank payout files and opens a ticket for every mismatch over one cent. Runs at 03:00 UTC on the batch cluster."
- },
- {
-  "title": "Beacon feature flags",
-  "summary": "Self-hosted flag service with a Go SDK and JS SDK",
-  "category": "projects",
-  "body": "Beacon stores flags in Postgres and streams changes over SSE. SDKs cache locally so a Beacon outage never blocks a request. Flags older than 90 days are reported for cleanup."
- },
- {
-  "title": "Sieve search service",
-  "summary": "OpenSearch wrapper for product and docs search",
-  "category": "projects",
-  "body": "Sieve wraps an OpenSearch cluster and exposes a small query API. Synonyms are managed in synonyms.txt and reloaded without downtime. Reindexing takes about 40 minutes."
- },
- {
-  "title": "Warden secrets broker",
-  "summary": "Wraps Vault to hand out short-lived credentials",
-  "category": "projects",
-  "body": "Warden issues database and cloud credentials with a 1 hour lease. Services authenticate with their Kubernetes service account. Never paste secrets in tickets; request a lease instead."
- },
- {
-  "title": "Trellis CI templates",
-  "summary": "Reusable GitHub Actions workflows",
-  "category": "projects",
-  "body": "Trellis provides reusable workflows for build, test, scan and deploy. Pin to a major tag, for example trellis/build@v3. Caching uses the shared runner cache bucket."
- },
- {
-  "title": "Gazetteer service catalog",
-  "summary": "Backstage instance listing every service and owner",
-  "category": "projects",
-  "body": "Gazetteer is our Backstage portal. Every repo needs a catalog-info.yaml with owner, lifecycle and on-call link. Ferrule fills it in at scaffold time."
- },
- {
-  "title": "Quartz reporting jobs",
-  "summary": "Monthly finance exports in Python",
-  "category": "projects",
-  "body": "Quartz builds the month-end finance exports as CSV and uploads them to the finance bucket on the third business day. Uses pandas and a pinned Python 3.11."
- },
- {
-  "title": "Rookery chat bot",
-  "summary": "Slack bot that answers on-call and deploy questions",
-  "category": "projects",
-  "body": "Rookery is a Slack bot with slash commands for deploy status, who-is-on-call and incident creation. TypeScript on Bolt, runs as a single replica."
- },
- {
-  "title": "Meridian geo service",
-  "summary": "Address validation and geocoding wrapper",
-  "category": "projects",
-  "body": "Meridian caches geocoder responses for 30 days and falls back to a second vendor on timeout. Used by Pavilion checkout and the driver app."
- },
- {
-  "title": "Tern driver app",
-  "summary": "Android app for delivery drivers",
-  "category": "projects",
-  "body": "Tern is the driver-facing Android app. Offline-first with Room, syncs routes when connectivity returns, uses Meridian for address lookups."
- },
- {
-  "title": "Kiln image builder",
-  "summary": "Builds hardened base container images weekly",
-  "category": "projects",
-  "body": "Kiln rebuilds the distroless base images every Sunday, scans them and publishes digests. Services should reference the digest, not the tag."
- },
- {
-  "title": "Plover load tests",
-  "summary": "k6 scripts for pre-release load testing",
-  "category": "projects",
-  "body": "Plover holds the k6 scenarios for checkout, search and login. Run against staging before a major release; target is 500 requests per second with p95 under 300 ms."
- },
- {
-  "title": "Atlas data catalog",
-  "summary": "Metadata catalog for warehouse tables",
-  "category": "projects",
-  "body": "Atlas documents warehouse tables, column owners and PII tags. Tidepool publishes lineage into Atlas after every dbt run."
- },
- {
-  "title": "Heron status page",
-  "summary": "Public status page fed by synthetic checks",
-  "category": "projects",
-  "body": "Heron shows public component status. Synthetic checks run every minute from three regions; incident updates are posted by the incident commander."
- },
- {
-  "title": "Compass roadmap tool",
-  "summary": "Internal planning board with quarterly goals",
-  "category": "projects",
-  "body": "Compass tracks quarterly objectives and links them to epics. Goals are reviewed in the first week of each quarter."
- },
- {
-  "title": "Saffron email templates",
-  "summary": "MJML templates for transactional email",
-  "category": "projects",
-  "body": "Saffron stores MJML sources and compiles them to HTML on release. Always send a rendering test to the litmus inbox before changing the order confirmation."
- },
- {
-  "title": "Bellows autoscaler",
-  "summary": "Custom queue-depth autoscaler for workers",
-  "category": "projects",
-  "body": "Bellows scales worker deployments from queue depth rather than CPU. Cooldown is 5 minutes, max replicas capped per queue in bellows.yaml."
- },
- {
-  "title": "Juniper onboarding site",
-  "summary": "New-hire checklist and laptop setup guide",
-  "category": "projects",
-  "body": "Juniper is the onboarding portal: access requests, laptop checklist and team intro schedule. Content is markdown in the people-ops repo."
- },
- {
-  "title": "Marlin fraud rules",
-  "summary": "Rule engine scoring risky orders",
-  "category": "projects",
-  "body": "Marlin scores orders with a rules engine plus a small gradient-boosted model. Orders above 0.85 are held for manual review; rules are hot-reloaded."
- },
- {
-  "title": "Developer laptop setup",
-  "summary": "Apple silicon laptops with Homebrew, asdf and direnv",
-  "category": "environment",
-  "body": "Standard laptop is a 14-inch Apple silicon machine. Tool versions managed by asdf, per-repo env vars by direnv, packages by Homebrew. Disk encryption must be on."
- },
- {
-  "title": "VPN access",
-  "summary": "WireGuard profile required for staging and databases",
-  "category": "environment",
-  "body": "Staging and database hosts are reachable only over the WireGuard VPN. Request a profile through the access portal; profiles expire after 90 days."
- },
- {
-  "title": "Kubernetes clusters",
-  "summary": "Three clusters: dev, stage and prod in two regions",
-  "category": "environment",
-  "body": "Clusters are named kube-dev, kube-stage and kube-prod, running Kubernetes 1.30. Prod spans eu-west-1 and us-east-1. kubectl contexts are set by the cairn bootstrap script."
- },
- {
-  "title": "Container registry",
-  "summary": "Private registry at registry.example.internal",
-  "category": "environment",
-  "body": "Images are pushed to registry.example.internal under the team namespace. Retention keeps the last 30 tags per repository; digests referenced by deployments are never pruned."
- },
- {
-  "title": "Postgres fleet",
-  "summary": "Managed Postgres 16 with read replicas",
-  "category": "environment",
-  "body": "Primary databases are managed Postgres 16 with one synchronous replica and two read replicas. Connection pooling through PgBouncer in transaction mode; max 200 connections per service."
- },
- {
-  "title": "Redis clusters",
-  "summary": "Redis 7 clusters for caching and rate limits",
-  "category": "environment",
-  "body": "Two Redis 7 clusters: cache-redis (eviction allkeys-lru) and state-redis (no eviction, persistence on). Never store durable data in cache-redis."
- },
- {
-  "title": "Message queue",
-  "summary": "NATS JetStream for service events",
-  "category": "environment",
-  "body": "Service events flow through NATS JetStream. Streams are retained for 7 days; consumers must be idempotent because delivery is at least once."
- },
- {
-  "title": "Observability stack",
-  "summary": "Prometheus, Grafana and Loki, traces in Tempo",
-  "category": "environment",
-  "body": "Metrics in Prometheus with 30 day retention, dashboards in Grafana, logs in Loki, traces in Tempo. OpenTelemetry collectors run as a daemonset."
- },
- {
-  "title": "On-call tooling",
-  "summary": "PagerDuty rotations with Slack escalation",
-  "category": "environment",
-  "body": "Pages go through PagerDuty. Primary has 5 minutes to acknowledge before the secondary is paged. The weekly handoff happens Monday 10:00 in the on-call channel."
- },
- {
-  "title": "DNS and domains",
-  "summary": "Internal zone example.internal managed in Cairn",
-  "category": "environment",
-  "body": "Internal names live in the example.internal zone, public names in example.com. Records are code in Cairn; do not edit them in the console. TTL defaults to 300 seconds."
- },
- {
-  "title": "CDN configuration",
-  "summary": "Edge cache with 10 minute default TTL",
-  "category": "environment",
-  "body": "The CDN caches static assets for 10 minutes by default and honours surrogate-control headers. Purge by tag from the Quill and Pavilion deploy jobs."
- },
- {
-  "title": "CI runners",
-  "summary": "Self-hosted ARM runners plus hosted x86",
-  "category": "environment",
-  "body": "Builds run on self-hosted ARM runners in kube-dev by default. x86 jobs use hosted runners. Concurrency is capped at 40 jobs; queue time over 5 minutes should be reported."
- },
- {
-  "title": "Secrets handling",
-  "summary": "Secrets come from Warden, never from env files in git",
-  "category": "environment",
-  "body": "Secrets are injected at runtime from Warden. Committing .env files is blocked by a pre-commit hook and a CI scan. Rotate any leaked credential immediately and file a security ticket."
- },
- {
-  "title": "Python toolchain",
-  "summary": "Python 3.12 with uv and ruff",
-  "category": "environment",
-  "body": "New Python services use Python 3.12, uv for dependency management and ruff for linting and formatting. Quartz is the exception and stays on 3.11."
- },
- {
-  "title": "Node toolchain",
-  "summary": "Node 22 LTS with pnpm workspaces",
-  "category": "environment",
-  "body": "Front-end repos use Node 22 LTS and pnpm. Lockfiles are committed; CI runs pnpm install --frozen-lockfile."
- },
- {
-  "title": "Go toolchain",
-  "summary": "Go 1.23 with golangci-lint",
-  "category": "environment",
-  "body": "Go services build with Go 1.23 and are linted by golangci-lint using the shared config from Trellis. Modules are vendored for release builds."
- },
- {
-  "title": "Editor conventions",
-  "summary": "EditorConfig and format on save",
-  "category": "environment",
-  "body": "Every repo ships an .editorconfig: LF line endings, 2-space indent for web and 4 for Python. Editors should format on save with the repo formatter."
- },
- {
-  "title": "Database backups",
-  "summary": "Nightly snapshots with 35 day retention",
-  "category": "environment",
-  "body": "Postgres snapshots run nightly at 01:00 UTC and are kept 35 days, with weekly copies in a second region for one year. Restore drills happen quarterly."
- },
- {
-  "title": "Object storage buckets",
-  "summary": "Buckets per environment with lifecycle rules",
-  "category": "environment",
-  "body": "Object storage buckets are named acme-<env>-<purpose>. Lifecycle rules move data to infrequent access after 30 days. Public buckets are forbidden except the Quill assets bucket."
- },
- {
-  "title": "TLS certificates",
-  "summary": "cert-manager issues certificates automatically",
-  "category": "environment",
-  "body": "cert-manager requests and renews certificates from the internal ACME endpoint 30 days before expiry. Alerts fire at 14 days remaining if renewal fails."
- },
- {
-  "title": "SSH access policy",
-  "summary": "Short-lived SSH certificates, no static keys",
-  "category": "environment",
-  "body": "Hosts accept only short-lived SSH certificates signed by the internal CA, valid 8 hours. Static authorized_keys entries are removed by configuration management."
- },
- {
-  "title": "Time conventions",
-  "summary": "All systems and logs use UTC",
-  "category": "environment",
-  "body": "Servers, databases and log timestamps are UTC. Convert to local time only in UI layers. Scheduled jobs are written in UTC cron expressions."
- },
- {
-  "title": "Cloud cost tags",
-  "summary": "Every resource must carry team and env tags",
-  "category": "environment",
-  "body": "Untagged resources are flagged weekly and removed after two warnings. Required tags: team, env, service. Budget alerts go to the owning team channel at 80 percent."
- },
- {
-  "title": "Office network",
-  "summary": "Guest and staff SSIDs, wired desks at the hub",
-  "category": "environment",
-  "body": "The office has separate staff and guest wireless networks. Staff devices need the device certificate installed by MDM; guests get a daily code from reception."
- },
- {
-  "title": "Device management",
-  "summary": "MDM enforces disk encryption and OS updates",
-  "category": "environment",
-  "body": "MDM requires full-disk encryption, screen lock after 5 minutes and OS updates within 14 days of release. Non-compliant laptops lose VPN access."
- },
- {
-  "title": "Logging conventions",
-  "summary": "JSON logs with request ids",
-  "category": "environment",
-  "body": "Services emit one JSON object per line with level, ts, service and request_id. Never log request bodies containing payment data."
- },
- {
-  "title": "Local dev ports",
-  "summary": "Reserved port ranges for local services",
-  "category": "environment",
-  "body": "Local services use ports 4000-4099 for APIs and 5170-5199 for front-ends. Harbor listens on 4010 and Pavilion on 5173."
- },
- {
-  "title": "Preview environments",
-  "summary": "Ephemeral namespaces per pull request",
-  "category": "environment",
-  "body": "Each pull request gets a namespace pr-<number> in kube-dev with a seeded database, destroyed 24 hours after the PR closes."
- },
- {
-  "title": "Decision: gRPC between backend services",
-  "summary": "Internal service calls use gRPC; REST only at the edge",
-  "category": "decisions",
-  "body": "Chosen in the March architecture review. Internal calls use gRPC with protobuf contracts checked in the schemas repo. REST and GraphQL are only for external or browser clients. Rationale: typed contracts and streaming."
- },
- {
-  "title": "Decision: stay polyrepo",
-  "summary": "Keep one repo per service, share tooling via Trellis",
-  "category": "decisions",
-  "body": "We evaluated a monorepo and declined it: CI cost and ownership boundaries mattered more than atomic refactors. Shared tooling is distributed through Trellis templates and Ferrule."
- },
- {
-  "title": "Decision: Postgres over MongoDB",
-  "summary": "Relational store is the default for new services",
-  "category": "decisions",
-  "body": "New services default to Postgres. Document stores need a written exception because backups, tooling and on-call familiarity all assume Postgres."
- },
- {
-  "title": "Decision: trunk-based development",
-  "summary": "Short-lived branches, merge to main daily",
-  "category": "decisions",
-  "body": "Branches live at most two days. Unfinished work merges behind a Beacon flag. Long-running release branches are not allowed."
- },
- {
-  "title": "Decision: semantic versioning for libraries",
-  "summary": "Breaking changes only in major versions",
-  "category": "decisions",
-  "body": "Shared libraries follow semver strictly. Deprecations must survive one full minor release with a warning before removal."
- },
- {
-  "title": "Decision: quarterly planning cadence",
-  "summary": "Plan quarterly, adjust monthly",
-  "category": "decisions",
-  "body": "Goals are set quarterly in Compass and reviewed monthly. Mid-quarter changes need the engineering manager's agreement."
- },
- {
-  "title": "Decision: no PII in logs",
-  "summary": "Personal data must never be written to logs",
-  "category": "decisions",
-  "body": "Email addresses, names, card data and addresses are forbidden in logs. Use opaque user ids. Violations are treated as security incidents."
- },
- {
-  "title": "Decision: follow-the-sun on-call",
-  "summary": "Two rotations cover EU and US hours",
-  "category": "decisions",
-  "body": "Rather than 24-hour single-site rotations, an EU rotation covers 06:00-14:00 UTC and a US rotation 14:00-22:00 UTC; overnight pages go to a best-effort tertiary."
- },
- {
-  "title": "Decision: single email vendor",
-  "summary": "All transactional email through one provider",
-  "category": "decisions",
-  "body": "Consolidated on a single email provider in January to simplify deliverability monitoring. Marketing email stays on a separate tool."
- },
- {
-  "title": "Decision: build Beacon in-house",
-  "summary": "Hosted flag vendors rejected on cost and latency",
-  "category": "decisions",
-  "body": "Hosted flag services quoted per-seat pricing and added a network hop. Beacon was built in-house with local SDK caching instead."
- },
- {
-  "title": "Decision: Rust only for infrastructure tools",
-  "summary": "Rust allowed for single-binary tools, not product services",
-  "category": "decisions",
-  "body": "Rust is approved for Sundial-style infrastructure tools. Product services stay on Go or Python because hiring and review capacity are limited."
- },
- {
-  "title": "Decision: ARM for build runners",
-  "summary": "Move CI to ARM for cost",
-  "category": "decisions",
-  "body": "ARM runners cut build costs by roughly 30 percent. x86-only dependencies are built on hosted runners as an exception."
- },
- {
-  "title": "Decision: URL-versioned external APIs",
-  "summary": "Public APIs carry /v1 style prefixes",
-  "category": "decisions",
-  "body": "External APIs are versioned in the path (/v1, /v2). Old versions are supported for 12 months after a successor ships."
- },
- {
-  "title": "Decision: testing pyramid targets",
-  "summary": "Mostly unit tests, thin end-to-end layer",
-  "category": "decisions",
-  "body": "Target mix is about 70 percent unit, 25 percent integration and 5 percent end-to-end. End-to-end tests must be deterministic or they are deleted."
- },
- {
-  "title": "Decision: data retention periods",
-  "summary": "Customer data deleted 90 days after account closure",
-  "category": "decisions",
-  "body": "Account data is hard-deleted 90 days after closure. Invoices are kept seven years for tax reasons. Analytics events are anonymised after 13 months."
- },
- {
-  "title": "Decision: review requirements",
-  "summary": "One approval, two for infrastructure and auth",
-  "category": "decisions",
-  "body": "Pull requests need one approving review. Changes to Cairn, Lantern or Warden need two, one from the owning team."
- },
- {
-  "title": "Decision: record decisions as ADRs",
-  "summary": "Architecture decision records live in the docs repo",
-  "category": "decisions",
-  "body": "Significant choices are recorded as ADRs in the adr folder using the short template: context, decision, consequences. Status moves from proposed to accepted or superseded."
- },
- {
-  "title": "Decision: default cache TTLs",
-  "summary": "Short TTLs, explicit invalidation for critical data",
-  "category": "decisions",
-  "body": "API caches default to 60 seconds. Pricing and inventory must use explicit invalidation events instead of long TTLs."
- },
- {
-  "title": "Decision: standard timeout budget",
-  "summary": "Client timeout 2s, retries limited to 2 with jitter",
-  "category": "decisions",
-  "body": "Outbound calls default to a 2 second timeout and at most two retries with exponential backoff and jitter. Retrying non-idempotent calls is forbidden without an idempotency key."
- },
- {
-  "title": "Decision: money stored as integer minor units",
-  "summary": "Never use floating point for currency",
-  "category": "decisions",
-  "body": "All monetary amounts are integers in minor units (cents) plus an ISO currency code. Floats are rejected in review."
- },
- {
-  "title": "Decision: service naming",
-  "summary": "Services get a single evocative lowercase name",
-  "category": "decisions",
-  "body": "Services use one lowercase noun, registered in Gazetteer. Names are not reused after retirement."
- },
- {
-  "title": "Decision: accessibility baseline",
-  "summary": "WCAG 2.2 AA for customer-facing UI",
-  "category": "decisions",
-  "body": "Customer-facing interfaces must meet WCAG 2.2 AA. Mosaic components ship with automated axe checks and manual keyboard review."
- },
- {
-  "title": "Decision: dependency update policy",
-  "summary": "Weekly automated update PRs, security patches within 72 hours",
-  "category": "decisions",
-  "body": "Dependabot opens weekly update pull requests. Critical security patches must be merged within 72 hours; others within the sprint."
- },
- {
-  "title": "Decision: docs live with the code",
-  "summary": "Reference docs in the repo, guides in Quill",
-  "category": "decisions",
-  "body": "Reference documentation sits next to the code in each repo. Narrative guides and tutorials are published through Quill."
- },
- {
-  "title": "Decision: internal service SLOs",
-  "summary": "99.9 percent availability for tier-1 services",
-  "category": "decisions",
-  "body": "Tier-1 services (Harbor, Pavilion, Lantern) target 99.9 percent monthly availability; tier-2 targets 99.5. Error budgets are reviewed monthly."
- },
- {
-  "title": "Decision: dark launches for risky changes",
-  "summary": "Ship behind flags and mirror traffic first",
-  "category": "decisions",
-  "body": "Risky changes are deployed dark, traffic is mirrored for a day, and only then enabled gradually 1, 10, 50, 100 percent."
- },
- {
-  "title": "Decision: pairing for onboarding",
-  "summary": "New hires pair for their first two weeks",
-  "category": "decisions",
-  "body": "Each new engineer pairs with a buddy for the first two weeks and ships a small change to production by day five."
- },
- {
-  "title": "Decision: open source license policy",
-  "summary": "Permissive licenses only for dependencies",
-  "category": "decisions",
-  "body": "Allowed: MIT, BSD, Apache-2.0. Copyleft dependencies such as GPL need legal approval. License scan runs in the Trellis security step."
- },
- {
-  "title": "Decision: batch jobs avoid business hours",
-  "summary": "Heavy jobs run between 01:00 and 05:00 UTC",
-  "category": "decisions",
-  "body": "Heavy batch work is scheduled in the 01:00-05:00 UTC window so replicas stay responsive during business hours."
- },
- {
-  "title": "Procedure: deploying to production",
-  "summary": "Merge, wait for green, run deploy command, watch dashboards",
-  "category": "procedures",
-  "body": "1) Merge to main. 2) Wait for the Trellis pipeline to go green. 3) Run `ferrule deploy prod <service>` from #deploys. 4) Watch the service dashboard for 15 minutes. 5) Roll back with `ferrule rollback` if error rate doubles."
- },
- {
-  "title": "Procedure: emergency rollback",
-  "summary": "Revert to previous digest with ferrule rollback",
-  "category": "procedures",
-  "body": "Run `ferrule rollback <service> --to previous`. The deploy job pins the prior image digest; database migrations are not reversed automatically, so check the migration notes first."
- },
- {
-  "title": "Procedure: declaring an incident",
-  "summary": "Use /incident in Slack, assign a commander and scribe",
-  "category": "procedures",
-  "body": "Type /incident in Rookery, choose severity, and a channel is created. The first responder becomes commander unless they hand off. Assign a scribe and post to Heron within 15 minutes for sev1 and sev2."
- },
- {
-  "title": "Procedure: blameless postmortems",
-  "summary": "Write within five business days, review in the guild meeting",
-  "category": "procedures",
-  "body": "Every sev1 and sev2 gets a blameless postmortem within five business days using the template in the docs repo. Action items need owners and due dates."
- },
- {
-  "title": "Procedure: database schema migrations",
-  "summary": "Expand, migrate, contract in separate releases",
-  "category": "procedures",
-  "body": "Schema changes use expand/contract: add the new column nullable, deploy code that writes both, backfill, switch reads, then drop the old column in a later release. Never rename a column in one step."
- },
- {
-  "title": "Procedure: requesting production access",
-  "summary": "Request through the access portal with a ticket",
-  "category": "procedures",
-  "body": "Production access is requested in the access portal with a ticket link and manager approval. Grants expire after 30 days and are logged. Standing access is not given."
- },
- {
-  "title": "Procedure: releasing Brindle",
-  "summary": "Cut release branch Monday, submit Tuesday",
-  "category": "procedures",
-  "body": "Brindle's release branch is cut Monday morning, QA signs off by Tuesday noon, then the builds are submitted to the stores. Hotfixes skip QA only with the engineering manager's approval."
- },
- {
-  "title": "Procedure: rotating API keys",
-  "summary": "Issue new, deploy, revoke old within 24 hours",
-  "category": "procedures",
-  "body": "Create the new key in Warden, deploy it to consumers, confirm traffic on the new key, then revoke the old one. The overlap window must not exceed 24 hours."
- },
- {
-  "title": "Procedure: restoring a database from snapshot",
-  "summary": "Restore into a new instance, then promote",
-  "category": "procedures",
-  "body": "Never restore over a live database. Restore the snapshot into a new instance, validate row counts, then repoint PgBouncer. Record the point-in-time target in the ticket."
- },
- {
-  "title": "Procedure: on-call handoff",
-  "summary": "Written handoff note with open alerts and risky deploys",
-  "category": "procedures",
-  "body": "The outgoing engineer posts a handoff note: open incidents, noisy alerts, upcoming risky deploys and known flaky checks. The incoming engineer acknowledges in thread."
- },
- {
-  "title": "Procedure: creating a new service",
-  "summary": "Run ferrule new, register in Gazetteer, add dashboards",
-  "category": "procedures",
-  "body": "Run `ferrule new service`, answer the prompts, merge the generated pull request, confirm the entry in Gazetteer and add an SLO dashboard from the template before first deploy."
- },
- {
-  "title": "Procedure: removing stale feature flags",
-  "summary": "Delete flag code first, then the flag",
-  "category": "procedures",
-  "body": "When a flag has been 100 percent for two weeks, remove the code paths, deploy, and only then delete the flag in Beacon so old pods keep working."
- },
- {
-  "title": "Procedure: running a load test",
-  "summary": "Announce, run Plover against staging, record results",
-  "category": "procedures",
-  "body": "Announce in #perf, scale staging to production-like size, run `k6 run checkout.js`, and attach the summary to the release ticket. Never run load tests against production."
- },
- {
-  "title": "Procedure: handling a vulnerability report",
-  "summary": "Triage within one business day, patch by severity",
-  "category": "procedures",
-  "body": "Security reports are triaged within one business day. Severity decides the patch deadline: critical 72 hours, high 7 days, medium 30 days. Keep the reporter updated."
- },
- {
-  "title": "Procedure: manual certificate renewal",
-  "summary": "Force renewal with cmctl when cert-manager is stuck",
-  "category": "procedures",
-  "body": "If cert-manager fails to renew, run `cmctl renew <name> -n <namespace>`, check the challenge status, and open a ticket with platform if DNS validation is failing."
- },
- {
-  "title": "Procedure: customer data deletion request",
-  "summary": "Verify identity, run deletion job, confirm in writing",
-  "category": "procedures",
-  "body": "Verify the requester through the support tool, trigger the deletion job in Tidepool, wait for the confirmation event, then email the customer. Complete within 30 days."
- },
- {
-  "title": "Procedure: quarantining a flaky test",
-  "summary": "Tag, ticket, fix within a sprint",
-  "category": "procedures",
-  "body": "A test that fails intermittently is tagged quarantine, a ticket is opened automatically and the owner has one sprint to fix it before it is deleted."
- },
- {
-  "title": "Procedure: lost or stolen laptop",
-  "summary": "Report immediately, MDM remote wipe",
-  "category": "procedures",
-  "body": "Report to security within the hour. MDM issues a remote lock and wipe, VPN profile and SSH certificates are revoked, and a replacement is shipped."
- },
- {
-  "title": "Procedure: monthly cost review",
-  "summary": "Review top ten spend lines with owners",
-  "category": "procedures",
-  "body": "On the second Thursday the platform lead reviews the ten largest cost lines with owners and records savings actions in Compass."
- },
- {
-  "title": "Procedure: pull request etiquette",
-  "summary": "Small PRs, description with why, link the ticket",
-  "category": "procedures",
-  "body": "Keep pull requests under about 400 changed lines, explain why in the description, link the ticket and request review from the code owners file."
- },
- {
-  "title": "Procedure: hotfix to production",
-  "summary": "Branch from the deployed tag, cherry-pick, deploy",
-  "category": "procedures",
-  "body": "Branch from the currently deployed tag, apply the minimal fix, get one approval, and deploy with `ferrule deploy prod --hotfix`. Backport to main the same day."
- },
- {
-  "title": "Procedure: backfilling a warehouse table",
-  "summary": "Pause the DAG, run backfill with date range, verify counts",
-  "category": "procedures",
-  "body": "Pause the Tidepool DAG, run `airflow dags backfill` with an explicit date range, compare row counts against the source and unpause. Never backfill more than 30 days at once."
- },
- {
-  "title": "Procedure: changing a DNS record",
-  "summary": "Edit in Cairn, plan, apply, verify propagation",
-  "category": "procedures",
-  "body": "Change the record in the Cairn zone module, get the plan reviewed, apply, and verify with dig against both resolvers. Lower the TTL a day ahead for cutovers."
- },
- {
-  "title": "Procedure: responding to a leaked secret",
-  "summary": "Revoke, rotate, audit, document",
-  "category": "procedures",
-  "body": "Revoke the secret at its source first, rotate through Warden, audit access logs for use during the exposure window and write a short incident note."
- },
- {
-  "title": "Procedure: planning time off",
-  "summary": "Announce two weeks ahead and name a deputy",
-  "category": "procedures",
-  "body": "Add time off to the team calendar, announce at least two weeks ahead for stretches over three days and name a deputy for your services."
- },
- {
-  "title": "History: March checkout outage",
-  "summary": "Pavilion checkout failed for 47 minutes after a bad config push",
-  "category": "history",
-  "body": "On a Tuesday in March a Beacon flag misconfiguration disabled payment forms for 47 minutes. Root cause: no schema validation on flag payloads. Fix: validation added and dark-launch policy introduced."
- },
- {
-  "title": "History: Redis eviction incident",
-  "summary": "State data lost when stored in the cache cluster",
-  "category": "history",
-  "body": "A team stored rate-limit counters in cache-redis; an eviction wave reset them and let a burst through. Led to the rule that durable state goes to state-redis only."
- },
- {
-  "title": "History: Postgres 14 to 16 upgrade",
-  "summary": "Completed in two weekends with logical replication",
-  "category": "history",
-  "body": "The upgrade used logical replication to new clusters, cutover over two weekends with 90 seconds of read-only mode each. Lessons: test extension compatibility early."
- },
- {
-  "title": "History: Harbor rewritten from Python to Go",
-  "summary": "Rewrite finished last year, latency down by 60 percent",
-  "category": "history",
-  "body": "Harbor started as a Django app. The Go rewrite shipped in phases over six months, cut p95 latency by about 60 percent and halved the fleet size."
- },
- {
-  "title": "History: switched SMS providers",
-  "summary": "Moved SMS after repeated delivery failures",
-  "category": "history",
-  "body": "After three delivery incidents in one quarter, SMS moved to a new provider with regional routing. Delivery rate rose from 94 to 99 percent."
- },
- {
-  "title": "History: autumn hack day outcomes",
-  "summary": "Hack day produced Rookery and the Sundial prototype",
-  "category": "history",
-  "body": "The autumn hack day delivered the first Rookery bot and a Sundial prototype. Both were adopted within two months."
- },
- {
-  "title": "History: expired internal certificate",
-  "summary": "An internal CA certificate lapsed and broke service-to-service calls",
-  "category": "history",
-  "body": "The intermediate CA expired on a Sunday, breaking mTLS between services for 25 minutes. Now cert expiry is monitored at 30, 14 and 3 days."
- },
- {
-  "title": "History: failed DNS cutover",
-  "summary": "A long TTL delayed the cutover by hours",
-  "category": "history",
-  "body": "During a load balancer migration the TTL was still 24 hours, so clients hit the old address long after cutover. Origin of the rule to lower TTL a day ahead."
- },
- {
-  "title": "History: CI flakiness drive",
-  "summary": "Flaky failures reduced from 12 percent to 2 percent",
-  "category": "history",
-  "body": "A two-month effort quarantined unstable tests, pinned runner images and fixed port collisions. Pipeline failure rate from flakes dropped from 12 to 2 percent."
- },
- {
-  "title": "History: pricing rounding bug",
-  "summary": "Float rounding overcharged some orders by one cent",
-  "category": "history",
-  "body": "A float-based discount calculation overcharged roughly 0.3 percent of orders by one cent. Refunded automatically; led to the integer minor units rule."
- },
- {
-  "title": "History: hiring freeze last winter",
-  "summary": "Hiring paused for a quarter, projects reprioritised",
-  "category": "history",
-  "body": "Hiring was frozen for one quarter. Brindle features were postponed and Juniper work was reduced to maintenance."
- },
- {
-  "title": "History: secrets audit findings",
-  "summary": "Audit found 14 stale static credentials",
-  "category": "history",
-  "body": "The security audit found 14 long-lived static credentials; all were rotated and moved behind Warden within a month."
- },
- {
-  "title": "History: Kubernetes 1.28 to 1.30",
-  "summary": "Upgrade done cluster by cluster, no customer impact",
-  "category": "history",
-  "body": "Dev first, then stage, then prod over three weeks. A deprecated API in an old Helm chart caused one failed deploy, fixed by upgrading the chart."
- },
- {
-  "title": "History: Black Friday capacity",
-  "summary": "Pre-scaled 3x and held 1,900 orders per minute",
-  "category": "history",
-  "body": "For the sales peak we pre-scaled Harbor and Orrery threefold, froze deploys for four days and sustained 1,900 orders per minute with p95 under 400 ms."
- },
- {
-  "title": "History: failed reindex",
-  "summary": "Reindex filled disk and crashed the search cluster",
-  "category": "history",
-  "body": "A full reindex doubled index size, filled the data nodes and crashed Sieve for an hour. Now reindexing uses aliases and requires 2x free disk."
- },
- {
-  "title": "History: team reorganisation",
-  "summary": "Payments and Platform split into separate teams",
-  "category": "history",
-  "body": "Payments (Harbor, Ledgerlint, Marlin) and Platform (Cairn, Kiln, Trellis) became separate teams after the reorganisation."
- },
- {
-  "title": "History: tabletop breach exercise",
-  "summary": "Exercise exposed a missing escalation contact",
-  "category": "history",
-  "body": "The tabletop breach drill found no documented escalation contact for legal after hours. A rotation list was added to the incident template."
- },
- {
-  "title": "History: App Store rejection",
-  "summary": "Brindle rejected for missing account deletion flow",
-  "category": "history",
-  "body": "An App Store review rejected Brindle because in-app account deletion was missing. Added within a week, then approved."
- },
- {
-  "title": "History: stale CDN assets",
-  "summary": "Missing purge left an old logo online for a day",
-  "category": "history",
-  "body": "A rebrand shipped but the purge step was skipped, so the old logo stayed on the edge for 24 hours. Purge-by-tag is now part of the deploy job."
- },
- {
-  "title": "History: notification queue backlog",
-  "summary": "A stuck consumer delayed emails by six hours",
-  "category": "history",
-  "body": "A poison message blocked a Notifier consumer, delaying emails six hours. Added dead-letter handling with max-deliver of 5."
- },
- {
-  "title": "History: cloud cost spike",
-  "summary": "Orphaned load test cluster cost 18k in a month",
-  "category": "history",
-  "body": "A load-test cluster was left running after a test and cost about 18k in a month. Led to automatic expiry tags on non-prod resources."
- },
- {
-  "title": "History: on-call load review",
-  "summary": "Pages per week halved after alert tuning",
-  "category": "history",
-  "body": "A review found the primary averaged 31 pages a week. After deleting noisy alerts and adding runbook links it fell to 14."
- },
- {
-  "title": "History: GDPR readiness review",
-  "summary": "Completed review produced the retention policy",
-  "category": "history",
-  "body": "The privacy readiness review mapped personal data flows and produced the 90 day deletion and 13 month anonymisation policies."
- },
- {
-  "title": "History: first production deploy of Lumen",
-  "summary": "Lumen launched to the data team in June",
-  "category": "history",
-  "body": "Lumen's first production release went to the data team in June after a four-week beta. Cohort charts were the most requested feature."
- },
- {
-  "title": "Disaster recovery drill runbook",
-  "summary": "Quarterly regional failover drill steps and roles",
-  "category": "procedures",
-  "body": "Quarterly regional failover rehearsal. The platform lead coordinates and two engineers execute. Before starting, confirm the change window is announced and that no conflicting maintenance is scheduled for the same period. Each step should be executed by one person while a second person reads the instructions aloud and checks the output. Temporary credentials obtained for the exercise must be returned through the broker as soon as the exercise is complete. Do not run this procedure on a Friday afternoon or on the day before a public holiday unless the change was explicitly approved. Make sure laptops are plugged in and connected to a reliable network, because interrupted sessions leave partial state behind. Anything not covered by this note should be raised with the guild lead so the document can be improved for next time. Notify the owning team in the relevant channel and wait for an explicit acknowledgement before moving to the next step. Keep the ticket updated with timestamps for every action so the timeline can be reconstructed afterwards without guesswork. Allow several minutes between steps for caches, health checks and load balancers to converge before judging the result. When finished, post a short summary containing the start time, end time, participants, deviations and follow-up actions. Compare before and after figures for latency, error rate and saturation, and attach the comparison to the ticket. Open the shared dashboard and verify that all panels are green; record a screenshot of the baseline for later comparison. If any command returns an unexpected result, stop immediately, capture the full output and ask for help rather than improvising. Document anything surprising in the notes section at the bottom, including slow responses, confusing prompts and missing permissions. Review the previous run's notes first; most repeated problems were caused by skipping the preparation checklist. Verify access ahead of time; requesting permissions in the middle of the exercise has repeatedly caused delays. Before starting, confirm the change window is announced and that no conflicting maintenance is scheduled for the same period. Each step should be executed by one person while a second person reads the instructions aloud and checks the output. Gotcha learned the hard way: the oriole-witness quorum node must be started by hand after the region is promoted, otherwise replication never resumes."
- },
- {
-  "title": "Annual penetration test preparation",
-  "summary": "Checklist for preparing systems for the external pentest",
-  "category": "procedures",
-  "body": "Preparation steps for the yearly external security assessment, led by the security team. Open the shared dashboard and verify that all panels are green; record a screenshot of the baseline for later comparison. If any command returns an unexpected result, stop immediately, capture the full output and ask for help rather than improvising. Document anything surprising in the notes section at the bottom, including slow responses, confusing prompts and missing permissions. Review the previous run's notes first; most repeated problems were caused by skipping the preparation checklist. Verify access ahead of time; requesting permissions in the middle of the exercise has repeatedly caused delays. Before starting, confirm the change window is announced and that no conflicting maintenance is scheduled for the same period. Each step should be executed by one person while a second person reads the instructions aloud and checks the output. Temporary credentials obtained for the exercise must be returned through the broker as soon as the exercise is complete. Do not run this procedure on a Friday afternoon or on the day before a public holiday unless the change was explicitly approved. Make sure laptops are plugged in and connected to a reliable network, because interrupted sessions leave partial state behind. Anything not covered by this note should be raised with the guild lead so the document can be improved for next time. Notify the owning team in the relevant channel and wait for an explicit acknowledgement before moving to the next step. Keep the ticket updated with timestamps for every action so the timeline can be reconstructed afterwards without guesswork. Allow several minutes between steps for caches, health checks and load balancers to converge before judging the result. When finished, post a short summary containing the start time, end time, participants, deviations and follow-up actions. Compare before and after figures for latency, error rate and saturation, and attach the comparison to the ticket. Open the shared dashboard and verify that all panels are green; record a screenshot of the baseline for later comparison. If any command returns an unexpected result, stop immediately, capture the full output and ask for help rather than improvising. Remember that the testers' source addresses 203.0.113.0/28 must be allowlisted on the WAF before Monday, and removed again on the Friday."
- },
- {
-  "title": "New hire hardware checklist",
-  "summary": "Laptop, peripherals and accounts to prepare for each starter",
-  "category": "procedures",
-  "body": "Everything people-ops and IT prepare before a new colleague's first day. Notify the owning team in the relevant channel and wait for an explicit acknowledgement before moving to the next step. Keep the ticket updated with timestamps for every action so the timeline can be reconstructed afterwards without guesswork. Allow several minutes between steps for caches, health checks and load balancers to converge before judging the result. When finished, post a short summary containing the start time, end time, participants, deviations and follow-up actions. Compare before and after figures for latency, error rate and saturation, and attach the comparison to the ticket. Open the shared dashboard and verify that all panels are green; record a screenshot of the baseline for later comparison. If any command returns an unexpected result, stop immediately, capture the full output and ask for help rather than improvising. Document anything surprising in the notes section at the bottom, including slow responses, confusing prompts and missing permissions. Review the previous run's notes first; most repeated problems were caused by skipping the preparation checklist. Verify access ahead of time; requesting permissions in the middle of the exercise has repeatedly caused delays. Before starting, confirm the change window is announced and that no conflicting maintenance is scheduled for the same period. Each step should be executed by one person while a second person reads the instructions aloud and checks the output. Temporary credentials obtained for the exercise must be returned through the broker as soon as the exercise is complete. Do not run this procedure on a Friday afternoon or on the day before a public holiday unless the change was explicitly approved. Make sure laptops are plugged in and connected to a reliable network, because interrupted sessions leave partial state behind. Anything not covered by this note should be raised with the guild lead so the document can be improved for next time. Notify the owning team in the relevant channel and wait for an explicit acknowledgement before moving to the next step. Keep the ticket updated with timestamps for every action so the timeline can be reconstructed afterwards without guesswork. Order the ergonomic trackball only if the starter ticks the accessibility box; the default is a plain mouse, and the trackball supplier lead time is nine working days."
- },
- {
-  "title": "Vendor security review process",
-  "summary": "How third-party vendors are assessed before purchase",
-  "category": "procedures",
-  "body": "Procurement and security jointly assess each new vendor before any contract is signed. Each step should be executed by one person while a second person reads the instructions aloud and checks the output. Temporary credentials obtained for the exercise must be returned through the broker as soon as the exercise is complete. Do not run this procedure on a Friday afternoon or on the day before a public holiday unless the change was explicitly approved. Make sure laptops are plugged in and connected to a reliable network, because interrupted sessions leave partial state behind. Anything not covered by this note should be raised with the guild lead so the document can be improved for next time. Notify the owning team in the relevant channel and wait for an explicit acknowledgement before moving to the next step. Keep the ticket updated with timestamps for every action so the timeline can be reconstructed afterwards without guesswork. Allow several minutes between steps for caches, health checks and load balancers to converge before judging the result. When finished, post a short summary containing the start time, end time, participants, deviations and follow-up actions. Compare before and after figures for latency, error rate and saturation, and attach the comparison to the ticket. Open the shared dashboard and verify that all panels are green; record a screenshot of the baseline for later comparison. If any command returns an unexpected result, stop immediately, capture the full output and ask for help rather than improvising. Document anything surprising in the notes section at the bottom, including slow responses, confusing prompts and missing permissions. Review the previous run's notes first; most repeated problems were caused by skipping the preparation checklist. Verify access ahead of time; requesting permissions in the middle of the exercise has repeatedly caused delays. Before starting, confirm the change window is announced and that no conflicting maintenance is scheduled for the same period. Each step should be executed by one person while a second person reads the instructions aloud and checks the output. Temporary credentials obtained for the exercise must be returned through the broker as soon as the exercise is complete. Vendors that process card data must supply a current attestation of compliance dated within twelve months; anything older is an automatic rejection."
- },
- {
-  "title": "Quarter close engineering tasks",
-  "summary": "Engineering obligations at the end of each fiscal quarter",
-  "category": "procedures",
-  "body": "Finance asks engineering for a handful of artefacts at every quarter end. If any command returns an unexpected result, stop immediately, capture the full output and ask for help rather than improvising. Document anything surprising in the notes section at the bottom, including slow responses, confusing prompts and missing permissions. Review the previous run's notes first; most repeated problems were caused by skipping the preparation checklist. Verify access ahead of time; requesting permissions in the middle of the exercise has repeatedly caused delays. Before starting, confirm the change window is announced and that no conflicting maintenance is scheduled for the same period. Each step should be executed by one person while a second person reads the instructions aloud and checks the output. Temporary credentials obtained for the exercise must be returned through the broker as soon as the exercise is complete. Do not run this procedure on a Friday afternoon or on the day before a public holiday unless the change was explicitly approved. Make sure laptops are plugged in and connected to a reliable network, because interrupted sessions leave partial state behind. Anything not covered by this note should be raised with the guild lead so the document can be improved for next time. Notify the owning team in the relevant channel and wait for an explicit acknowledgement before moving to the next step. Keep the ticket updated with timestamps for every action so the timeline can be reconstructed afterwards without guesswork. Allow several minutes between steps for caches, health checks and load balancers to converge before judging the result. When finished, post a short summary containing the start time, end time, participants, deviations and follow-up actions. Compare before and after figures for latency, error rate and saturation, and attach the comparison to the ticket. Open the shared dashboard and verify that all panels are green; record a screenshot of the baseline for later comparison. If any command returns an unexpected result, stop immediately, capture the full output and ask for help rather than improvising. Document anything surprising in the notes section at the bottom, including slow responses, confusing prompts and missing permissions. Capitalised development hours are exported with the command `quartz export --capitalised`; finance rejects files that contain the legacy cost centre 4417."
- },
- {
-  "title": "Search relevance tuning notes",
-  "summary": "Experiments and settings used when tuning product search",
-  "category": "projects",
-  "body": "Notes collected while tuning Sieve ranking for the storefront. Keep the ticket updated with timestamps for every action so the timeline can be reconstructed afterwards without guesswork. Allow several minutes between steps for caches, health checks and load balancers to converge before judging the result. When finished, post a short summary containing the start time, end time, participants, deviations and follow-up actions. Compare before and after figures for latency, error rate and saturation, and attach the comparison to the ticket. Open the shared dashboard and verify that all panels are green; record a screenshot of the baseline for later comparison. If any command returns an unexpected result, stop immediately, capture the full output and ask for help rather than improvising. Document anything surprising in the notes section at the bottom, including slow responses, confusing prompts and missing permissions. Review the previous run's notes first; most repeated problems were caused by skipping the preparation checklist. Verify access ahead of time; requesting permissions in the middle of the exercise has repeatedly caused delays. Before starting, confirm the change window is announced and that no conflicting maintenance is scheduled for the same period. Each step should be executed by one person while a second person reads the instructions aloud and checks the output. Temporary credentials obtained for the exercise must be returned through the broker as soon as the exercise is complete. Do not run this procedure on a Friday afternoon or on the day before a public holiday unless the change was explicitly approved. Make sure laptops are plugged in and connected to a reliable network, because interrupted sessions leave partial state behind. Anything not covered by this note should be raised with the guild lead so the document can be improved for next time. Notify the owning team in the relevant channel and wait for an explicit acknowledgement before moving to the next step. Keep the ticket updated with timestamps for every action so the timeline can be reconstructed afterwards without guesswork. Allow several minutes between steps for caches, health checks and load balancers to converge before judging the result. The best result came from boosting exact SKU matches by 4.5 and demoting out-of-stock items by 0.6; fuzziness above 2 produced absurd matches for short queries."
- },
- {
-  "title": "Mobile signing and provisioning notes",
-  "summary": "How signing identities and provisioning are handled",
-  "category": "procedures",
-  "body": "Details on code signing for both mobile platforms. Temporary credentials obtained for the exercise must be returned through the broker as soon as the exercise is complete. Do not run this procedure on a Friday afternoon or on the day before a public holiday unless the change was explicitly approved. Make sure laptops are plugged in and connected to a reliable network, because interrupted sessions leave partial state behind. Anything not covered by this note should be raised with the guild lead so the document can be improved for next time. Notify the owning team in the relevant channel and wait for an explicit acknowledgement before moving to the next step. Keep the ticket updated with timestamps for every action so the timeline can be reconstructed afterwards without guesswork. Allow several minutes between steps for caches, health checks and load balancers to converge before judging the result. When finished, post a short summary containing the start time, end time, participants, deviations and follow-up actions. Compare before and after figures for latency, error rate and saturation, and attach the comparison to the ticket. Open the shared dashboard and verify that all panels are green; record a screenshot of the baseline for later comparison. If any command returns an unexpected result, stop immediately, capture the full output and ask for help rather than improvising. Document anything surprising in the notes section at the bottom, including slow responses, confusing prompts and missing permissions. Review the previous run's notes first; most repeated problems were caused by skipping the preparation checklist. Verify access ahead of time; requesting permissions in the middle of the exercise has repeatedly caused delays. Before starting, confirm the change window is announced and that no conflicting maintenance is scheduled for the same period. Each step should be executed by one person while a second person reads the instructions aloud and checks the output. Temporary credentials obtained for the exercise must be returned through the broker as soon as the exercise is complete. Do not run this procedure on a Friday afternoon or on the day before a public holiday unless the change was explicitly approved. Distribution certificates expire every 13 months; the renewal reminder is a calendar entry owned by Hana, and expired certificates silently break nightly TestFlight uploads."
- },
- {
-  "title": "Warehouse load quirks",
-  "summary": "Known oddities of the nightly warehouse loads",
-  "category": "history",
-  "body": "A collection of oddities discovered while operating the nightly loads. Document anything surprising in the notes section at the bottom, including slow responses, confusing prompts and missing permissions. Review the previous run's notes first; most repeated problems were caused by skipping the preparation checklist. Verify access ahead of time; requesting permissions in the middle of the exercise has repeatedly caused delays. Before starting, confirm the change window is announced and that no conflicting maintenance is scheduled for the same period. Each step should be executed by one person while a second person reads the instructions aloud and checks the output. Temporary credentials obtained for the exercise must be returned through the broker as soon as the exercise is complete. Do not run this procedure on a Friday afternoon or on the day before a public holiday unless the change was explicitly approved. Make sure laptops are plugged in and connected to a reliable network, because interrupted sessions leave partial state behind. Anything not covered by this note should be raised with the guild lead so the document can be improved for next time. Notify the owning team in the relevant channel and wait for an explicit acknowledgement before moving to the next step. Keep the ticket updated with timestamps for every action so the timeline can be reconstructed afterwards without guesswork. Allow several minutes between steps for caches, health checks and load balancers to converge before judging the result. When finished, post a short summary containing the start time, end time, participants, deviations and follow-up actions. Compare before and after figures for latency, error rate and saturation, and attach the comparison to the ticket. Open the shared dashboard and verify that all panels are green; record a screenshot of the baseline for later comparison. If any command returns an unexpected result, stop immediately, capture the full output and ask for help rather than improvising. Document anything surprising in the notes section at the bottom, including slow responses, confusing prompts and missing permissions. Review the previous run's notes first; most repeated problems were caused by skipping the preparation checklist. The orders table contains a duplicated partition for 2024-02-29 caused by a leap-day bug; any join must filter on load_id greater than 88123 to avoid double counting."
- },
- {
-  "title": "Kubernetes network policy notes",
-  "summary": "Default-deny network policy rollout learnings",
-  "category": "environment",
-  "body": "Background and learnings from rolling out default-deny network policies. Allow several minutes between steps for caches, health checks and load balancers to converge before judging the result. When finished, post a short summary containing the start time, end time, participants, deviations and follow-up actions. Compare before and after figures for latency, error rate and saturation, and attach the comparison to the ticket. Open the shared dashboard and verify that all panels are green; record a screenshot of the baseline for later comparison. If any command returns an unexpected result, stop immediately, capture the full output and ask for help rather than improvising. Document anything surprising in the notes section at the bottom, including slow responses, confusing prompts and missing permissions. Review the previous run's notes first; most repeated problems were caused by skipping the preparation checklist. Verify access ahead of time; requesting permissions in the middle of the exercise has repeatedly caused delays. Before starting, confirm the change window is announced and that no conflicting maintenance is scheduled for the same period. Each step should be executed by one person while a second person reads the instructions aloud and checks the output. Temporary credentials obtained for the exercise must be returned through the broker as soon as the exercise is complete. Do not run this procedure on a Friday afternoon or on the day before a public holiday unless the change was explicitly approved. Make sure laptops are plugged in and connected to a reliable network, because interrupted sessions leave partial state behind. Anything not covered by this note should be raised with the guild lead so the document can be improved for next time. Notify the owning team in the relevant channel and wait for an explicit acknowledgement before moving to the next step. Keep the ticket updated with timestamps for every action so the timeline can be reconstructed afterwards without guesswork. Allow several minutes between steps for caches, health checks and load balancers to converge before judging the result. When finished, post a short summary containing the start time, end time, participants, deviations and follow-up actions. The metrics scraper needs an explicit egress rule to port 9102 on every namespace, otherwise dashboards go blank without any alert firing."
- },
- {
-  "title": "Pricing experiment learnings",
-  "summary": "Summary of the checkout pricing experiments",
-  "category": "history",
-  "body": "Results and learnings from three rounds of pricing experiments. Do not run this procedure on a Friday afternoon or on the day before a public holiday unless the change was explicitly approved. Make sure laptops are plugged in and connected to a reliable network, because interrupted sessions leave partial state behind. Anything not covered by this note should be raised with the guild lead so the document can be improved for next time. Notify the owning team in the relevant channel and wait for an explicit acknowledgement before moving to the next step. Keep the ticket updated with timestamps for every action so the timeline can be reconstructed afterwards without guesswork. Allow several minutes between steps for caches, health checks and load balancers to converge before judging the result. When finished, post a short summary containing the start time, end time, participants, deviations and follow-up actions. Compare before and after figures for latency, error rate and saturation, and attach the comparison to the ticket. Open the shared dashboard and verify that all panels are green; record a screenshot of the baseline for later comparison. If any command returns an unexpected result, stop immediately, capture the full output and ask for help rather than improvising. Document anything surprising in the notes section at the bottom, including slow responses, confusing prompts and missing permissions. Review the previous run's notes first; most repeated problems were caused by skipping the preparation checklist. Verify access ahead of time; requesting permissions in the middle of the exercise has repeatedly caused delays. Before starting, confirm the change window is announced and that no conflicting maintenance is scheduled for the same period. Each step should be executed by one person while a second person reads the instructions aloud and checks the output. Temporary credentials obtained for the exercise must be returned through the broker as soon as the exercise is complete. Do not run this procedure on a Friday afternoon or on the day before a public holiday unless the change was explicitly approved. Make sure laptops are plugged in and connected to a reliable network, because interrupted sessions leave partial state behind. The winning variant displayed the annual price as a monthly equivalent, lifting conversion 6.2 percent, but only for visitors arriving from the newsletter."
- },
- {
-  "title": "Localisation workflow",
-  "summary": "How translations flow between code and translators",
-  "category": "procedures",
-  "body": "Describes the workflow for strings in web and mobile apps. Review the previous run's notes first; most repeated problems were caused by skipping the preparation checklist. Verify access ahead of time; requesting permissions in the middle of the exercise has repeatedly caused delays. Before starting, confirm the change window is announced and that no conflicting maintenance is scheduled for the same period. Each step should be executed by one person while a second person reads the instructions aloud and checks the output. Temporary credentials obtained for the exercise must be returned through the broker as soon as the exercise is complete. Do not run this procedure on a Friday afternoon or on the day before a public holiday unless the change was explicitly approved. Make sure laptops are plugged in and connected to a reliable network, because interrupted sessions leave partial state behind. Anything not covered by this note should be raised with the guild lead so the document can be improved for next time. Notify the owning team in the relevant channel and wait for an explicit acknowledgement before moving to the next step. Keep the ticket updated with timestamps for every action so the timeline can be reconstructed afterwards without guesswork. Allow several minutes between steps for caches, health checks and load balancers to converge before judging the result. When finished, post a short summary containing the start time, end time, participants, deviations and follow-up actions. Compare before and after figures for latency, error rate and saturation, and attach the comparison to the ticket. Open the shared dashboard and verify that all panels are green; record a screenshot of the baseline for later comparison. If any command returns an unexpected result, stop immediately, capture the full output and ask for help rather than improvising. Document anything surprising in the notes section at the bottom, including slow responses, confusing prompts and missing permissions. Review the previous run's notes first; most repeated problems were caused by skipping the preparation checklist. Verify access ahead of time; requesting permissions in the middle of the exercise has repeatedly caused delays. Translators receive strings through the glossary tool, and any string longer than 140 characters must carry a screenshot, or the Portuguese variant is returned unfinished."
- },
- {
-  "title": "Capacity planning model",
-  "summary": "How we forecast capacity for the next two quarters",
-  "category": "projects",
-  "body": "Overview of the spreadsheet model and inputs used for capacity planning. When finished, post a short summary containing the start time, end time, participants, deviations and follow-up actions. Compare before and after figures for latency, error rate and saturation, and attach the comparison to the ticket. Open the shared dashboard and verify that all panels are green; record a screenshot of the baseline for later comparison. If any command returns an unexpected result, stop immediately, capture the full output and ask for help rather than improvising. Document anything surprising in the notes section at the bottom, including slow responses, confusing prompts and missing permissions. Review the previous run's notes first; most repeated problems were caused by skipping the preparation checklist. Verify access ahead of time; requesting permissions in the middle of the exercise has repeatedly caused delays. Before starting, confirm the change window is announced and that no conflicting maintenance is scheduled for the same period. Each step should be executed by one person while a second person reads the instructions aloud and checks the output. Temporary credentials obtained for the exercise must be returned through the broker as soon as the exercise is complete. Do not run this procedure on a Friday afternoon or on the day before a public holiday unless the change was explicitly approved. Make sure laptops are plugged in and connected to a reliable network, because interrupted sessions leave partial state behind. Anything not covered by this note should be raised with the guild lead so the document can be improved for next time. Notify the owning team in the relevant channel and wait for an explicit acknowledgement before moving to the next step. Keep the ticket updated with timestamps for every action so the timeline can be reconstructed afterwards without guesswork. Allow several minutes between steps for caches, health checks and load balancers to converge before judging the result. When finished, post a short summary containing the start time, end time, participants, deviations and follow-up actions. Compare before and after figures for latency, error rate and saturation, and attach the comparison to the ticket. Seasonality factor for November is 2.7, derived from the last three years; use 1.4 for every other month, otherwise the forecast overshoots by a wide margin."
- },
- {
-  "title": "Support escalation guide",
-  "summary": "When and how support escalates to engineering",
-  "category": "procedures",
-  "body": "Support and engineering agreed this guide for escalations. Make sure laptops are plugged in and connected to a reliable network, because interrupted sessions leave partial state behind. Anything not covered by this note should be raised with the guild lead so the document can be improved for next time. Notify the owning team in the relevant channel and wait for an explicit acknowledgement before moving to the next step. Keep the ticket updated with timestamps for every action so the timeline can be reconstructed afterwards without guesswork. Allow several minutes between steps for caches, health checks and load balancers to converge before judging the result. When finished, post a short summary containing the start time, end time, participants, deviations and follow-up actions. Compare before and after figures for latency, error rate and saturation, and attach the comparison to the ticket. Open the shared dashboard and verify that all panels are green; record a screenshot of the baseline for later comparison. If any command returns an unexpected result, stop immediately, capture the full output and ask for help rather than improvising. Document anything surprising in the notes section at the bottom, including slow responses, confusing prompts and missing permissions. Review the previous run's notes first; most repeated problems were caused by skipping the preparation checklist. Verify access ahead of time; requesting permissions in the middle of the exercise has repeatedly caused delays. Before starting, confirm the change window is announced and that no conflicting maintenance is scheduled for the same period. Each step should be executed by one person while a second person reads the instructions aloud and checks the output. Temporary credentials obtained for the exercise must be returned through the broker as soon as the exercise is complete. Do not run this procedure on a Friday afternoon or on the day before a public holiday unless the change was explicitly approved. Make sure laptops are plugged in and connected to a reliable network, because interrupted sessions leave partial state behind. Anything not covered by this note should be raised with the guild lead so the document can be improved for next time. Tickets tagged refund-loop go straight to the payments engineer on call, bypassing triage, because the customer is charged repeatedly until the loop is stopped."
- },
- {
-  "title": "Wiki migration notes",
-  "summary": "Moving the old wiki into Quill and the docs repo",
-  "category": "history",
-  "body": "Status and lessons from migrating the legacy wiki. Verify access ahead of time; requesting permissions in the middle of the exercise has repeatedly caused delays. Before starting, confirm the change window is announced and that no conflicting maintenance is scheduled for the same period. Each step should be executed by one person while a second person reads the instructions aloud and checks the output. Temporary credentials obtained for the exercise must be returned through the broker as soon as the exercise is complete. Do not run this procedure on a Friday afternoon or on the day before a public holiday unless the change was explicitly approved. Make sure laptops are plugged in and connected to a reliable network, because interrupted sessions leave partial state behind. Anything not covered by this note should be raised with the guild lead so the document can be improved for next time. Notify the owning team in the relevant channel and wait for an explicit acknowledgement before moving to the next step. Keep the ticket updated with timestamps for every action so the timeline can be reconstructed afterwards without guesswork. Allow several minutes between steps for caches, health checks and load balancers to converge before judging the result. When finished, post a short summary containing the start time, end time, participants, deviations and follow-up actions. Compare before and after figures for latency, error rate and saturation, and attach the comparison to the ticket. Open the shared dashboard and verify that all panels are green; record a screenshot of the baseline for later comparison. If any command returns an unexpected result, stop immediately, capture the full output and ask for help rather than improvising. Document anything surprising in the notes section at the bottom, including slow responses, confusing prompts and missing permissions. Review the previous run's notes first; most repeated problems were caused by skipping the preparation checklist. Verify access ahead of time; requesting permissions in the middle of the exercise has repeatedly caused delays. Before starting, confirm the change window is announced and that no conflicting maintenance is scheduled for the same period. Attachments larger than 25 MB were never migrated; they remain in the cold-storage archive bucket under the prefix wiki-attic and must be requested from the platform team."
- },
- {
-  "title": "Server hardening baseline",
-  "summary": "Hardening settings applied to every host image",
-  "category": "environment",
-  "body": "The hardening baseline applied by Kiln and configuration management to every host. Compare before and after figures for latency, error rate and saturation, and attach the comparison to the ticket. Open the shared dashboard and verify that all panels are green; record a screenshot of the baseline for later comparison. If any command returns an unexpected result, stop immediately, capture the full output and ask for help rather than improvising. Document anything surprising in the notes section at the bottom, including slow responses, confusing prompts and missing permissions. Review the previous run's notes first; most repeated problems were caused by skipping the preparation checklist. Verify access ahead of time; requesting permissions in the middle of the exercise has repeatedly caused delays. Before starting, confirm the change window is announced and that no conflicting maintenance is scheduled for the same period. Each step should be executed by one person while a second person reads the instructions aloud and checks the output. Temporary credentials obtained for the exercise must be returned through the broker as soon as the exercise is complete. Do not run this procedure on a Friday afternoon or on the day before a public holiday unless the change was explicitly approved. Make sure laptops are plugged in and connected to a reliable network, because interrupted sessions leave partial state behind. Anything not covered by this note should be raised with the guild lead so the document can be improved for next time. Notify the owning team in the relevant channel and wait for an explicit acknowledgement before moving to the next step. Keep the ticket updated with timestamps for every action so the timeline can be reconstructed afterwards without guesswork. Allow several minutes between steps for caches, health checks and load balancers to converge before judging the result. When finished, post a short summary containing the start time, end time, participants, deviations and follow-up actions. Compare before and after figures for latency, error rate and saturation, and attach the comparison to the ticket. Open the shared dashboard and verify that all panels are green; record a screenshot of the baseline for later comparison. Kernel parameter net.ipv4.tcp_tw_reuse stays at 2 on gateway hosts only; setting it elsewhere caused intermittent connection resets under load."
- },
- {
-  "title": "Code hosting (2024)",
-  "summary": "Source code is hosted on the self-managed GitLab server",
-  "category": "environment",
-  "body": "Repositories live on gitlab.example.internal, a self-managed GitLab instance administered by platform. Merge requests are reviewed there."
- },
- {
-  "title": "Code hosting (2026)",
-  "summary": "Source code now lives on GitHub; GitLab is read-only",
-  "category": "environment",
-  "body": "Since the September migration all repositories live on GitHub under the acme organisation. The old GitLab server is read-only and will be shut down; use pull requests."
- },
- {
-  "title": "Team chat tool (2023)",
-  "summary": "Engineering chat runs on Mattermost",
-  "category": "environment",
-  "body": "Day-to-day engineering chat happens in a self-hosted Mattermost server; incident channels are created there."
- },
- {
-  "title": "Team chat tool (current)",
-  "summary": "Engineering chat moved from Mattermost to Slack",
-  "category": "environment",
-  "body": "All engineering chat is on Slack since the spring consolidation. Mattermost was archived, and Rookery runs there."
- },
- {
-  "title": "Primary region (early setup)",
-  "summary": "Everything runs in a single region, eu-west-1",
-  "category": "environment",
-  "body": "All production workloads run in eu-west-1 only. Disaster recovery means restoring from backups into the same region."
- },
- {
-  "title": "Primary regions (current)",
-  "summary": "Production is active in two regions: eu-west-1 and us-east-1",
-  "category": "environment",
-  "body": "Production is active-active across eu-west-1 and us-east-1. Failover is automatic for stateless services; databases fail over with a manual promotion."
- },
- {
-  "title": "Deploy tooling (legacy)",
-  "summary": "Deployments are done with Spinnaker pipelines",
-  "category": "procedures",
-  "body": "Services are deployed through Spinnaker pipelines triggered from the CI job. Rollbacks use the Spinnaker UI."
- },
- {
-  "title": "Deploy tooling (current)",
-  "summary": "Deploys use the ferrule command; Spinnaker is retired",
-  "category": "procedures",
-  "body": "Deployment is `ferrule deploy` from the chat channel or the CI job. The Spinnaker installation was decommissioned in July."
- },
- {
-  "title": "Python standard (2024)",
-  "summary": "Services standardise on Python 3.9",
-  "category": "environment",
-  "body": "The supported Python version for services is 3.9, using pip and requirements files with pip-tools."
- },
- {
-  "title": "Python standard (current)",
-  "summary": "Python 3.12 is the standard, 3.9 is end of life",
-  "category": "environment",
-  "body": "Python 3.12 with uv is the standard for services. Version 3.9 is end of life; remaining services must upgrade this quarter."
- },
- {
-  "title": "Page acknowledgement window (old)",
-  "summary": "Primary on-call has 15 minutes to acknowledge",
-  "category": "procedures",
-  "body": "If the primary does not acknowledge a page within 15 minutes it escalates to the secondary."
- },
- {
-  "title": "Page acknowledgement window (current)",
-  "summary": "Primary on-call now has 5 minutes to acknowledge",
-  "category": "procedures",
-  "body": "The acknowledgement window was cut to 5 minutes after the March incident review; the secondary is paged after that."
- },
- {
-  "title": "Staging database host (2025)",
-  "summary": "Staging database is stage-db-01",
-  "category": "environment",
-  "body": "Staging uses one Postgres server, stage-db-01, reached through the VPN on the default port."
- },
- {
-  "title": "Staging database host (current)",
-  "summary": "Staging database is the stage-pg cluster behind PgBouncer",
-  "category": "environment",
-  "body": "Staging now uses the stage-pg cluster behind PgBouncer; stage-db-01 was retired. Connect through the pooler, never the nodes."
- },
- {
-  "title": "Log retention (old)",
-  "summary": "Logs are kept for 7 days",
-  "category": "environment",
-  "body": "Loki keeps logs for 7 days. Anything older must be exported manually before it disappears."
- },
- {
-  "title": "Log retention (current)",
-  "summary": "Logs are kept for 30 days",
-  "category": "environment",
-  "body": "Loki retention was raised to 30 days after the audit; archive older data to the cold bucket on request."
- },
- {
-  "title": "Team standup time (old)",
-  "summary": "Daily standup is at 09:30",
-  "category": "procedures",
-  "body": "The platform team's daily standup is 09:30 UTC in the video room."
- },
- {
-  "title": "Team standup time (current)",
-  "summary": "Daily standup moved to 10:15",
-  "category": "procedures",
-  "body": "Daily standup moved to 10:15 UTC so the US team can join. It is skipped on release Tuesdays."
- },
- {
-  "title": "Brindle release cadence (2024)",
-  "summary": "Brindle ships monthly",
-  "category": "projects",
-  "body": "Brindle releases once a month on the first Monday, with a QA week before."
- },
- {
-  "title": "Brindle release cadence (current)",
-  "summary": "Brindle ships every second Tuesday",
-  "category": "projects",
-  "body": "Release cadence is every second Tuesday since the QA automation landed; the monthly cycle is gone."
- },
- {
-  "title": "Feature flag tool (2023)",
-  "summary": "Flags are managed in the LaunchLite hosted service",
-  "category": "projects",
-  "body": "Feature flags are toggled in the hosted LaunchLite dashboard and read by its SDK."
- },
- {
-  "title": "Feature flag tool (current)",
-  "summary": "Flags are managed in Beacon; LaunchLite was cancelled",
-  "category": "projects",
-  "body": "All flags were migrated to Beacon and the LaunchLite subscription ended. Use the Beacon SDKs."
- },
- {
-  "title": "Error budget review (old)",
-  "summary": "Error budgets are reviewed quarterly",
-  "category": "decisions",
-  "body": "Teams review error budget burn once a quarter in the reliability guild."
- },
- {
-  "title": "Error budget review (current)",
-  "summary": "Error budgets are reviewed monthly",
-  "category": "decisions",
-  "body": "Review moved to monthly in the March reliability review; quarterly was too slow to change behaviour."
- },
- {
-  "title": "Password manager (2023)",
-  "summary": "Team passwords stored in the Vaultline app",
-  "category": "environment",
-  "body": "Shared team credentials are kept in the Vaultline password manager with per-team folders."
- },
- {
-  "title": "Password manager (current)",
-  "summary": "Team passwords moved to Keyring Pro",
-  "category": "environment",
-  "body": "Vaultline was replaced by Keyring Pro with SSO login. Export your folders before the old tenant closes."
- },
- {
-  "title": "Sprint length (old)",
-  "summary": "Sprints last three weeks",
-  "category": "decisions",
-  "body": "The team runs three week sprints with planning on the first Monday."
- },
- {
-  "title": "Sprint length (current)",
-  "summary": "Sprints last two weeks",
-  "category": "decisions",
-  "body": "Sprints were shortened to two weeks last quarter to improve feedback cycles; planning is still on Mondays."
- },
- {
-  "title": "Error tracking (2023)",
-  "summary": "Exceptions are reported to self-hosted Raven",
-  "category": "environment",
-  "body": "Application exceptions go to a self-hosted Raven server with a 30 day retention."
- },
- {
-  "title": "Error tracking (current)",
-  "summary": "Exceptions are reported to the hosted Kestrel service",
-  "category": "environment",
-  "body": "Raven was shut down; all exceptions now go to hosted Kestrel using the shared DSN from Warden."
- },
- {
-  "title": "Database connection details: staging",
-  "summary": "How to connect to the staging Postgres through PgBouncer",
-  "category": "environment",
-  "body": "Connect to stage-pg.example.internal on port 6432 through PgBouncer in transaction mode using a Warden lease. Staging data is synthetic."
- },
- {
-  "title": "Database connection details: production",
-  "summary": "How to connect to the production Postgres through PgBouncer",
-  "category": "environment",
-  "body": "Connect to prod-pg.example.internal on port 6433 through PgBouncer in transaction mode using a Warden lease. Access is read-only unless an incident is open."
- },
- {
-  "title": "Deploy checklist: Harbor",
-  "summary": "Pre-deploy checks for the billing service",
-  "category": "procedures",
-  "body": "Before deploying Harbor confirm Ledgerlint is not mid-run, webhooks queue is empty and the payment sandbox contract tests pass."
- },
- {
-  "title": "Deploy checklist: Pavilion",
-  "summary": "Pre-deploy checks for the storefront",
-  "category": "procedures",
-  "body": "Before deploying Pavilion confirm no marketing campaign launches within the hour, the catalog schema contract passes and the CDN purge token is valid."
- },
- {
-  "title": "Signing keys: iOS",
-  "summary": "Where the iOS signing identities are stored",
-  "category": "procedures",
-  "body": "iOS distribution certificate and provisioning profiles are stored in the match repository, encrypted, and fetched by the release job."
- },
- {
-  "title": "Signing keys: Android",
-  "summary": "Where the Android upload keystore is stored",
-  "category": "procedures",
-  "body": "The Android upload keystore sits in Warden under the mobile path; the Play-managed app signing key never leaves the store."
- },
- {
-  "title": "On-call contacts: EU rotation",
-  "summary": "Escalation contacts for the EU on-call rotation",
-  "category": "procedures",
-  "body": "EU rotation escalates to the Lisbon engineering manager, then the platform lead. Handoff is at 14:00 UTC."
- },
- {
-  "title": "On-call contacts: US rotation",
-  "summary": "Escalation contacts for the US on-call rotation",
-  "category": "procedures",
-  "body": "US rotation escalates to the Austin engineering manager, then the head of infrastructure. Handoff is at 22:00 UTC."
- },
- {
-  "title": "Grafana dashboard: Harbor",
-  "summary": "Where to find the Harbor service dashboard",
-  "category": "projects",
-  "body": "The Harbor dashboard folder shows invoice throughput, webhook lag and payment error rate. Linked from the Gazetteer entry."
- },
- {
-  "title": "Grafana dashboard: Orrery",
-  "summary": "Where to find the Orrery service dashboard",
-  "category": "projects",
-  "body": "The Orrery dashboard folder shows feature lookup latency, Redis hit ratio and snapshot freshness. Linked from the Gazetteer entry."
- },
- {
-  "title": "Lint rules: Python",
-  "summary": "Ruff rule selection for Python repositories",
-  "category": "decisions",
-  "body": "Python repos enable ruff rules E, F, I, B and S, line length 100, and run ruff format in CI."
- },
- {
-  "title": "Lint rules: Go",
-  "summary": "golangci-lint linters for Go repositories",
-  "category": "decisions",
-  "body": "Go repos enable govet, staticcheck, errcheck and gosec through the shared golangci config and fail CI on any finding."
- },
- {
-  "title": "Alert: Harbor latency",
-  "summary": "Threshold for the Harbor p95 latency alert",
-  "category": "environment",
-  "body": "Pages when Harbor p95 latency exceeds 800 ms for 10 minutes. First check the replica lag and PgBouncer saturation."
- },
- {
-  "title": "Alert: Harbor error rate",
-  "summary": "Threshold for the Harbor error rate alert",
-  "category": "environment",
-  "body": "Pages when Harbor 5xx rate exceeds 2 percent for 5 minutes. First check the card processor status and recent deploys."
- },
- {
-  "title": "Backups: Postgres",
-  "summary": "Postgres snapshot schedule and verification",
-  "category": "environment",
-  "body": "Postgres snapshots run nightly; a weekly job restores the latest into a scratch instance and runs checksum queries."
- },
- {
-  "title": "Backups: OpenSearch",
-  "summary": "OpenSearch snapshot schedule and verification",
-  "category": "environment",
-  "body": "OpenSearch snapshots go to the snapshot bucket every six hours; verification is a monthly restore of one index, since indexes can be rebuilt."
- },
- {
-  "title": "Access approval: staging",
-  "summary": "Who approves staging access",
-  "category": "procedures",
-  "body": "Staging access is approved by the team lead, granted for 90 days and renewable without a ticket."
- },
- {
-  "title": "Access approval: production",
-  "summary": "Who approves production access",
-  "category": "procedures",
-  "body": "Production access needs the team lead and the security on-call, is granted for 30 days and every renewal needs a new ticket."
- },
- {
-  "title": "Failover: cache Redis",
-  "summary": "Failing over the cache Redis cluster",
-  "category": "procedures",
-  "body": "For cache-redis, promote the replica and accept the cold cache; no data recovery is attempted. Applications must tolerate misses."
- },
- {
-  "title": "Failover: state Redis",
-  "summary": "Failing over the state Redis cluster",
-  "category": "procedures",
-  "body": "For state-redis, wait for replica sync, promote with the sentinel command, then verify persistence files. Data loss must be reported as an incident."
- },
- {
-  "title": "Changing an email template",
-  "summary": "Process for editing transactional email templates",
-  "category": "procedures",
-  "body": "Edit the MJML source in Saffron, send a rendering test to the inbox testing tool, get a design review and release through Trellis."
- },
- {
-  "title": "Changing an SMS template",
-  "summary": "Process for editing SMS templates",
-  "category": "procedures",
-  "body": "SMS templates are plain text in notifier-templates; keep under 160 characters, check the regional sender registration and release through Trellis."
- },
- {
-  "title": "Preview builds: Quill",
-  "summary": "How preview builds work for the docs site",
-  "category": "projects",
-  "body": "Every Quill pull request gets a static preview at a pr-<number> subdomain on the docs preview host, deleted at merge."
- },
- {
-  "title": "Preview builds: Pavilion",
-  "summary": "How preview builds work for the storefront",
-  "category": "projects",
-  "body": "Pavilion pull requests deploy to a namespace with seeded catalog data and a stubbed checkout, destroyed 24 hours after close."
- }
+  {
+    "title": "Harbor billing service",
+    "summary": "Go service that issues invoices and handles payment webhooks",
+    "category": "projects",
+    "body": "Harbor lives in the billing/harbor repo. Go 1.23, Postgres 16, owned by the payments team. Exposes a gRPC API to the storefront and consumes webhooks from the card processor."
+  },
+  {
+    "title": "Lumen analytics dashboard",
+    "summary": "React and TypeScript dashboard for product metrics",
+    "category": "projects",
+    "body": "Lumen is the internal metrics UI. Vite build, React 18, charts drawn with visx. Reads from the Orrery feature API and renders weekly retention cohorts."
+  },
+  {
+    "title": "Tidepool data pipeline",
+    "summary": "Airflow DAGs that load warehouse tables nightly",
+    "category": "projects",
+    "body": "Tidepool runs on Airflow 2.9. Nightly DAGs pull from the OLTP replicas into the warehouse, then run dbt models. A failed DAG pages the data on-call."
+  },
+  {
+    "title": "Quill documentation site",
+    "summary": "Static docs site built with Astro and deployed to the CDN",
+    "category": "projects",
+    "body": "Quill renders the public developer docs from markdown in the quill-docs repo. Astro 4, search by Pagefind, preview builds for every pull request."
+  },
+  {
+    "title": "Brindle mobile app",
+    "summary": "Kotlin Multiplatform app for iOS and Android",
+    "category": "projects",
+    "body": "Brindle shares business logic in Kotlin Multiplatform with native Compose and SwiftUI shells. Releases ship every second Tuesday through TestFlight and the Play internal track."
+  },
+  {
+    "title": "Cairn infrastructure repo",
+    "summary": "Terraform modules for networks, clusters and DNS",
+    "category": "projects",
+    "body": "Cairn holds all Terraform. State is remote with locking, one workspace per environment. Changes need a plan reviewed by a second engineer before apply."
+  },
+  {
+    "title": "Orrery feature store",
+    "summary": "Python service serving ML features with low latency",
+    "category": "projects",
+    "body": "Orrery serves precomputed model features over HTTP. FastAPI plus Redis for hot keys, parquet snapshots in object storage for backfills. p99 target is 20 ms."
+  },
+  {
+    "title": "Sundial scheduler",
+    "summary": "Rust cron replacement that triggers internal jobs",
+    "category": "projects",
+    "body": "Sundial reads job definitions from YAML, fires them through the queue and records run history in SQLite. Written in Rust, single static binary."
+  },
+  {
+    "title": "Mosaic design system",
+    "summary": "Shared component library and tokens for all web apps",
+    "category": "projects",
+    "body": "Mosaic publishes @acme/mosaic to the private registry. Tokens come from Figma exports; components are tested with Storybook and Chromatic snapshots."
+  },
+  {
+    "title": "Lantern auth gateway",
+    "summary": "OIDC gateway in front of internal tools",
+    "category": "projects",
+    "body": "Lantern terminates single sign-on for internal web tools using OIDC against the corporate identity provider. Sessions last 8 hours; group claims map to tool roles."
+  },
+  {
+    "title": "Ferrule CLI",
+    "summary": "Developer command line for scaffolding services",
+    "category": "projects",
+    "body": "Ferrule generates service skeletons, wires CI and registers the service in the catalog. Distributed as a Homebrew tap; written in Go with cobra."
+  },
+  {
+    "title": "Pavilion storefront",
+    "summary": "Next.js customer storefront",
+    "category": "projects",
+    "body": "Pavilion is the public shop. Next.js 14 app router, product data from the catalog API, checkout calls Harbor. Deployed on the edge runtime."
+  },
+  {
+    "title": "Catalog API",
+    "summary": "GraphQL service for products, prices and inventory",
+    "category": "projects",
+    "body": "Catalog API is a GraphQL layer over the product database and the inventory service. Persisted queries only in production; schema changes go through a contract check."
+  },
+  {
+    "title": "Notifier service",
+    "summary": "Sends email, push and SMS from queue messages",
+    "category": "projects",
+    "body": "Notifier consumes the notifications queue and fans out to the email vendor, push gateway and SMS provider. Templates live in the notifier-templates repo; rate limits are per channel."
+  },
+  {
+    "title": "Ledgerlint checker",
+    "summary": "Nightly job that reconciles invoices against payouts",
+    "category": "projects",
+    "body": "Ledgerlint compares Harbor invoices with bank payout files and opens a ticket for every mismatch over one cent. Runs at 03:00 UTC on the batch cluster."
+  },
+  {
+    "title": "Beacon feature flags",
+    "summary": "Self-hosted flag service with a Go SDK and JS SDK",
+    "category": "projects",
+    "body": "Beacon stores flags in Postgres and streams changes over SSE. SDKs cache locally so a Beacon outage never blocks a request. Flags older than 90 days are reported for cleanup."
+  },
+  {
+    "title": "Sieve search service",
+    "summary": "OpenSearch wrapper for product and docs search",
+    "category": "projects",
+    "body": "Sieve wraps an OpenSearch cluster and exposes a small query API. Synonyms are managed in synonyms.txt and reloaded without downtime. Reindexing takes about 40 minutes."
+  },
+  {
+    "title": "Warden secrets broker",
+    "summary": "Wraps Vault to hand out short-lived credentials",
+    "category": "projects",
+    "body": "Warden issues database and cloud credentials with a 1 hour lease. Services authenticate with their Kubernetes service account. Never paste secrets in tickets; request a lease instead."
+  },
+  {
+    "title": "Trellis CI templates",
+    "summary": "Reusable GitHub Actions workflows",
+    "category": "projects",
+    "body": "Trellis provides reusable workflows for build, test, scan and deploy. Pin to a major tag, for example trellis/build@v3. Caching uses the shared runner cache bucket."
+  },
+  {
+    "title": "Gazetteer service catalog",
+    "summary": "Backstage instance listing every service and owner",
+    "category": "projects",
+    "body": "Gazetteer is our Backstage portal. Every repo needs a catalog-info.yaml with owner, lifecycle and on-call link. Ferrule fills it in at scaffold time."
+  },
+  {
+    "title": "Quartz reporting jobs",
+    "summary": "Monthly finance exports in Python",
+    "category": "projects",
+    "body": "Quartz builds the month-end finance exports as CSV and uploads them to the finance bucket on the third business day. Uses pandas and a pinned Python 3.11."
+  },
+  {
+    "title": "Rookery chat bot",
+    "summary": "Slack bot that answers on-call and deploy questions",
+    "category": "projects",
+    "body": "Rookery is a Slack bot with slash commands for deploy status, who-is-on-call and incident creation. TypeScript on Bolt, runs as a single replica."
+  },
+  {
+    "title": "Meridian geo service",
+    "summary": "Address validation and geocoding wrapper",
+    "category": "projects",
+    "body": "Meridian caches geocoder responses for 30 days and falls back to a second vendor on timeout. Used by Pavilion checkout and the driver app."
+  },
+  {
+    "title": "Tern driver app",
+    "summary": "Android app for delivery drivers",
+    "category": "projects",
+    "body": "Tern is the driver-facing Android app. Offline-first with Room, syncs routes when connectivity returns, uses Meridian for address lookups."
+  },
+  {
+    "title": "Kiln image builder",
+    "summary": "Builds hardened base container images weekly",
+    "category": "projects",
+    "body": "Kiln rebuilds the distroless base images every Sunday, scans them and publishes digests. Services should reference the digest, not the tag."
+  },
+  {
+    "title": "Plover load tests",
+    "summary": "k6 scripts for pre-release load testing",
+    "category": "projects",
+    "body": "Plover holds the k6 scenarios for checkout, search and login. Run against staging before a major release; target is 500 requests per second with p95 under 300 ms."
+  },
+  {
+    "title": "Atlas data catalog",
+    "summary": "Metadata catalog for warehouse tables",
+    "category": "projects",
+    "body": "Atlas documents warehouse tables, column owners and PII tags. Tidepool publishes lineage into Atlas after every dbt run."
+  },
+  {
+    "title": "Heron status page",
+    "summary": "Public status page fed by synthetic checks",
+    "category": "projects",
+    "body": "Heron shows public component status. Synthetic checks run every minute from three regions; incident updates are posted by the incident commander."
+  },
+  {
+    "title": "Compass roadmap tool",
+    "summary": "Internal planning board with quarterly goals",
+    "category": "projects",
+    "body": "Compass tracks quarterly objectives and links them to epics. Goals are reviewed in the first week of each quarter."
+  },
+  {
+    "title": "Saffron email templates",
+    "summary": "MJML templates for transactional email",
+    "category": "projects",
+    "body": "Saffron stores MJML sources and compiles them to HTML on release. Always send a rendering test to the litmus inbox before changing the order confirmation."
+  },
+  {
+    "title": "Bellows autoscaler",
+    "summary": "Custom queue-depth autoscaler for workers",
+    "category": "projects",
+    "body": "Bellows scales worker deployments from queue depth rather than CPU. Cooldown is 5 minutes, max replicas capped per queue in bellows.yaml."
+  },
+  {
+    "title": "Juniper onboarding site",
+    "summary": "New-hire checklist and laptop setup guide",
+    "category": "projects",
+    "body": "Juniper is the onboarding portal: access requests, laptop checklist and team intro schedule. Content is markdown in the people-ops repo."
+  },
+  {
+    "title": "Marlin fraud rules",
+    "summary": "Rule engine scoring risky orders",
+    "category": "projects",
+    "body": "Marlin scores orders with a rules engine plus a small gradient-boosted model. Orders above 0.85 are held for manual review; rules are hot-reloaded."
+  },
+  {
+    "title": "Developer laptop setup",
+    "summary": "Apple silicon laptops with Homebrew, asdf and direnv",
+    "category": "environment",
+    "body": "Standard laptop is a 14-inch Apple silicon machine. Tool versions managed by asdf, per-repo env vars by direnv, packages by Homebrew. Disk encryption must be on."
+  },
+  {
+    "title": "VPN access",
+    "summary": "WireGuard profile required for staging and databases",
+    "category": "environment",
+    "body": "Staging and database hosts are reachable only over the WireGuard VPN. Request a profile through the access portal; profiles expire after 90 days."
+  },
+  {
+    "title": "Kubernetes clusters",
+    "summary": "Three clusters: dev, stage and prod in two regions",
+    "category": "environment",
+    "body": "Clusters are named kube-dev, kube-stage and kube-prod, running Kubernetes 1.30. Prod spans eu-west-1 and us-east-1. kubectl contexts are set by the cairn bootstrap script."
+  },
+  {
+    "title": "Container registry",
+    "summary": "Private registry at registry.example.internal",
+    "category": "environment",
+    "body": "Images are pushed to registry.example.internal under the team namespace. Retention keeps the last 30 tags per repository; digests referenced by deployments are never pruned."
+  },
+  {
+    "title": "Postgres fleet",
+    "summary": "Managed Postgres 16 with read replicas",
+    "category": "environment",
+    "body": "Primary databases are managed Postgres 16 with one synchronous replica and two read replicas. Connection pooling through PgBouncer in transaction mode; max 200 connections per service."
+  },
+  {
+    "title": "Redis clusters",
+    "summary": "Redis 7 clusters for caching and rate limits",
+    "category": "environment",
+    "body": "Two Redis 7 clusters: cache-redis (eviction allkeys-lru) and state-redis (no eviction, persistence on). Never store durable data in cache-redis."
+  },
+  {
+    "title": "Message queue",
+    "summary": "NATS JetStream for service events",
+    "category": "environment",
+    "body": "Service events flow through NATS JetStream. Streams are retained for 7 days; consumers must be idempotent because delivery is at least once."
+  },
+  {
+    "title": "Observability stack",
+    "summary": "Prometheus, Grafana and Loki, traces in Tempo",
+    "category": "environment",
+    "body": "Metrics in Prometheus with 30 day retention, dashboards in Grafana, logs in Loki, traces in Tempo. OpenTelemetry collectors run as a daemonset."
+  },
+  {
+    "title": "On-call tooling",
+    "summary": "PagerDuty rotations with Slack escalation",
+    "category": "environment",
+    "body": "Pages go through PagerDuty. Primary has 5 minutes to acknowledge before the secondary is paged. The weekly handoff happens Monday 10:00 in the on-call channel."
+  },
+  {
+    "title": "DNS and domains",
+    "summary": "Internal zone example.internal managed in Cairn",
+    "category": "environment",
+    "body": "Internal names live in the example.internal zone, public names in example.com. Records are code in Cairn; do not edit them in the console. TTL defaults to 300 seconds."
+  },
+  {
+    "title": "CDN configuration",
+    "summary": "Edge cache with 10 minute default TTL",
+    "category": "environment",
+    "body": "The CDN caches static assets for 10 minutes by default and honours surrogate-control headers. Purge by tag from the Quill and Pavilion deploy jobs."
+  },
+  {
+    "title": "CI runners",
+    "summary": "Self-hosted ARM runners plus hosted x86",
+    "category": "environment",
+    "body": "Builds run on self-hosted ARM runners in kube-dev by default. x86 jobs use hosted runners. Concurrency is capped at 40 jobs; queue time over 5 minutes should be reported."
+  },
+  {
+    "title": "Secrets handling",
+    "summary": "Secrets come from Warden, never from env files in git",
+    "category": "environment",
+    "body": "Secrets are injected at runtime from Warden. Committing .env files is blocked by a pre-commit hook and a CI scan. Rotate any leaked credential immediately and file a security ticket."
+  },
+  {
+    "title": "Python toolchain",
+    "summary": "Python 3.12 with uv and ruff",
+    "category": "environment",
+    "body": "New Python services use Python 3.12, uv for dependency management and ruff for linting and formatting. Quartz is the exception and stays on 3.11."
+  },
+  {
+    "title": "Node toolchain",
+    "summary": "Node 22 LTS with pnpm workspaces",
+    "category": "environment",
+    "body": "Front-end repos use Node 22 LTS and pnpm. Lockfiles are committed; CI runs pnpm install --frozen-lockfile."
+  },
+  {
+    "title": "Go toolchain",
+    "summary": "Go 1.23 with golangci-lint",
+    "category": "environment",
+    "body": "Go services build with Go 1.23 and are linted by golangci-lint using the shared config from Trellis. Modules are vendored for release builds."
+  },
+  {
+    "title": "Editor conventions",
+    "summary": "EditorConfig and format on save",
+    "category": "environment",
+    "body": "Every repo ships an .editorconfig: LF line endings, 2-space indent for web and 4 for Python. Editors should format on save with the repo formatter."
+  },
+  {
+    "title": "Database backups",
+    "summary": "Nightly snapshots with 35 day retention",
+    "category": "environment",
+    "body": "Postgres snapshots run nightly at 01:00 UTC and are kept 35 days, with weekly copies in a second region for one year. Restore drills happen quarterly."
+  },
+  {
+    "title": "Object storage buckets",
+    "summary": "Buckets per environment with lifecycle rules",
+    "category": "environment",
+    "body": "Object storage buckets are named acme-<env>-<purpose>. Lifecycle rules move data to infrequent access after 30 days. Public buckets are forbidden except the Quill assets bucket."
+  },
+  {
+    "title": "TLS certificates",
+    "summary": "cert-manager issues certificates automatically",
+    "category": "environment",
+    "body": "cert-manager requests and renews certificates from the internal ACME endpoint 30 days before expiry. Alerts fire at 14 days remaining if renewal fails."
+  },
+  {
+    "title": "SSH access policy",
+    "summary": "Short-lived SSH certificates, no static keys",
+    "category": "environment",
+    "body": "Hosts accept only short-lived SSH certificates signed by the internal CA, valid 8 hours. Static authorized_keys entries are removed by configuration management."
+  },
+  {
+    "title": "Time conventions",
+    "summary": "All systems and logs use UTC",
+    "category": "environment",
+    "body": "Servers, databases and log timestamps are UTC. Convert to local time only in UI layers. Scheduled jobs are written in UTC cron expressions."
+  },
+  {
+    "title": "Cloud cost tags",
+    "summary": "Every resource must carry team and env tags",
+    "category": "environment",
+    "body": "Untagged resources are flagged weekly and removed after two warnings. Required tags: team, env, service. Budget alerts go to the owning team channel at 80 percent."
+  },
+  {
+    "title": "Office network",
+    "summary": "Guest and staff SSIDs, wired desks at the hub",
+    "category": "environment",
+    "body": "The office has separate staff and guest wireless networks. Staff devices need the device certificate installed by MDM; guests get a daily code from reception."
+  },
+  {
+    "title": "Device management",
+    "summary": "MDM enforces disk encryption and OS updates",
+    "category": "environment",
+    "body": "MDM requires full-disk encryption, screen lock after 5 minutes and OS updates within 14 days of release. Non-compliant laptops lose VPN access."
+  },
+  {
+    "title": "Logging conventions",
+    "summary": "JSON logs with request ids",
+    "category": "environment",
+    "body": "Services emit one JSON object per line with level, ts, service and request_id. Never log request bodies containing payment data."
+  },
+  {
+    "title": "Local dev ports",
+    "summary": "Reserved port ranges for local services",
+    "category": "environment",
+    "body": "Local services use ports 4000-4099 for APIs and 5170-5199 for front-ends. Harbor listens on 4010 and Pavilion on 5173."
+  },
+  {
+    "title": "Preview environments",
+    "summary": "Ephemeral namespaces per pull request",
+    "category": "environment",
+    "body": "Each pull request gets a namespace pr-<number> in kube-dev with a seeded database, destroyed 24 hours after the PR closes."
+  },
+  {
+    "title": "Decision: gRPC between backend services",
+    "summary": "Internal service calls use gRPC; REST only at the edge",
+    "category": "decisions",
+    "body": "Chosen in the March architecture review. Internal calls use gRPC with protobuf contracts checked in the schemas repo. REST and GraphQL are only for external or browser clients. Rationale: typed contracts and streaming."
+  },
+  {
+    "title": "Decision: stay polyrepo",
+    "summary": "Keep one repo per service, share tooling via Trellis",
+    "category": "decisions",
+    "body": "We evaluated a monorepo and declined it: CI cost and ownership boundaries mattered more than atomic refactors. Shared tooling is distributed through Trellis templates and Ferrule."
+  },
+  {
+    "title": "Decision: Postgres over MongoDB",
+    "summary": "Relational store is the default for new services",
+    "category": "decisions",
+    "body": "New services default to Postgres. Document stores need a written exception because backups, tooling and on-call familiarity all assume Postgres."
+  },
+  {
+    "title": "Decision: trunk-based development",
+    "summary": "Short-lived branches, merge to main daily",
+    "category": "decisions",
+    "body": "Branches live at most two days. Unfinished work merges behind a Beacon flag. Long-running release branches are not allowed."
+  },
+  {
+    "title": "Decision: semantic versioning for libraries",
+    "summary": "Breaking changes only in major versions",
+    "category": "decisions",
+    "body": "Shared libraries follow semver strictly. Deprecations must survive one full minor release with a warning before removal."
+  },
+  {
+    "title": "Decision: quarterly planning cadence",
+    "summary": "Plan quarterly, adjust monthly",
+    "category": "decisions",
+    "body": "Goals are set quarterly in Compass and reviewed monthly. Mid-quarter changes need the engineering manager's agreement."
+  },
+  {
+    "title": "Decision: no PII in logs",
+    "summary": "Personal data must never be written to logs",
+    "category": "decisions",
+    "body": "Email addresses, names, card data and addresses are forbidden in logs. Use opaque user ids. Violations are treated as security incidents."
+  },
+  {
+    "title": "Decision: follow-the-sun on-call",
+    "summary": "Two rotations cover EU and US hours",
+    "category": "decisions",
+    "body": "Rather than 24-hour single-site rotations, an EU rotation covers 06:00-14:00 UTC and a US rotation 14:00-22:00 UTC; overnight pages go to a best-effort tertiary."
+  },
+  {
+    "title": "Decision: single email vendor",
+    "summary": "All transactional email through one provider",
+    "category": "decisions",
+    "body": "Consolidated on a single email provider in January to simplify deliverability monitoring. Marketing email stays on a separate tool."
+  },
+  {
+    "title": "Decision: build Beacon in-house",
+    "summary": "Hosted flag vendors rejected on cost and latency",
+    "category": "decisions",
+    "body": "Hosted flag services quoted per-seat pricing and added a network hop. Beacon was built in-house with local SDK caching instead."
+  },
+  {
+    "title": "Decision: Rust only for infrastructure tools",
+    "summary": "Rust allowed for single-binary tools, not product services",
+    "category": "decisions",
+    "body": "Rust is approved for Sundial-style infrastructure tools. Product services stay on Go or Python because hiring and review capacity are limited."
+  },
+  {
+    "title": "Decision: ARM for build runners",
+    "summary": "Move CI to ARM for cost",
+    "category": "decisions",
+    "body": "ARM runners cut build costs by roughly 30 percent. x86-only dependencies are built on hosted runners as an exception."
+  },
+  {
+    "title": "Decision: URL-versioned external APIs",
+    "summary": "Public APIs carry /v1 style prefixes",
+    "category": "decisions",
+    "body": "External APIs are versioned in the path (/v1, /v2). Old versions are supported for 12 months after a successor ships."
+  },
+  {
+    "title": "Decision: testing pyramid targets",
+    "summary": "Mostly unit tests, thin end-to-end layer",
+    "category": "decisions",
+    "body": "Target mix is about 70 percent unit, 25 percent integration and 5 percent end-to-end. End-to-end tests must be deterministic or they are deleted."
+  },
+  {
+    "title": "Decision: data retention periods",
+    "summary": "Customer data deleted 90 days after account closure",
+    "category": "decisions",
+    "body": "Account data is hard-deleted 90 days after closure. Invoices are kept seven years for tax reasons. Analytics events are anonymised after 13 months."
+  },
+  {
+    "title": "Decision: review requirements",
+    "summary": "One approval, two for infrastructure and auth",
+    "category": "decisions",
+    "body": "Pull requests need one approving review. Changes to Cairn, Lantern or Warden need two, one from the owning team."
+  },
+  {
+    "title": "Decision: record decisions as ADRs",
+    "summary": "Architecture decision records live in the docs repo",
+    "category": "decisions",
+    "body": "Significant choices are recorded as ADRs in the adr folder using the short template: context, decision, consequences. Status moves from proposed to accepted or superseded."
+  },
+  {
+    "title": "Decision: default cache TTLs",
+    "summary": "Short TTLs, explicit invalidation for critical data",
+    "category": "decisions",
+    "body": "API caches default to 60 seconds. Pricing and inventory must use explicit invalidation events instead of long TTLs."
+  },
+  {
+    "title": "Decision: standard timeout budget",
+    "summary": "Client timeout 2s, retries limited to 2 with jitter",
+    "category": "decisions",
+    "body": "Outbound calls default to a 2 second timeout and at most two retries with exponential backoff and jitter. Retrying non-idempotent calls is forbidden without an idempotency key."
+  },
+  {
+    "title": "Decision: money stored as integer minor units",
+    "summary": "Never use floating point for currency",
+    "category": "decisions",
+    "body": "All monetary amounts are integers in minor units (cents) plus an ISO currency code. Floats are rejected in review."
+  },
+  {
+    "title": "Decision: service naming",
+    "summary": "Services get a single evocative lowercase name",
+    "category": "decisions",
+    "body": "Services use one lowercase noun, registered in Gazetteer. Names are not reused after retirement."
+  },
+  {
+    "title": "Decision: accessibility baseline",
+    "summary": "WCAG 2.2 AA for customer-facing UI",
+    "category": "decisions",
+    "body": "Customer-facing interfaces must meet WCAG 2.2 AA. Mosaic components ship with automated axe checks and manual keyboard review."
+  },
+  {
+    "title": "Decision: dependency update policy",
+    "summary": "Weekly automated update PRs, security patches within 72 hours",
+    "category": "decisions",
+    "body": "Dependabot opens weekly update pull requests. Critical security patches must be merged within 72 hours; others within the sprint."
+  },
+  {
+    "title": "Decision: docs live with the code",
+    "summary": "Reference docs in the repo, guides in Quill",
+    "category": "decisions",
+    "body": "Reference documentation sits next to the code in each repo. Narrative guides and tutorials are published through Quill."
+  },
+  {
+    "title": "Decision: internal service SLOs",
+    "summary": "99.9 percent availability for tier-1 services",
+    "category": "decisions",
+    "body": "Tier-1 services (Harbor, Pavilion, Lantern) target 99.9 percent monthly availability; tier-2 targets 99.5. Error budgets are reviewed monthly."
+  },
+  {
+    "title": "Decision: dark launches for risky changes",
+    "summary": "Ship behind flags and mirror traffic first",
+    "category": "decisions",
+    "body": "Risky changes are deployed dark, traffic is mirrored for a day, and only then enabled gradually 1, 10, 50, 100 percent."
+  },
+  {
+    "title": "Decision: pairing for onboarding",
+    "summary": "New hires pair for their first two weeks",
+    "category": "decisions",
+    "body": "Each new engineer pairs with a buddy for the first two weeks and ships a small change to production by day five."
+  },
+  {
+    "title": "Decision: open source license policy",
+    "summary": "Permissive licenses only for dependencies",
+    "category": "decisions",
+    "body": "Allowed: MIT, BSD, Apache-2.0. Copyleft dependencies such as GPL need legal approval. License scan runs in the Trellis security step."
+  },
+  {
+    "title": "Decision: batch jobs avoid business hours",
+    "summary": "Heavy jobs run between 01:00 and 05:00 UTC",
+    "category": "decisions",
+    "body": "Heavy batch work is scheduled in the 01:00-05:00 UTC window so replicas stay responsive during business hours."
+  },
+  {
+    "title": "Procedure: deploying to production",
+    "summary": "Merge, wait for green, run deploy command, watch dashboards",
+    "category": "procedures",
+    "body": "1) Merge to main. 2) Wait for the Trellis pipeline to go green. 3) Run `ferrule deploy prod <service>` from #deploys. 4) Watch the service dashboard for 15 minutes. 5) Roll back with `ferrule rollback` if error rate doubles."
+  },
+  {
+    "title": "Procedure: emergency rollback",
+    "summary": "Revert to previous digest with ferrule rollback",
+    "category": "procedures",
+    "body": "Run `ferrule rollback <service> --to previous`. The deploy job pins the prior image digest; database migrations are not reversed automatically, so check the migration notes first."
+  },
+  {
+    "title": "Procedure: declaring an incident",
+    "summary": "Use /incident in Slack, assign a commander and scribe",
+    "category": "procedures",
+    "body": "Type /incident in Rookery, choose severity, and a channel is created. The first responder becomes commander unless they hand off. Assign a scribe and post to Heron within 15 minutes for sev1 and sev2."
+  },
+  {
+    "title": "Procedure: blameless postmortems",
+    "summary": "Write within five business days, review in the guild meeting",
+    "category": "procedures",
+    "body": "Every sev1 and sev2 gets a blameless postmortem within five business days using the template in the docs repo. Action items need owners and due dates."
+  },
+  {
+    "title": "Procedure: database schema migrations",
+    "summary": "Expand, migrate, contract in separate releases",
+    "category": "procedures",
+    "body": "Schema changes use expand/contract: add the new column nullable, deploy code that writes both, backfill, switch reads, then drop the old column in a later release. Never rename a column in one step."
+  },
+  {
+    "title": "Procedure: requesting production access",
+    "summary": "Request through the access portal with a ticket",
+    "category": "procedures",
+    "body": "Production access is requested in the access portal with a ticket link and manager approval. Grants expire after 30 days and are logged. Standing access is not given."
+  },
+  {
+    "title": "Procedure: releasing Brindle",
+    "summary": "Cut release branch Monday, submit Tuesday",
+    "category": "procedures",
+    "body": "Brindle's release branch is cut Monday morning, QA signs off by Tuesday noon, then the builds are submitted to the stores. Hotfixes skip QA only with the engineering manager's approval."
+  },
+  {
+    "title": "Procedure: rotating API keys",
+    "summary": "Issue new, deploy, revoke old within 24 hours",
+    "category": "procedures",
+    "body": "Create the new key in Warden, deploy it to consumers, confirm traffic on the new key, then revoke the old one. The overlap window must not exceed 24 hours."
+  },
+  {
+    "title": "Procedure: restoring a database from snapshot",
+    "summary": "Restore into a new instance, then promote",
+    "category": "procedures",
+    "body": "Never restore over a live database. Restore the snapshot into a new instance, validate row counts, then repoint PgBouncer. Record the point-in-time target in the ticket."
+  },
+  {
+    "title": "Procedure: on-call handoff",
+    "summary": "Written handoff note with open alerts and risky deploys",
+    "category": "procedures",
+    "body": "The outgoing engineer posts a handoff note: open incidents, noisy alerts, upcoming risky deploys and known flaky checks. The incoming engineer acknowledges in thread."
+  },
+  {
+    "title": "Procedure: creating a new service",
+    "summary": "Run ferrule new, register in Gazetteer, add dashboards",
+    "category": "procedures",
+    "body": "Run `ferrule new service`, answer the prompts, merge the generated pull request, confirm the entry in Gazetteer and add an SLO dashboard from the template before first deploy."
+  },
+  {
+    "title": "Procedure: removing stale feature flags",
+    "summary": "Delete flag code first, then the flag",
+    "category": "procedures",
+    "body": "When a flag has been 100 percent for two weeks, remove the code paths, deploy, and only then delete the flag in Beacon so old pods keep working."
+  },
+  {
+    "title": "Procedure: running a load test",
+    "summary": "Announce, run Plover against staging, record results",
+    "category": "procedures",
+    "body": "Announce in #perf, scale staging to production-like size, run `k6 run checkout.js`, and attach the summary to the release ticket. Never run load tests against production."
+  },
+  {
+    "title": "Procedure: handling a vulnerability report",
+    "summary": "Triage within one business day, patch by severity",
+    "category": "procedures",
+    "body": "Security reports are triaged within one business day. Severity decides the patch deadline: critical 72 hours, high 7 days, medium 30 days. Keep the reporter updated."
+  },
+  {
+    "title": "Procedure: manual certificate renewal",
+    "summary": "Force renewal with cmctl when cert-manager is stuck",
+    "category": "procedures",
+    "body": "If cert-manager fails to renew, run `cmctl renew <name> -n <namespace>`, check the challenge status, and open a ticket with platform if DNS validation is failing."
+  },
+  {
+    "title": "Procedure: customer data deletion request",
+    "summary": "Verify identity, run deletion job, confirm in writing",
+    "category": "procedures",
+    "body": "Verify the requester through the support tool, trigger the deletion job in Tidepool, wait for the confirmation event, then email the customer. Complete within 30 days."
+  },
+  {
+    "title": "Procedure: quarantining a flaky test",
+    "summary": "Tag, ticket, fix within a sprint",
+    "category": "procedures",
+    "body": "A test that fails intermittently is tagged quarantine, a ticket is opened automatically and the owner has one sprint to fix it before it is deleted."
+  },
+  {
+    "title": "Procedure: lost or stolen laptop",
+    "summary": "Report immediately, MDM remote wipe",
+    "category": "procedures",
+    "body": "Report to security within the hour. MDM issues a remote lock and wipe, VPN profile and SSH certificates are revoked, and a replacement is shipped."
+  },
+  {
+    "title": "Procedure: monthly cost review",
+    "summary": "Review top ten spend lines with owners",
+    "category": "procedures",
+    "body": "On the second Thursday the platform lead reviews the ten largest cost lines with owners and records savings actions in Compass."
+  },
+  {
+    "title": "Procedure: pull request etiquette",
+    "summary": "Small PRs, description with why, link the ticket",
+    "category": "procedures",
+    "body": "Keep pull requests under about 400 changed lines, explain why in the description, link the ticket and request review from the code owners file."
+  },
+  {
+    "title": "Procedure: hotfix to production",
+    "summary": "Branch from the deployed tag, cherry-pick, deploy",
+    "category": "procedures",
+    "body": "Branch from the currently deployed tag, apply the minimal fix, get one approval, and deploy with `ferrule deploy prod --hotfix`. Backport to main the same day."
+  },
+  {
+    "title": "Procedure: backfilling a warehouse table",
+    "summary": "Pause the DAG, run backfill with date range, verify counts",
+    "category": "procedures",
+    "body": "Pause the Tidepool DAG, run `airflow dags backfill` with an explicit date range, compare row counts against the source and unpause. Never backfill more than 30 days at once."
+  },
+  {
+    "title": "Procedure: changing a DNS record",
+    "summary": "Edit in Cairn, plan, apply, verify propagation",
+    "category": "procedures",
+    "body": "Change the record in the Cairn zone module, get the plan reviewed, apply, and verify with dig against both resolvers. Lower the TTL a day ahead for cutovers."
+  },
+  {
+    "title": "Procedure: responding to a leaked secret",
+    "summary": "Revoke, rotate, audit, document",
+    "category": "procedures",
+    "body": "Revoke the secret at its source first, rotate through Warden, audit access logs for use during the exposure window and write a short incident note."
+  },
+  {
+    "title": "Procedure: planning time off",
+    "summary": "Announce two weeks ahead and name a deputy",
+    "category": "procedures",
+    "body": "Add time off to the team calendar, announce at least two weeks ahead for stretches over three days and name a deputy for your services."
+  },
+  {
+    "title": "History: March checkout outage",
+    "summary": "Pavilion checkout failed for 47 minutes after a bad config push",
+    "category": "history",
+    "body": "On a Tuesday in March a Beacon flag misconfiguration disabled payment forms for 47 minutes. Root cause: no schema validation on flag payloads. Fix: validation added and dark-launch policy introduced."
+  },
+  {
+    "title": "History: Redis eviction incident",
+    "summary": "State data lost when stored in the cache cluster",
+    "category": "history",
+    "body": "A team stored rate-limit counters in cache-redis; an eviction wave reset them and let a burst through. Led to the rule that durable state goes to state-redis only."
+  },
+  {
+    "title": "History: Postgres 14 to 16 upgrade",
+    "summary": "Completed in two weekends with logical replication",
+    "category": "history",
+    "body": "The upgrade used logical replication to new clusters, cutover over two weekends with 90 seconds of read-only mode each. Lessons: test extension compatibility early."
+  },
+  {
+    "title": "History: Harbor rewritten from Python to Go",
+    "summary": "Rewrite finished last year, latency down by 60 percent",
+    "category": "history",
+    "body": "Harbor started as a Django app. The Go rewrite shipped in phases over six months, cut p95 latency by about 60 percent and halved the fleet size."
+  },
+  {
+    "title": "History: switched SMS providers",
+    "summary": "Moved SMS after repeated delivery failures",
+    "category": "history",
+    "body": "After three delivery incidents in one quarter, SMS moved to a new provider with regional routing. Delivery rate rose from 94 to 99 percent."
+  },
+  {
+    "title": "History: autumn hack day outcomes",
+    "summary": "Hack day produced Rookery and the Sundial prototype",
+    "category": "history",
+    "body": "The autumn hack day delivered the first Rookery bot and a Sundial prototype. Both were adopted within two months."
+  },
+  {
+    "title": "History: expired internal certificate",
+    "summary": "An internal CA certificate lapsed and broke service-to-service calls",
+    "category": "history",
+    "body": "The intermediate CA expired on a Sunday, breaking mTLS between services for 25 minutes. Now cert expiry is monitored at 30, 14 and 3 days."
+  },
+  {
+    "title": "History: failed DNS cutover",
+    "summary": "A long TTL delayed the cutover by hours",
+    "category": "history",
+    "body": "During a load balancer migration the TTL was still 24 hours, so clients hit the old address long after cutover. Origin of the rule to lower TTL a day ahead."
+  },
+  {
+    "title": "History: CI flakiness drive",
+    "summary": "Flaky failures reduced from 12 percent to 2 percent",
+    "category": "history",
+    "body": "A two-month effort quarantined unstable tests, pinned runner images and fixed port collisions. Pipeline failure rate from flakes dropped from 12 to 2 percent."
+  },
+  {
+    "title": "History: pricing rounding bug",
+    "summary": "Float rounding overcharged some orders by one cent",
+    "category": "history",
+    "body": "A float-based discount calculation overcharged roughly 0.3 percent of orders by one cent. Refunded automatically; led to the integer minor units rule."
+  },
+  {
+    "title": "History: hiring freeze last winter",
+    "summary": "Hiring paused for a quarter, projects reprioritised",
+    "category": "history",
+    "body": "Hiring was frozen for one quarter. Brindle features were postponed and Juniper work was reduced to maintenance."
+  },
+  {
+    "title": "History: secrets audit findings",
+    "summary": "Audit found 14 stale static credentials",
+    "category": "history",
+    "body": "The security audit found 14 long-lived static credentials; all were rotated and moved behind Warden within a month."
+  },
+  {
+    "title": "History: Kubernetes 1.28 to 1.30",
+    "summary": "Upgrade done cluster by cluster, no customer impact",
+    "category": "history",
+    "body": "Dev first, then stage, then prod over three weeks. A deprecated API in an old Helm chart caused one failed deploy, fixed by upgrading the chart."
+  },
+  {
+    "title": "History: Black Friday capacity",
+    "summary": "Pre-scaled 3x and held 1,900 orders per minute",
+    "category": "history",
+    "body": "For the sales peak we pre-scaled Harbor and Orrery threefold, froze deploys for four days and sustained 1,900 orders per minute with p95 under 400 ms."
+  },
+  {
+    "title": "History: failed reindex",
+    "summary": "Reindex filled disk and crashed the search cluster",
+    "category": "history",
+    "body": "A full reindex doubled index size, filled the data nodes and crashed Sieve for an hour. Now reindexing uses aliases and requires 2x free disk."
+  },
+  {
+    "title": "History: team reorganisation",
+    "summary": "Payments and Platform split into separate teams",
+    "category": "history",
+    "body": "Payments (Harbor, Ledgerlint, Marlin) and Platform (Cairn, Kiln, Trellis) became separate teams after the reorganisation."
+  },
+  {
+    "title": "History: tabletop breach exercise",
+    "summary": "Exercise exposed a missing escalation contact",
+    "category": "history",
+    "body": "The tabletop breach drill found no documented escalation contact for legal after hours. A rotation list was added to the incident template."
+  },
+  {
+    "title": "History: App Store rejection",
+    "summary": "Brindle rejected for missing account deletion flow",
+    "category": "history",
+    "body": "An App Store review rejected Brindle because in-app account deletion was missing. Added within a week, then approved."
+  },
+  {
+    "title": "History: stale CDN assets",
+    "summary": "Missing purge left an old logo online for a day",
+    "category": "history",
+    "body": "A rebrand shipped but the purge step was skipped, so the old logo stayed on the edge for 24 hours. Purge-by-tag is now part of the deploy job."
+  },
+  {
+    "title": "History: notification queue backlog",
+    "summary": "A stuck consumer delayed emails by six hours",
+    "category": "history",
+    "body": "A poison message blocked a Notifier consumer, delaying emails six hours. Added dead-letter handling with max-deliver of 5."
+  },
+  {
+    "title": "History: cloud cost spike",
+    "summary": "Orphaned load test cluster cost 18k in a month",
+    "category": "history",
+    "body": "A load-test cluster was left running after a test and cost about 18k in a month. Led to automatic expiry tags on non-prod resources."
+  },
+  {
+    "title": "History: on-call load review",
+    "summary": "Pages per week halved after alert tuning",
+    "category": "history",
+    "body": "A review found the primary averaged 31 pages a week. After deleting noisy alerts and adding runbook links it fell to 14."
+  },
+  {
+    "title": "History: GDPR readiness review",
+    "summary": "Completed review produced the retention policy",
+    "category": "history",
+    "body": "The privacy readiness review mapped personal data flows and produced the 90 day deletion and 13 month anonymisation policies."
+  },
+  {
+    "title": "History: first production deploy of Lumen",
+    "summary": "Lumen launched to the data team in June",
+    "category": "history",
+    "body": "Lumen's first production release went to the data team in June after a four-week beta. Cohort charts were the most requested feature."
+  },
+  {
+    "title": "Disaster recovery drill runbook",
+    "summary": "Quarterly regional failover drill steps and roles",
+    "category": "procedures",
+    "body": "Quarterly regional failover rehearsal. The platform lead coordinates and two engineers execute. Before starting, confirm the change window is announced and that no conflicting maintenance is scheduled for the same period. Each step should be executed by one person while a second person reads the instructions aloud and checks the output. Temporary credentials obtained for the exercise must be returned through the broker as soon as the exercise is complete. Do not run this procedure on a Friday afternoon or on the day before a public holiday unless the change was explicitly approved. Make sure laptops are plugged in and connected to a reliable network, because interrupted sessions leave partial state behind. Anything not covered by this note should be raised with the guild lead so the document can be improved for next time. Notify the owning team in the relevant channel and wait for an explicit acknowledgement before moving to the next step. Keep the ticket updated with timestamps for every action so the timeline can be reconstructed afterwards without guesswork. Allow several minutes between steps for caches, health checks and load balancers to converge before judging the result. When finished, post a short summary containing the start time, end time, participants, deviations and follow-up actions. Compare before and after figures for latency, error rate and saturation, and attach the comparison to the ticket. Open the shared dashboard and verify that all panels are green; record a screenshot of the baseline for later comparison. If any command returns an unexpected result, stop immediately, capture the full output and ask for help rather than improvising. Document anything surprising in the notes section at the bottom, including slow responses, confusing prompts and missing permissions. Review the previous run's notes first; most repeated problems were caused by skipping the preparation checklist. Verify access ahead of time; requesting permissions in the middle of the exercise has repeatedly caused delays. Before starting, confirm the change window is announced and that no conflicting maintenance is scheduled for the same period. Each step should be executed by one person while a second person reads the instructions aloud and checks the output. Gotcha learned the hard way: the oriole-witness quorum node must be started by hand after the region is promoted, otherwise replication never resumes."
+  },
+  {
+    "title": "Annual penetration test preparation",
+    "summary": "Checklist for preparing systems for the external pentest",
+    "category": "procedures",
+    "body": "Preparation steps for the yearly external security assessment, led by the security team. Open the shared dashboard and verify that all panels are green; record a screenshot of the baseline for later comparison. If any command returns an unexpected result, stop immediately, capture the full output and ask for help rather than improvising. Document anything surprising in the notes section at the bottom, including slow responses, confusing prompts and missing permissions. Review the previous run's notes first; most repeated problems were caused by skipping the preparation checklist. Verify access ahead of time; requesting permissions in the middle of the exercise has repeatedly caused delays. Before starting, confirm the change window is announced and that no conflicting maintenance is scheduled for the same period. Each step should be executed by one person while a second person reads the instructions aloud and checks the output. Temporary credentials obtained for the exercise must be returned through the broker as soon as the exercise is complete. Do not run this procedure on a Friday afternoon or on the day before a public holiday unless the change was explicitly approved. Make sure laptops are plugged in and connected to a reliable network, because interrupted sessions leave partial state behind. Anything not covered by this note should be raised with the guild lead so the document can be improved for next time. Notify the owning team in the relevant channel and wait for an explicit acknowledgement before moving to the next step. Keep the ticket updated with timestamps for every action so the timeline can be reconstructed afterwards without guesswork. Allow several minutes between steps for caches, health checks and load balancers to converge before judging the result. When finished, post a short summary containing the start time, end time, participants, deviations and follow-up actions. Compare before and after figures for latency, error rate and saturation, and attach the comparison to the ticket. Open the shared dashboard and verify that all panels are green; record a screenshot of the baseline for later comparison. If any command returns an unexpected result, stop immediately, capture the full output and ask for help rather than improvising. Remember that the testers' source addresses 203.0.113.0/28 must be allowlisted on the WAF before Monday, and removed again on the Friday."
+  },
+  {
+    "title": "New hire hardware checklist",
+    "summary": "Laptop, peripherals and accounts to prepare for each starter",
+    "category": "procedures",
+    "body": "Everything people-ops and IT prepare before a new colleague's first day. Notify the owning team in the relevant channel and wait for an explicit acknowledgement before moving to the next step. Keep the ticket updated with timestamps for every action so the timeline can be reconstructed afterwards without guesswork. Allow several minutes between steps for caches, health checks and load balancers to converge before judging the result. When finished, post a short summary containing the start time, end time, participants, deviations and follow-up actions. Compare before and after figures for latency, error rate and saturation, and attach the comparison to the ticket. Open the shared dashboard and verify that all panels are green; record a screenshot of the baseline for later comparison. If any command returns an unexpected result, stop immediately, capture the full output and ask for help rather than improvising. Document anything surprising in the notes section at the bottom, including slow responses, confusing prompts and missing permissions. Review the previous run's notes first; most repeated problems were caused by skipping the preparation checklist. Verify access ahead of time; requesting permissions in the middle of the exercise has repeatedly caused delays. Before starting, confirm the change window is announced and that no conflicting maintenance is scheduled for the same period. Each step should be executed by one person while a second person reads the instructions aloud and checks the output. Temporary credentials obtained for the exercise must be returned through the broker as soon as the exercise is complete. Do not run this procedure on a Friday afternoon or on the day before a public holiday unless the change was explicitly approved. Make sure laptops are plugged in and connected to a reliable network, because interrupted sessions leave partial state behind. Anything not covered by this note should be raised with the guild lead so the document can be improved for next time. Notify the owning team in the relevant channel and wait for an explicit acknowledgement before moving to the next step. Keep the ticket updated with timestamps for every action so the timeline can be reconstructed afterwards without guesswork. Order the ergonomic trackball only if the starter ticks the accessibility box; the default is a plain mouse, and the trackball supplier lead time is nine working days."
+  },
+  {
+    "title": "Vendor security review process",
+    "summary": "How third-party vendors are assessed before purchase",
+    "category": "procedures",
+    "body": "Procurement and security jointly assess each new vendor before any contract is signed. Each step should be executed by one person while a second person reads the instructions aloud and checks the output. Temporary credentials obtained for the exercise must be returned through the broker as soon as the exercise is complete. Do not run this procedure on a Friday afternoon or on the day before a public holiday unless the change was explicitly approved. Make sure laptops are plugged in and connected to a reliable network, because interrupted sessions leave partial state behind. Anything not covered by this note should be raised with the guild lead so the document can be improved for next time. Notify the owning team in the relevant channel and wait for an explicit acknowledgement before moving to the next step. Keep the ticket updated with timestamps for every action so the timeline can be reconstructed afterwards without guesswork. Allow several minutes between steps for caches, health checks and load balancers to converge before judging the result. When finished, post a short summary containing the start time, end time, participants, deviations and follow-up actions. Compare before and after figures for latency, error rate and saturation, and attach the comparison to the ticket. Open the shared dashboard and verify that all panels are green; record a screenshot of the baseline for later comparison. If any command returns an unexpected result, stop immediately, capture the full output and ask for help rather than improvising. Document anything surprising in the notes section at the bottom, including slow responses, confusing prompts and missing permissions. Review the previous run's notes first; most repeated problems were caused by skipping the preparation checklist. Verify access ahead of time; requesting permissions in the middle of the exercise has repeatedly caused delays. Before starting, confirm the change window is announced and that no conflicting maintenance is scheduled for the same period. Each step should be executed by one person while a second person reads the instructions aloud and checks the output. Temporary credentials obtained for the exercise must be returned through the broker as soon as the exercise is complete. Vendors that process card data must supply a current attestation of compliance dated within twelve months; anything older is an automatic rejection."
+  },
+  {
+    "title": "Quarter close engineering tasks",
+    "summary": "Engineering obligations at the end of each fiscal quarter",
+    "category": "procedures",
+    "body": "Finance asks engineering for a handful of artefacts at every quarter end. If any command returns an unexpected result, stop immediately, capture the full output and ask for help rather than improvising. Document anything surprising in the notes section at the bottom, including slow responses, confusing prompts and missing permissions. Review the previous run's notes first; most repeated problems were caused by skipping the preparation checklist. Verify access ahead of time; requesting permissions in the middle of the exercise has repeatedly caused delays. Before starting, confirm the change window is announced and that no conflicting maintenance is scheduled for the same period. Each step should be executed by one person while a second person reads the instructions aloud and checks the output. Temporary credentials obtained for the exercise must be returned through the broker as soon as the exercise is complete. Do not run this procedure on a Friday afternoon or on the day before a public holiday unless the change was explicitly approved. Make sure laptops are plugged in and connected to a reliable network, because interrupted sessions leave partial state behind. Anything not covered by this note should be raised with the guild lead so the document can be improved for next time. Notify the owning team in the relevant channel and wait for an explicit acknowledgement before moving to the next step. Keep the ticket updated with timestamps for every action so the timeline can be reconstructed afterwards without guesswork. Allow several minutes between steps for caches, health checks and load balancers to converge before judging the result. When finished, post a short summary containing the start time, end time, participants, deviations and follow-up actions. Compare before and after figures for latency, error rate and saturation, and attach the comparison to the ticket. Open the shared dashboard and verify that all panels are green; record a screenshot of the baseline for later comparison. If any command returns an unexpected result, stop immediately, capture the full output and ask for help rather than improvising. Document anything surprising in the notes section at the bottom, including slow responses, confusing prompts and missing permissions. Capitalised development hours are exported with the command `quartz export --capitalised`; finance rejects files that contain the legacy cost centre 4417."
+  },
+  {
+    "title": "Search relevance tuning notes",
+    "summary": "Experiments and settings used when tuning product search",
+    "category": "projects",
+    "body": "Notes collected while tuning Sieve ranking for the storefront. Keep the ticket updated with timestamps for every action so the timeline can be reconstructed afterwards without guesswork. Allow several minutes between steps for caches, health checks and load balancers to converge before judging the result. When finished, post a short summary containing the start time, end time, participants, deviations and follow-up actions. Compare before and after figures for latency, error rate and saturation, and attach the comparison to the ticket. Open the shared dashboard and verify that all panels are green; record a screenshot of the baseline for later comparison. If any command returns an unexpected result, stop immediately, capture the full output and ask for help rather than improvising. Document anything surprising in the notes section at the bottom, including slow responses, confusing prompts and missing permissions. Review the previous run's notes first; most repeated problems were caused by skipping the preparation checklist. Verify access ahead of time; requesting permissions in the middle of the exercise has repeatedly caused delays. Before starting, confirm the change window is announced and that no conflicting maintenance is scheduled for the same period. Each step should be executed by one person while a second person reads the instructions aloud and checks the output. Temporary credentials obtained for the exercise must be returned through the broker as soon as the exercise is complete. Do not run this procedure on a Friday afternoon or on the day before a public holiday unless the change was explicitly approved. Make sure laptops are plugged in and connected to a reliable network, because interrupted sessions leave partial state behind. Anything not covered by this note should be raised with the guild lead so the document can be improved for next time. Notify the owning team in the relevant channel and wait for an explicit acknowledgement before moving to the next step. Keep the ticket updated with timestamps for every action so the timeline can be reconstructed afterwards without guesswork. Allow several minutes between steps for caches, health checks and load balancers to converge before judging the result. The best result came from boosting exact SKU matches by 4.5 and demoting out-of-stock items by 0.6; fuzziness above 2 produced absurd matches for short queries."
+  },
+  {
+    "title": "Mobile signing and provisioning notes",
+    "summary": "How signing identities and provisioning are handled",
+    "category": "procedures",
+    "body": "Details on code signing for both mobile platforms. Temporary credentials obtained for the exercise must be returned through the broker as soon as the exercise is complete. Do not run this procedure on a Friday afternoon or on the day before a public holiday unless the change was explicitly approved. Make sure laptops are plugged in and connected to a reliable network, because interrupted sessions leave partial state behind. Anything not covered by this note should be raised with the guild lead so the document can be improved for next time. Notify the owning team in the relevant channel and wait for an explicit acknowledgement before moving to the next step. Keep the ticket updated with timestamps for every action so the timeline can be reconstructed afterwards without guesswork. Allow several minutes between steps for caches, health checks and load balancers to converge before judging the result. When finished, post a short summary containing the start time, end time, participants, deviations and follow-up actions. Compare before and after figures for latency, error rate and saturation, and attach the comparison to the ticket. Open the shared dashboard and verify that all panels are green; record a screenshot of the baseline for later comparison. If any command returns an unexpected result, stop immediately, capture the full output and ask for help rather than improvising. Document anything surprising in the notes section at the bottom, including slow responses, confusing prompts and missing permissions. Review the previous run's notes first; most repeated problems were caused by skipping the preparation checklist. Verify access ahead of time; requesting permissions in the middle of the exercise has repeatedly caused delays. Before starting, confirm the change window is announced and that no conflicting maintenance is scheduled for the same period. Each step should be executed by one person while a second person reads the instructions aloud and checks the output. Temporary credentials obtained for the exercise must be returned through the broker as soon as the exercise is complete. Do not run this procedure on a Friday afternoon or on the day before a public holiday unless the change was explicitly approved. Distribution certificates expire every 13 months; the renewal reminder is a calendar entry owned by Hana, and expired certificates silently break nightly TestFlight uploads."
+  },
+  {
+    "title": "Warehouse load quirks",
+    "summary": "Known oddities of the nightly warehouse loads",
+    "category": "history",
+    "body": "A collection of oddities discovered while operating the nightly loads. Document anything surprising in the notes section at the bottom, including slow responses, confusing prompts and missing permissions. Review the previous run's notes first; most repeated problems were caused by skipping the preparation checklist. Verify access ahead of time; requesting permissions in the middle of the exercise has repeatedly caused delays. Before starting, confirm the change window is announced and that no conflicting maintenance is scheduled for the same period. Each step should be executed by one person while a second person reads the instructions aloud and checks the output. Temporary credentials obtained for the exercise must be returned through the broker as soon as the exercise is complete. Do not run this procedure on a Friday afternoon or on the day before a public holiday unless the change was explicitly approved. Make sure laptops are plugged in and connected to a reliable network, because interrupted sessions leave partial state behind. Anything not covered by this note should be raised with the guild lead so the document can be improved for next time. Notify the owning team in the relevant channel and wait for an explicit acknowledgement before moving to the next step. Keep the ticket updated with timestamps for every action so the timeline can be reconstructed afterwards without guesswork. Allow several minutes between steps for caches, health checks and load balancers to converge before judging the result. When finished, post a short summary containing the start time, end time, participants, deviations and follow-up actions. Compare before and after figures for latency, error rate and saturation, and attach the comparison to the ticket. Open the shared dashboard and verify that all panels are green; record a screenshot of the baseline for later comparison. If any command returns an unexpected result, stop immediately, capture the full output and ask for help rather than improvising. Document anything surprising in the notes section at the bottom, including slow responses, confusing prompts and missing permissions. Review the previous run's notes first; most repeated problems were caused by skipping the preparation checklist. The orders table contains a duplicated partition for 2024-02-29 caused by a leap-day bug; any join must filter on load_id greater than 88123 to avoid double counting."
+  },
+  {
+    "title": "Kubernetes network policy notes",
+    "summary": "Default-deny network policy rollout learnings",
+    "category": "environment",
+    "body": "Background and learnings from rolling out default-deny network policies. Allow several minutes between steps for caches, health checks and load balancers to converge before judging the result. When finished, post a short summary containing the start time, end time, participants, deviations and follow-up actions. Compare before and after figures for latency, error rate and saturation, and attach the comparison to the ticket. Open the shared dashboard and verify that all panels are green; record a screenshot of the baseline for later comparison. If any command returns an unexpected result, stop immediately, capture the full output and ask for help rather than improvising. Document anything surprising in the notes section at the bottom, including slow responses, confusing prompts and missing permissions. Review the previous run's notes first; most repeated problems were caused by skipping the preparation checklist. Verify access ahead of time; requesting permissions in the middle of the exercise has repeatedly caused delays. Before starting, confirm the change window is announced and that no conflicting maintenance is scheduled for the same period. Each step should be executed by one person while a second person reads the instructions aloud and checks the output. Temporary credentials obtained for the exercise must be returned through the broker as soon as the exercise is complete. Do not run this procedure on a Friday afternoon or on the day before a public holiday unless the change was explicitly approved. Make sure laptops are plugged in and connected to a reliable network, because interrupted sessions leave partial state behind. Anything not covered by this note should be raised with the guild lead so the document can be improved for next time. Notify the owning team in the relevant channel and wait for an explicit acknowledgement before moving to the next step. Keep the ticket updated with timestamps for every action so the timeline can be reconstructed afterwards without guesswork. Allow several minutes between steps for caches, health checks and load balancers to converge before judging the result. When finished, post a short summary containing the start time, end time, participants, deviations and follow-up actions. The metrics scraper needs an explicit egress rule to port 9102 on every namespace, otherwise dashboards go blank without any alert firing."
+  },
+  {
+    "title": "Pricing experiment learnings",
+    "summary": "Summary of the checkout pricing experiments",
+    "category": "history",
+    "body": "Results and learnings from three rounds of pricing experiments. Do not run this procedure on a Friday afternoon or on the day before a public holiday unless the change was explicitly approved. Make sure laptops are plugged in and connected to a reliable network, because interrupted sessions leave partial state behind. Anything not covered by this note should be raised with the guild lead so the document can be improved for next time. Notify the owning team in the relevant channel and wait for an explicit acknowledgement before moving to the next step. Keep the ticket updated with timestamps for every action so the timeline can be reconstructed afterwards without guesswork. Allow several minutes between steps for caches, health checks and load balancers to converge before judging the result. When finished, post a short summary containing the start time, end time, participants, deviations and follow-up actions. Compare before and after figures for latency, error rate and saturation, and attach the comparison to the ticket. Open the shared dashboard and verify that all panels are green; record a screenshot of the baseline for later comparison. If any command returns an unexpected result, stop immediately, capture the full output and ask for help rather than improvising. Document anything surprising in the notes section at the bottom, including slow responses, confusing prompts and missing permissions. Review the previous run's notes first; most repeated problems were caused by skipping the preparation checklist. Verify access ahead of time; requesting permissions in the middle of the exercise has repeatedly caused delays. Before starting, confirm the change window is announced and that no conflicting maintenance is scheduled for the same period. Each step should be executed by one person while a second person reads the instructions aloud and checks the output. Temporary credentials obtained for the exercise must be returned through the broker as soon as the exercise is complete. Do not run this procedure on a Friday afternoon or on the day before a public holiday unless the change was explicitly approved. Make sure laptops are plugged in and connected to a reliable network, because interrupted sessions leave partial state behind. The winning variant displayed the annual price as a monthly equivalent, lifting conversion 6.2 percent, but only for visitors arriving from the newsletter."
+  },
+  {
+    "title": "Localisation workflow",
+    "summary": "How translations flow between code and translators",
+    "category": "procedures",
+    "body": "Describes the workflow for strings in web and mobile apps. Review the previous run's notes first; most repeated problems were caused by skipping the preparation checklist. Verify access ahead of time; requesting permissions in the middle of the exercise has repeatedly caused delays. Before starting, confirm the change window is announced and that no conflicting maintenance is scheduled for the same period. Each step should be executed by one person while a second person reads the instructions aloud and checks the output. Temporary credentials obtained for the exercise must be returned through the broker as soon as the exercise is complete. Do not run this procedure on a Friday afternoon or on the day before a public holiday unless the change was explicitly approved. Make sure laptops are plugged in and connected to a reliable network, because interrupted sessions leave partial state behind. Anything not covered by this note should be raised with the guild lead so the document can be improved for next time. Notify the owning team in the relevant channel and wait for an explicit acknowledgement before moving to the next step. Keep the ticket updated with timestamps for every action so the timeline can be reconstructed afterwards without guesswork. Allow several minutes between steps for caches, health checks and load balancers to converge before judging the result. When finished, post a short summary containing the start time, end time, participants, deviations and follow-up actions. Compare before and after figures for latency, error rate and saturation, and attach the comparison to the ticket. Open the shared dashboard and verify that all panels are green; record a screenshot of the baseline for later comparison. If any command returns an unexpected result, stop immediately, capture the full output and ask for help rather than improvising. Document anything surprising in the notes section at the bottom, including slow responses, confusing prompts and missing permissions. Review the previous run's notes first; most repeated problems were caused by skipping the preparation checklist. Verify access ahead of time; requesting permissions in the middle of the exercise has repeatedly caused delays. Translators receive strings through the glossary tool, and any string longer than 140 characters must carry a screenshot, or the Portuguese variant is returned unfinished."
+  },
+  {
+    "title": "Capacity planning model",
+    "summary": "How we forecast capacity for the next two quarters",
+    "category": "projects",
+    "body": "Overview of the spreadsheet model and inputs used for capacity planning. When finished, post a short summary containing the start time, end time, participants, deviations and follow-up actions. Compare before and after figures for latency, error rate and saturation, and attach the comparison to the ticket. Open the shared dashboard and verify that all panels are green; record a screenshot of the baseline for later comparison. If any command returns an unexpected result, stop immediately, capture the full output and ask for help rather than improvising. Document anything surprising in the notes section at the bottom, including slow responses, confusing prompts and missing permissions. Review the previous run's notes first; most repeated problems were caused by skipping the preparation checklist. Verify access ahead of time; requesting permissions in the middle of the exercise has repeatedly caused delays. Before starting, confirm the change window is announced and that no conflicting maintenance is scheduled for the same period. Each step should be executed by one person while a second person reads the instructions aloud and checks the output. Temporary credentials obtained for the exercise must be returned through the broker as soon as the exercise is complete. Do not run this procedure on a Friday afternoon or on the day before a public holiday unless the change was explicitly approved. Make sure laptops are plugged in and connected to a reliable network, because interrupted sessions leave partial state behind. Anything not covered by this note should be raised with the guild lead so the document can be improved for next time. Notify the owning team in the relevant channel and wait for an explicit acknowledgement before moving to the next step. Keep the ticket updated with timestamps for every action so the timeline can be reconstructed afterwards without guesswork. Allow several minutes between steps for caches, health checks and load balancers to converge before judging the result. When finished, post a short summary containing the start time, end time, participants, deviations and follow-up actions. Compare before and after figures for latency, error rate and saturation, and attach the comparison to the ticket. Seasonality factor for November is 2.7, derived from the last three years; use 1.4 for every other month, otherwise the forecast overshoots by a wide margin."
+  },
+  {
+    "title": "Support escalation guide",
+    "summary": "When and how support escalates to engineering",
+    "category": "procedures",
+    "body": "Support and engineering agreed this guide for escalations. Make sure laptops are plugged in and connected to a reliable network, because interrupted sessions leave partial state behind. Anything not covered by this note should be raised with the guild lead so the document can be improved for next time. Notify the owning team in the relevant channel and wait for an explicit acknowledgement before moving to the next step. Keep the ticket updated with timestamps for every action so the timeline can be reconstructed afterwards without guesswork. Allow several minutes between steps for caches, health checks and load balancers to converge before judging the result. When finished, post a short summary containing the start time, end time, participants, deviations and follow-up actions. Compare before and after figures for latency, error rate and saturation, and attach the comparison to the ticket. Open the shared dashboard and verify that all panels are green; record a screenshot of the baseline for later comparison. If any command returns an unexpected result, stop immediately, capture the full output and ask for help rather than improvising. Document anything surprising in the notes section at the bottom, including slow responses, confusing prompts and missing permissions. Review the previous run's notes first; most repeated problems were caused by skipping the preparation checklist. Verify access ahead of time; requesting permissions in the middle of the exercise has repeatedly caused delays. Before starting, confirm the change window is announced and that no conflicting maintenance is scheduled for the same period. Each step should be executed by one person while a second person reads the instructions aloud and checks the output. Temporary credentials obtained for the exercise must be returned through the broker as soon as the exercise is complete. Do not run this procedure on a Friday afternoon or on the day before a public holiday unless the change was explicitly approved. Make sure laptops are plugged in and connected to a reliable network, because interrupted sessions leave partial state behind. Anything not covered by this note should be raised with the guild lead so the document can be improved for next time. Tickets tagged refund-loop go straight to the payments engineer on call, bypassing triage, because the customer is charged repeatedly until the loop is stopped."
+  },
+  {
+    "title": "Wiki migration notes",
+    "summary": "Moving the old wiki into Quill and the docs repo",
+    "category": "history",
+    "body": "Status and lessons from migrating the legacy wiki. Verify access ahead of time; requesting permissions in the middle of the exercise has repeatedly caused delays. Before starting, confirm the change window is announced and that no conflicting maintenance is scheduled for the same period. Each step should be executed by one person while a second person reads the instructions aloud and checks the output. Temporary credentials obtained for the exercise must be returned through the broker as soon as the exercise is complete. Do not run this procedure on a Friday afternoon or on the day before a public holiday unless the change was explicitly approved. Make sure laptops are plugged in and connected to a reliable network, because interrupted sessions leave partial state behind. Anything not covered by this note should be raised with the guild lead so the document can be improved for next time. Notify the owning team in the relevant channel and wait for an explicit acknowledgement before moving to the next step. Keep the ticket updated with timestamps for every action so the timeline can be reconstructed afterwards without guesswork. Allow several minutes between steps for caches, health checks and load balancers to converge before judging the result. When finished, post a short summary containing the start time, end time, participants, deviations and follow-up actions. Compare before and after figures for latency, error rate and saturation, and attach the comparison to the ticket. Open the shared dashboard and verify that all panels are green; record a screenshot of the baseline for later comparison. If any command returns an unexpected result, stop immediately, capture the full output and ask for help rather than improvising. Document anything surprising in the notes section at the bottom, including slow responses, confusing prompts and missing permissions. Review the previous run's notes first; most repeated problems were caused by skipping the preparation checklist. Verify access ahead of time; requesting permissions in the middle of the exercise has repeatedly caused delays. Before starting, confirm the change window is announced and that no conflicting maintenance is scheduled for the same period. Attachments larger than 25 MB were never migrated; they remain in the cold-storage archive bucket under the prefix wiki-attic and must be requested from the platform team."
+  },
+  {
+    "title": "Server hardening baseline",
+    "summary": "Hardening settings applied to every host image",
+    "category": "environment",
+    "body": "The hardening baseline applied by Kiln and configuration management to every host. Compare before and after figures for latency, error rate and saturation, and attach the comparison to the ticket. Open the shared dashboard and verify that all panels are green; record a screenshot of the baseline for later comparison. If any command returns an unexpected result, stop immediately, capture the full output and ask for help rather than improvising. Document anything surprising in the notes section at the bottom, including slow responses, confusing prompts and missing permissions. Review the previous run's notes first; most repeated problems were caused by skipping the preparation checklist. Verify access ahead of time; requesting permissions in the middle of the exercise has repeatedly caused delays. Before starting, confirm the change window is announced and that no conflicting maintenance is scheduled for the same period. Each step should be executed by one person while a second person reads the instructions aloud and checks the output. Temporary credentials obtained for the exercise must be returned through the broker as soon as the exercise is complete. Do not run this procedure on a Friday afternoon or on the day before a public holiday unless the change was explicitly approved. Make sure laptops are plugged in and connected to a reliable network, because interrupted sessions leave partial state behind. Anything not covered by this note should be raised with the guild lead so the document can be improved for next time. Notify the owning team in the relevant channel and wait for an explicit acknowledgement before moving to the next step. Keep the ticket updated with timestamps for every action so the timeline can be reconstructed afterwards without guesswork. Allow several minutes between steps for caches, health checks and load balancers to converge before judging the result. When finished, post a short summary containing the start time, end time, participants, deviations and follow-up actions. Compare before and after figures for latency, error rate and saturation, and attach the comparison to the ticket. Open the shared dashboard and verify that all panels are green; record a screenshot of the baseline for later comparison. Kernel parameter net.ipv4.tcp_tw_reuse stays at 2 on gateway hosts only; setting it elsewhere caused intermittent connection resets under load."
+  },
+  {
+    "title": "Code hosting (2024)",
+    "summary": "Source code is hosted on the self-managed GitLab server",
+    "category": "environment",
+    "body": "Repositories live on gitlab.example.internal, a self-managed GitLab instance administered by platform. Merge requests are reviewed there."
+  },
+  {
+    "title": "Code hosting (2026)",
+    "summary": "Source code now lives on GitHub; GitLab is read-only",
+    "category": "environment",
+    "body": "Since the September migration all repositories live on GitHub under the acme organisation. The old GitLab server is read-only and will be shut down; use pull requests.",
+    "supersedes": [
+      "code-hosting-2024"
+    ]
+  },
+  {
+    "title": "Team chat tool (2023)",
+    "summary": "Engineering chat runs on Mattermost",
+    "category": "environment",
+    "body": "Day-to-day engineering chat happens in a self-hosted Mattermost server; incident channels are created there."
+  },
+  {
+    "title": "Team chat tool (current)",
+    "summary": "Engineering chat moved from Mattermost to Slack",
+    "category": "environment",
+    "body": "All engineering chat is on Slack since the spring consolidation. Mattermost was archived, and Rookery runs there.",
+    "supersedes": [
+      "team-chat-tool-2023"
+    ]
+  },
+  {
+    "title": "Primary region (early setup)",
+    "summary": "Everything runs in a single region, eu-west-1",
+    "category": "environment",
+    "body": "All production workloads run in eu-west-1 only. Disaster recovery means restoring from backups into the same region."
+  },
+  {
+    "title": "Primary regions (current)",
+    "summary": "Production is active in two regions: eu-west-1 and us-east-1",
+    "category": "environment",
+    "body": "Production is active-active across eu-west-1 and us-east-1. Failover is automatic for stateless services; databases fail over with a manual promotion.",
+    "supersedes": [
+      "primary-region-early-setup"
+    ]
+  },
+  {
+    "title": "Deploy tooling (legacy)",
+    "summary": "Deployments are done with Spinnaker pipelines",
+    "category": "procedures",
+    "body": "Services are deployed through Spinnaker pipelines triggered from the CI job. Rollbacks use the Spinnaker UI."
+  },
+  {
+    "title": "Deploy tooling (current)",
+    "summary": "Deploys use the ferrule command; Spinnaker is retired",
+    "category": "procedures",
+    "body": "Deployment is `ferrule deploy` from the chat channel or the CI job. The Spinnaker installation was decommissioned in July.",
+    "supersedes": [
+      "deploy-tooling-legacy"
+    ]
+  },
+  {
+    "title": "Python standard (2024)",
+    "summary": "Services standardise on Python 3.9",
+    "category": "environment",
+    "body": "The supported Python version for services is 3.9, using pip and requirements files with pip-tools."
+  },
+  {
+    "title": "Python standard (current)",
+    "summary": "Python 3.12 is the standard, 3.9 is end of life",
+    "category": "environment",
+    "body": "Python 3.12 with uv is the standard for services. Version 3.9 is end of life; remaining services must upgrade this quarter.",
+    "supersedes": [
+      "python-standard-2024"
+    ]
+  },
+  {
+    "title": "Page acknowledgement window (old)",
+    "summary": "Primary on-call has 15 minutes to acknowledge",
+    "category": "procedures",
+    "body": "If the primary does not acknowledge a page within 15 minutes it escalates to the secondary."
+  },
+  {
+    "title": "Page acknowledgement window (current)",
+    "summary": "Primary on-call now has 5 minutes to acknowledge",
+    "category": "procedures",
+    "body": "The acknowledgement window was cut to 5 minutes after the March incident review; the secondary is paged after that.",
+    "supersedes": [
+      "page-acknowledgement-window-old"
+    ]
+  },
+  {
+    "title": "Staging database host (2025)",
+    "summary": "Staging database is stage-db-01",
+    "category": "environment",
+    "body": "Staging uses one Postgres server, stage-db-01, reached through the VPN on the default port."
+  },
+  {
+    "title": "Staging database host (current)",
+    "summary": "Staging database is the stage-pg cluster behind PgBouncer",
+    "category": "environment",
+    "body": "Staging now uses the stage-pg cluster behind PgBouncer; stage-db-01 was retired. Connect through the pooler, never the nodes.",
+    "supersedes": [
+      "staging-database-host-2025"
+    ]
+  },
+  {
+    "title": "Log retention (old)",
+    "summary": "Logs are kept for 7 days",
+    "category": "environment",
+    "body": "Loki keeps logs for 7 days. Anything older must be exported manually before it disappears."
+  },
+  {
+    "title": "Log retention (current)",
+    "summary": "Logs are kept for 30 days",
+    "category": "environment",
+    "body": "Loki retention was raised to 30 days after the audit; archive older data to the cold bucket on request.",
+    "supersedes": [
+      "log-retention-old"
+    ]
+  },
+  {
+    "title": "Team standup time (old)",
+    "summary": "Daily standup is at 09:30",
+    "category": "procedures",
+    "body": "The platform team's daily standup is 09:30 UTC in the video room."
+  },
+  {
+    "title": "Team standup time (current)",
+    "summary": "Daily standup moved to 10:15",
+    "category": "procedures",
+    "body": "Daily standup moved to 10:15 UTC so the US team can join. It is skipped on release Tuesdays.",
+    "supersedes": [
+      "team-standup-time-old"
+    ]
+  },
+  {
+    "title": "Brindle release cadence (2024)",
+    "summary": "Brindle ships monthly",
+    "category": "projects",
+    "body": "Brindle releases once a month on the first Monday, with a QA week before."
+  },
+  {
+    "title": "Brindle release cadence (current)",
+    "summary": "Brindle ships every second Tuesday",
+    "category": "projects",
+    "body": "Release cadence is every second Tuesday since the QA automation landed; the monthly cycle is gone.",
+    "supersedes": [
+      "brindle-release-cadence-2024"
+    ]
+  },
+  {
+    "title": "Feature flag tool (2023)",
+    "summary": "Flags are managed in the LaunchLite hosted service",
+    "category": "projects",
+    "body": "Feature flags are toggled in the hosted LaunchLite dashboard and read by its SDK."
+  },
+  {
+    "title": "Feature flag tool (current)",
+    "summary": "Flags are managed in Beacon; LaunchLite was cancelled",
+    "category": "projects",
+    "body": "All flags were migrated to Beacon and the LaunchLite subscription ended. Use the Beacon SDKs.",
+    "supersedes": [
+      "feature-flag-tool-2023"
+    ]
+  },
+  {
+    "title": "Error budget review (old)",
+    "summary": "Error budgets are reviewed quarterly",
+    "category": "decisions",
+    "body": "Teams review error budget burn once a quarter in the reliability guild."
+  },
+  {
+    "title": "Error budget review (current)",
+    "summary": "Error budgets are reviewed monthly",
+    "category": "decisions",
+    "body": "Review moved to monthly in the March reliability review; quarterly was too slow to change behaviour.",
+    "supersedes": [
+      "error-budget-review-old"
+    ]
+  },
+  {
+    "title": "Password manager (2023)",
+    "summary": "Team passwords stored in the Vaultline app",
+    "category": "environment",
+    "body": "Shared team credentials are kept in the Vaultline password manager with per-team folders."
+  },
+  {
+    "title": "Password manager (current)",
+    "summary": "Team passwords moved to Keyring Pro",
+    "category": "environment",
+    "body": "Vaultline was replaced by Keyring Pro with SSO login. Export your folders before the old tenant closes.",
+    "supersedes": [
+      "password-manager-2023"
+    ]
+  },
+  {
+    "title": "Sprint length (old)",
+    "summary": "Sprints last three weeks",
+    "category": "decisions",
+    "body": "The team runs three week sprints with planning on the first Monday."
+  },
+  {
+    "title": "Sprint length (current)",
+    "summary": "Sprints last two weeks",
+    "category": "decisions",
+    "body": "Sprints were shortened to two weeks last quarter to improve feedback cycles; planning is still on Mondays.",
+    "supersedes": [
+      "sprint-length-old"
+    ]
+  },
+  {
+    "title": "Error tracking (2023)",
+    "summary": "Exceptions are reported to self-hosted Raven",
+    "category": "environment",
+    "body": "Application exceptions go to a self-hosted Raven server with a 30 day retention."
+  },
+  {
+    "title": "Error tracking (current)",
+    "summary": "Exceptions are reported to the hosted Kestrel service",
+    "category": "environment",
+    "body": "Raven was shut down; all exceptions now go to hosted Kestrel using the shared DSN from Warden.",
+    "supersedes": [
+      "error-tracking-2023"
+    ]
+  },
+  {
+    "title": "Database connection details: staging",
+    "summary": "How to connect to the staging Postgres through PgBouncer",
+    "category": "environment",
+    "body": "Connect to stage-pg.example.internal on port 6432 through PgBouncer in transaction mode using a Warden lease. Staging data is synthetic."
+  },
+  {
+    "title": "Database connection details: production",
+    "summary": "How to connect to the production Postgres through PgBouncer",
+    "category": "environment",
+    "body": "Connect to prod-pg.example.internal on port 6433 through PgBouncer in transaction mode using a Warden lease. Access is read-only unless an incident is open."
+  },
+  {
+    "title": "Deploy checklist: Harbor",
+    "summary": "Pre-deploy checks for the billing service",
+    "category": "procedures",
+    "body": "Before deploying Harbor confirm Ledgerlint is not mid-run, webhooks queue is empty and the payment sandbox contract tests pass."
+  },
+  {
+    "title": "Deploy checklist: Pavilion",
+    "summary": "Pre-deploy checks for the storefront",
+    "category": "procedures",
+    "body": "Before deploying Pavilion confirm no marketing campaign launches within the hour, the catalog schema contract passes and the CDN purge token is valid."
+  },
+  {
+    "title": "Signing keys: iOS",
+    "summary": "Where the iOS signing identities are stored",
+    "category": "procedures",
+    "body": "iOS distribution certificate and provisioning profiles are stored in the match repository, encrypted, and fetched by the release job."
+  },
+  {
+    "title": "Signing keys: Android",
+    "summary": "Where the Android upload keystore is stored",
+    "category": "procedures",
+    "body": "The Android upload keystore sits in Warden under the mobile path; the Play-managed app signing key never leaves the store."
+  },
+  {
+    "title": "On-call contacts: EU rotation",
+    "summary": "Escalation contacts for the EU on-call rotation",
+    "category": "procedures",
+    "body": "EU rotation escalates to the Lisbon engineering manager, then the platform lead. Handoff is at 14:00 UTC."
+  },
+  {
+    "title": "On-call contacts: US rotation",
+    "summary": "Escalation contacts for the US on-call rotation",
+    "category": "procedures",
+    "body": "US rotation escalates to the Austin engineering manager, then the head of infrastructure. Handoff is at 22:00 UTC."
+  },
+  {
+    "title": "Grafana dashboard: Harbor",
+    "summary": "Where to find the Harbor service dashboard",
+    "category": "projects",
+    "body": "The Harbor dashboard folder shows invoice throughput, webhook lag and payment error rate. Linked from the Gazetteer entry."
+  },
+  {
+    "title": "Grafana dashboard: Orrery",
+    "summary": "Where to find the Orrery service dashboard",
+    "category": "projects",
+    "body": "The Orrery dashboard folder shows feature lookup latency, Redis hit ratio and snapshot freshness. Linked from the Gazetteer entry."
+  },
+  {
+    "title": "Lint rules: Python",
+    "summary": "Ruff rule selection for Python repositories",
+    "category": "decisions",
+    "body": "Python repos enable ruff rules E, F, I, B and S, line length 100, and run ruff format in CI."
+  },
+  {
+    "title": "Lint rules: Go",
+    "summary": "golangci-lint linters for Go repositories",
+    "category": "decisions",
+    "body": "Go repos enable govet, staticcheck, errcheck and gosec through the shared golangci config and fail CI on any finding."
+  },
+  {
+    "title": "Alert: Harbor latency",
+    "summary": "Threshold for the Harbor p95 latency alert",
+    "category": "environment",
+    "body": "Pages when Harbor p95 latency exceeds 800 ms for 10 minutes. First check the replica lag and PgBouncer saturation."
+  },
+  {
+    "title": "Alert: Harbor error rate",
+    "summary": "Threshold for the Harbor error rate alert",
+    "category": "environment",
+    "body": "Pages when Harbor 5xx rate exceeds 2 percent for 5 minutes. First check the card processor status and recent deploys."
+  },
+  {
+    "title": "Backups: Postgres",
+    "summary": "Postgres snapshot schedule and verification",
+    "category": "environment",
+    "body": "Postgres snapshots run nightly; a weekly job restores the latest into a scratch instance and runs checksum queries."
+  },
+  {
+    "title": "Backups: OpenSearch",
+    "summary": "OpenSearch snapshot schedule and verification",
+    "category": "environment",
+    "body": "OpenSearch snapshots go to the snapshot bucket every six hours; verification is a monthly restore of one index, since indexes can be rebuilt."
+  },
+  {
+    "title": "Access approval: staging",
+    "summary": "Who approves staging access",
+    "category": "procedures",
+    "body": "Staging access is approved by the team lead, granted for 90 days and renewable without a ticket."
+  },
+  {
+    "title": "Access approval: production",
+    "summary": "Who approves production access",
+    "category": "procedures",
+    "body": "Production access needs the team lead and the security on-call, is granted for 30 days and every renewal needs a new ticket."
+  },
+  {
+    "title": "Failover: cache Redis",
+    "summary": "Failing over the cache Redis cluster",
+    "category": "procedures",
+    "body": "For cache-redis, promote the replica and accept the cold cache; no data recovery is attempted. Applications must tolerate misses."
+  },
+  {
+    "title": "Failover: state Redis",
+    "summary": "Failing over the state Redis cluster",
+    "category": "procedures",
+    "body": "For state-redis, wait for replica sync, promote with the sentinel command, then verify persistence files. Data loss must be reported as an incident."
+  },
+  {
+    "title": "Changing an email template",
+    "summary": "Process for editing transactional email templates",
+    "category": "procedures",
+    "body": "Edit the MJML source in Saffron, send a rendering test to the inbox testing tool, get a design review and release through Trellis."
+  },
+  {
+    "title": "Changing an SMS template",
+    "summary": "Process for editing SMS templates",
+    "category": "procedures",
+    "body": "SMS templates are plain text in notifier-templates; keep under 160 characters, check the regional sender registration and release through Trellis."
+  },
+  {
+    "title": "Preview builds: Quill",
+    "summary": "How preview builds work for the docs site",
+    "category": "projects",
+    "body": "Every Quill pull request gets a static preview at a pr-<number> subdomain on the docs preview host, deleted at merge."
+  },
+  {
+    "title": "Preview builds: Pavilion",
+    "summary": "How preview builds work for the storefront",
+    "category": "projects",
+    "body": "Pavilion pull requests deploy to a namespace with seeded catalog data and a stubbed checkout, destroyed 24 hours after close."
+  }
 ]

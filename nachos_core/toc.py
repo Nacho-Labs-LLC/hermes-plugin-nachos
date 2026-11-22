@@ -37,6 +37,7 @@ def render_toc(
     entries: Iterable[Entry],
     *,
     char_budget: int | None = None,
+    superseded_count: int = 0,
 ) -> str:
     """Render the full manifest. Never omits an entry.
 
@@ -45,8 +46,13 @@ def render_toc(
                 removed.
     """
     rows = build_toc(entries)
+    footer = (
+        f"{superseded_count} superseded {'entry' if superseded_count == 1 else 'entries'} hidden."
+        if superseded_count > 0
+        else ""
+    )
     if not rows:
-        return ""
+        return f"{_HEADER}\n{_HINT}\n\n{footer}" if footer else ""
 
     def _render(summary_cap: int | None) -> str:
         lines: list[str] = [_HEADER, _HINT]
@@ -63,6 +69,9 @@ def render_toc(
                 lines.append(f"- {title} \u2014 {summ}")
             else:
                 lines.append(f"- {title}")
+        if footer:
+            lines.append("")
+            lines.append(footer)
         return "\n".join(lines)
 
     full = _render(None)

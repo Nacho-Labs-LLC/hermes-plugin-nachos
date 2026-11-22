@@ -142,6 +142,7 @@ class DocumentTerms:
     """Cached tokenised/stemmed term sets and lowercased text for one entry."""
 
     title: str
+    summary: str
     category: str
     title_words: frozenset[str]
     summary_words: frozenset[str]
@@ -209,6 +210,7 @@ class LexicalIndex:
         doc_w = label_w | body_w
         self.docs[key] = DocumentTerms(
             title=title,
+            summary=summary,
             category=category,
             title_words=title_w,
             summary_words=summary_w,
@@ -278,6 +280,63 @@ class LexicalIndex:
             key=lambda item: (self.docs[item[0]].category, self.docs[item[0]].title, item[0])
         )
         return matches
+
+    def _term_idf(self, term: str, n_docs: int) -> float:
+        df = self.doc_freq.get(term, 0)
+        return math.log(1.0 + n_docs / df) if df else 0.0
+
+    def _doc_norm_sq(self, doc: DocumentTerms, n_docs: int, idf_cache: dict[str, float]) -> float:
+        total = 0.0
+        for t in doc.doc_words:
+            w = idf_cache.get(t)
+            if w is None:
+                w = self._term_idf(t, n_docs)
+                idf_cache[t] = w
+            tw = w * (2.0 if t in doc.label_words else 1.0)
+            total += tw * tw
+        return total
+
+    def similar_documents(
+        self,
+        *,
+        title: str,
+        summary: str,
+        body: str,
+        threshold: float,
+        exclude: AbstractSet[str] = frozenset(),
+        limit: int = 12,
+    ) -> list[tuple[str, float, tuple[str, ...]]]:
+        """Return ``(key, cosine, top_shared_terms)`` using IDF-weighted document cosine."""
+        label_w = frozenset(tokens(f"{title} {summary}"))
+        doc_w = label_w | frozenset(tokens(body))
+        q_idf = self.idf(doc_w) if (doc_w and self.docs) else {}
+        if not q_idf:
+            return []
+        q_weights = {t: w * (2.0 if t in label_w else 1.0) for t, w in q_idf.items()}
+        q_norm = math.sqrt(sum(v * v for v in q_weights.values()))
+        candidates = {
+            key for term in q_weights for key in self.postings.get(term, ()) if key not in exclude
+        }
+        if not q_norm or not candidates:
+            return []
+        n_docs = len(self.docs)
+        idf_cache = dict(q_idf)
+        matches: list[tuple[str, float, tuple[str, ...]]] = []
+        for key in candidates:
+            doc = self.docs[key]
+            shared = [t for t in q_weights if t in doc.doc_words]
+            d_sq = self._doc_norm_sq(doc, n_docs, idf_cache) if shared else 0.0
+            if d_sq <= 0.0:
+                continue
+            dot_prod = sum(
+                q_weights[t] * q_idf[t] * (2.0 if t in doc.label_words else 1.0) for t in shared
+            )
+            sim = dot_prod / (q_norm * math.sqrt(d_sq))
+            if sim >= threshold:
+                shared.sort(key=lambda t: (-q_idf[t], t))
+                matches.append((key, sim, tuple(shared[:3])))
+        matches.sort(key=lambda item: (-item[1], item[0]))
+        return matches[:limit]
 
     def idf(self, terms: Iterable[str]) -> dict[str, float]:
         """Inverse-document-frequency weight for each term present in at least one document."""

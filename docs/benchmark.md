@@ -253,3 +253,98 @@ Readings:
 ### Not measured
 
 No OpenAI-compatible server (Ollama etc.) was reachable, so the `openai` backend has no numbers; the `sentence-transformers` row above predates the query type and used no prefixes.
+
+## Adversarial set
+
+`bench/data/adversarial/` is an independent eval set for `suggested_supersedes` and for recall over a store with superseded entries. It was written before the suggestion heuristic (`nachos_core/quality.py`, `validity.py`) or the main fixture were read, so it was not shaped by what the heuristic does, and the heuristic was not tuned against it afterwards: the numbers below are a one-shot report.
+
+Run it with `--data-dir`:
+
+```bash
+python -m bench --data-dir bench/data/adversarial --suggest-eval          # suggestion precision/recall by case
+python -m bench --data-dir bench/data/adversarial                         # recall, supersedes applied by label
+python -m bench --data-dir bench/data/adversarial --no-supersedes         # same, supersedes links not applied
+```
+
+Files (all fictional):
+
+- `memories.json`: 63 base entries (same format as the main fixture).
+- `updates.json`: 65 follow-up puts applied in order after the base entries. Each has `update_of: <key>` (37, including 2 chains where the target is itself an update) or `update_of: null` with a `reason` (28 distinct entries), plus a `case` tag. The loader appends them to the memories, turning `update_of` into `supersedes`, so `--suggest-eval` and `--no-supersedes` work unchanged. Every update has a new title (a same-title put would just overwrite), so titles differ from the old one by a little (`... v3`, `... (Postgres 17)`) or a lot (`Thumbnail service` for `Image resizer lambda`).
+- `queries.json`: 96 queries over the final state: 37 `current`, 24 `outdated` (worded from the superseded entry only; expected key is the current one), 20 `sibling` (must pick the right twin or additive note) and 15 `no-answer` (`expect: []`).
+
+`--suggest-eval` adds a per-`case` table when entries carry a `case`. No-answer queries are left out of hit@k and counted separately ("returned results").
+
+| Update cases (label: update) | n | Distinct cases (label: distinct) | n |
+| --- | --- | --- | --- |
+| update-nocue (no cue words) | 7 | distinct-sibling (near-identical wording, other facet) | 10 |
+| update-rename (only a name or URL changes) | 5 | distinct-additive-numbers (notes with numbers) | 6 |
+| update-negation ("no longer uses X") | 4 | distinct-different-subject (shared vocabulary) | 4 |
+| update-question / update-log | 2 / 3 | distinct-negation (additive "has no X") | 3 |
+| update-multifact (one fact of several changed) | 4 | distinct-log (incident or retro) | 2 |
+| update-title-differs | 4 | distinct-unrelated | 2 |
+| update-i18n (German/French) | 3 | distinct-related | 1 |
+| update-markdown (code blocks) | 3 | | |
+| update-chain (update of an update) | 2 | | |
+
+### Suggestion results
+
+Machine as above; MiniLM-L6 q8 through the `nachos-embeddings` CLI (branch `naterchrdsn/emb-prefixes`, typed, `NACHOS_EMBEDDINGS_CACHE` outside both repos). 37 labelled updates, 28 distinct entries. Suggestions are checked against the labels as each entry is put, with no supersedes applied during the replay.
+
+| Backend | precision | recall | F1 | TP/FP/FN |
+| --- | --- | --- | --- | --- |
+| lexical (off) | 0.500 | 0.054 | 0.098 | 2/2/35 |
+| MiniLM-L6 q8 | 0.429 | 0.081 | 0.136 | 3/4/34 |
+
+By case (TP/n for updates; FP for distinct entries; lexical / MiniLM):
+
+| Case | n | lexical | MiniLM q8 |
+| --- | --- | --- | --- |
+| update-nocue | 7 | 0/7 | 0/7 |
+| update-rename | 5 | 0/5 | 0/5 |
+| update-negation | 4 | 0/4 | 0/4 |
+| update-question | 2 | 0/2 | 0/2 |
+| update-log | 3 | 0/3 | 0/3 |
+| update-multifact | 4 | 1/4 | 1/4 |
+| update-title-differs | 4 | 0/4 | 0/4 |
+| update-i18n | 3 | 0/3 | 0/3 |
+| update-markdown | 3 | 0/3 | 0/3 |
+| update-chain | 2 | 1/2 | 2/2 |
+| distinct-sibling | 10 | 2 FP | 4 FP |
+| other distinct cases (18 entries) | 18 | 0 FP | 0 FP |
+
+On this set the suggester is near-silent rather than noisy: it finds the update when the title is the old title plus a version or qualifier (`Plans and prices` to `Plans and prices v3`, `Nimbus billing API` to `... endpoints`) and almost nothing else.
+
+### Why it fails
+
+Read after the run, from `nachos_core/quality.py` and `validity.py` (no change made):
+
+1. **The title gate rejects most real updates.** `_titles_compatible_for_supersede` needs two shared core title tokens (or at least half of them) and no one-sided qualifiers on both titles. 33 of the 37 updates fail it, because an update that is worded as a new entry usually retitles it (`Postgres primary host` to `Primary database server`, `Team standup` to `Daily sync meeting`, `Auth service` to `Why do we get logged out after 5 minutes?`). Applying only the body check (`looks_like_update` without titles) would fire on 26 of the 37, so the title gate is the dominant recall limit. Examples: `Nightly backup job`, `Plans and prices` (nocue), `Supportzeiten`, `Rechnungsnummern` (i18n: the German titles share no token with the old ones), `Thumbnail service` (title-differs).
+2. **Candidate retrieval depends on the same titles.** Candidates are the duplicate-similarity hits plus entries whose core title tokens are exactly equal. A retitled update has neither unless the embedding duplicate threshold happens to catch it, so it is never compared. `Feature flags` vs `Feature flag service` passes the title gate and still misses (the body only changes a hostname: no digits or paths the fact regex sees).
+3. **The body test only sees numbers, paths, URLs and a few cadence words.** A change of a name, host without a path, tool or person is invisible: `update-rename` (`Grafana dashboards` is a bare hostname change; `On-call roster` swaps two first names; `Transactional email sender` changes one address) never differs in a fact token. Negations (`We no longer use Sentry`, `WireGuard is not used anymore`) and prose changes (`Opsgenie` for `PagerDuty`, `Snowflake` for `BigQuery`, `Adyen` for `Stripe`) have no number change, and the cue list does not contain "no longer", "not used anymore", "is out" or "stopped using".
+4. **Facet qualifiers only block when both titles have one.** `Postgres read replica for analytics`, `CI runner pool for macOS`, `Sprint cadence for the design team` and `Support response targets for enterprise` add a qualifier to an existing title; the old title has no qualifier of its own, so `old_only` is empty and the pair passes as "compatible". Their bodies differ in a number or hostname, so the body test fires: 4 false positives for MiniLM (2 for lexical, which only retrieved the macOS and enterprise ones as candidates). A sibling fact whose twin is not itself labelled stays one-sided and is mistaken for a version.
+5. **What did not fire falsely:** none of the 18 additive, negation, log, different-subject or unrelated entries produced a suggestion, because they differ in title and the title gate holds. The same gate that protects precision here is what costs recall in item 1.
+6. **Chains work only with a close title.** `Primary database server (Postgres 17)` was missed by lexical (core title not equal because of the extra `postgres` token, and no embedding hit) and caught by MiniLM.
+
+### Recall with and without supersedes
+
+96 queries, supersedes applied by label (`--no-supersedes` leaves every entry active). No-answer queries are excluded from the hit metrics (see below). The first row of each pair is lexical, the second MiniLM-L6 q8.
+
+| Run | hit@1 | hit@5 | MRR@10 |
+| --- | --- | --- | --- |
+| lexical, supersedes applied | 0.889 | 0.951 | 0.914 |
+| lexical, no supersedes | 0.617 | 0.926 | 0.768 |
+| MiniLM q8, supersedes applied | 0.951 | 1.000 | 0.972 |
+| MiniLM q8, no supersedes | 0.679 | 0.988 | 0.826 |
+
+Per category, hit@1 / hit@5 / MRR@10:
+
+| Category | n | lexical, applied | lexical, none | MiniLM, applied | MiniLM, none |
+| --- | --- | --- | --- | --- | --- |
+| current | 37 | 0.919 / 1.000 / 0.955 | 0.730 / 1.000 / 0.849 | 1.000 / 1.000 / 1.000 | 0.811 / 1.000 / 0.901 |
+| outdated | 24 | 0.750 / 0.833 / 0.779 | 0.125 / 0.750 / 0.450 | 0.875 / 1.000 / 0.927 | 0.250 / 0.958 / 0.587 |
+| sibling | 20 | 1.000 / 1.000 / 1.000 | 1.000 / 1.000 / 1.000 | 0.950 / 1.000 / 0.975 | 0.950 / 1.000 / 0.975 |
+
+- Applying the labels is worth +0.27 (lexical) and +0.27 (MiniLM) overall hit@1 and +0.63 on `outdated`. This is the ceiling a perfect suggester could reach; today the suggester delivers almost none of it.
+- With links applied, lexical `outdated` still misses 4 of 24 at hit@5 (`db-prim-01 host`, `standup 09:45 Google Meet`, `redis-sess.internal 6379 allkeys-lru`, `lyon-app-02 deploiement jeudi`): the old wording is only in the now-hidden entry, so a keyword search has nothing to match. Embeddings recover them. Archiving an old entry makes its wording unfindable unless its text is folded into the successor.
+- Without links, `outdated` hit@1 is 0.125 (lexical) and 0.250 (MiniLM): the old entry usually outranks the new one because queries use its words.
+- No-answer: 13/15 (lexical) and 15/15 (MiniLM) of the no-answer queries still return results, since recall has no relevance floor. A caller cannot tell "nothing known" from "a weak match" from the result list alone.

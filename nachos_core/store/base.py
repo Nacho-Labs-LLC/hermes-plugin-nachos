@@ -8,9 +8,21 @@ from __future__ import annotations
 
 import builtins
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
+from dataclasses import dataclass
 
 # (key, title, summary, category)
 Entry = tuple[str, str, str, str]
+
+
+@dataclass(frozen=True)
+class EntryMeta:
+    """Per-entry timestamp and validity metadata."""
+
+    created_at: float | None = None
+    updated_at: float | None = None
+    superseded_by: str | None = None
+    approx_timestamps: bool = False
 
 
 class MemoryStore(ABC):
@@ -79,3 +91,28 @@ class MemoryStore(ABC):
         which disables cross-query caching for that driver.
         """
         return None
+
+    @property
+    def read_only(self) -> bool:
+        """True when this store was opened read-only and must never be mutated."""
+        return False
+
+    def get_meta(self, key: str) -> EntryMeta | None:
+        """Return timestamp and validity metadata for ``key``, or None if absent."""
+        return EntryMeta() if self.get(key) is not None else None
+
+    def all_meta(self) -> dict[str, EntryMeta]:
+        """Return ``{key: EntryMeta}`` for every entry in one pass."""
+        return {key: EntryMeta() for key, *_rest in self.list()}
+
+    def set_superseded_by(
+        self, key: str, superseded_by: str | None, *, updated_at: float | None = None
+    ) -> bool:
+        """Record (or clear) ``superseded_by`` on ``key`` without deleting it."""
+        del key, superseded_by, updated_at
+        return False
+
+    def backfill_timestamps(self, timestamps: Mapping[str, tuple[float, float, bool]]) -> int:
+        """Populate missing ``(created_at, updated_at, approx)`` metadata on existing entries."""
+        del timestamps
+        return 0

@@ -1,0 +1,550 @@
+[
+ {
+  "title": "Primary database server",
+  "summary": "Host and version of the main Postgres",
+  "category": "environment",
+  "body": "db-prim-02.internal, Postgres 16.2, port 5432. Connection pooling through pgbouncer on 6432.",
+  "case": "update-nocue",
+  "update_of": "postgres-primary-host"
+ },
+ {
+  "title": "Nightly backup job",
+  "summary": "Backup job schedule",
+  "category": "environment",
+  "body": "Backups run at 03:15 UTC and the dump goes to the lf-backups bucket.",
+  "case": "update-nocue",
+  "update_of": "sundial-cron-scheduler"
+ },
+ {
+  "title": "Daily sync meeting",
+  "summary": "Time and place of the daily meeting",
+  "category": "process",
+  "body": "Daily at 10:15 on Zoom. Written notes still go to #eng-standup.",
+  "case": "update-nocue",
+  "update_of": "team-standup"
+ },
+ {
+  "title": "Plans and prices",
+  "summary": "Subscription plans and monthly prices",
+  "category": "projects",
+  "body": "Free, Pro 35 EUR per month, Business 120 EUR per month. Annual billing gives two months free.",
+  "case": "update-nocue",
+  "update_of": "pricing-tiers"
+ },
+ {
+  "title": "Deploy windows",
+  "summary": "Allowed deploy times",
+  "category": "process",
+  "body": "No production deploys on Thursday after 16:00 local time or on weekends. Hotfixes need approval from the engineering manager.",
+  "case": "update-nocue",
+  "update_of": "release-freeze-policy"
+ },
+ {
+  "title": "Session store",
+  "summary": "Redis instance holding web sessions",
+  "category": "environment",
+  "body": "Sessions are stored in redis-sess-2.internal:6380, maxmemory 4gb, allkeys-lfu eviction. Nothing else should write to this instance.",
+  "case": "update-nocue",
+  "update_of": "redis-session-cache"
+ },
+ {
+  "title": "Support response targets",
+  "summary": "First-response targets by plan",
+  "category": "process",
+  "body": "Pro within 2 business hours, Free within 2 business days, Business within 1 hour around the clock. Breaches are reported weekly.",
+  "case": "update-nocue",
+  "update_of": "customer-support-sla"
+ },
+ {
+  "title": "Design tokens package",
+  "summary": "Repo and npm name of the design tokens",
+  "category": "projects",
+  "body": "Tokens live at github.com/lumenfold/design-tokens and are published to npm as @lumenfold/design-tokens. Designers edit them in Figma and a bot opens the PR.",
+  "case": "update-rename",
+  "update_of": "design-tokens-repo"
+ },
+ {
+  "title": "Grafana dashboards",
+  "summary": "Grafana location and main folder",
+  "category": "environment",
+  "body": "Grafana is at metrics.lumenfold.io. The important dashboards are in the folder Core SLOs: latency, error rate, saturation.",
+  "case": "update-rename",
+  "update_of": "metrics-dashboards"
+ },
+ {
+  "title": "Feature flags",
+  "summary": "Where feature flags are managed",
+  "category": "environment",
+  "body": "Unleash is self-hosted at toggles.lumenfold.io. Each environment has its own SDK key; frontends use the proxy endpoint.",
+  "case": "update-rename",
+  "update_of": "feature-flag-service"
+ },
+ {
+  "title": "On-call roster",
+  "summary": "Who is primary and secondary on call",
+  "category": "process",
+  "body": "Weekly handoff on Monday at 10:00 CET. Primary on-call is Tomas, secondary is Ines. Swaps are agreed in #oncall and noted in PagerDuty.",
+  "case": "update-rename",
+  "update_of": "incident-on-call-rotation"
+ },
+ {
+  "title": "Transactional email sender",
+  "summary": "Email provider and sender address",
+  "category": "environment",
+  "body": "Transactional email is sent through Postmark. The from address is hello@lumenfold.io; marketing mail uses a different tool.",
+  "case": "update-rename",
+  "update_of": "email-provider"
+ },
+ {
+  "title": "Sentry retired",
+  "summary": "Error tracking moved off Sentry",
+  "category": "environment",
+  "body": "We no longer use Sentry for error tracking. Errors are sent to Honeycomb and alerts still post to #alerts-eng.",
+  "case": "update-negation",
+  "update_of": "error-tracking"
+ },
+ {
+  "title": "Payments checkout provider",
+  "summary": "Card payments provider",
+  "category": "projects",
+  "body": "Stripe is out. Checkout now runs on Adyen and the webhook endpoint is /hooks/adyen. Refunds are issued from the Adyen portal.",
+  "case": "update-negation",
+  "update_of": "payment-processor"
+ },
+ {
+  "title": "Frontend tooling note",
+  "summary": "Package manager and runtime for web",
+  "category": "projects",
+  "body": "We stopped using pnpm; the monorepo runs on Bun 1.1 now. Vite 5 stays as the bundler and node 20 is only kept for CI.",
+  "case": "update-negation",
+  "update_of": "frontend-build-tooling"
+ },
+ {
+  "title": "Remote access",
+  "summary": "How to reach internal services remotely",
+  "category": "process",
+  "body": "WireGuard is not used anymore. Access goes through Tailscale: ask IT for an invite and there is no config file to download.",
+  "case": "update-negation",
+  "update_of": "vpn-access"
+ },
+ {
+  "title": "Why do we get logged out after 5 minutes?",
+  "summary": "Explains the shorter token lifetime",
+  "category": "projects",
+  "body": "Q: why does the web app log me out so fast? A: the access token lifetime in Keycloak (auth.lumenfold.io, realm lumenfold) was cut from 15 to 5 minutes. Refresh tokens still last 8 hours.",
+  "case": "update-question",
+  "update_of": "auth-service"
+ },
+ {
+  "title": "2024-06-12 prod cluster upgrade",
+  "summary": "Log of the production cluster upgrade",
+  "category": "history",
+  "body": "Upgraded lf-prod to Kubernetes 1.30 today and scaled the node group from 12 to 16 m6i.large. Region is still eu-central-1.",
+  "case": "update-log",
+  "update_of": "kubernetes-cluster-prod"
+ },
+ {
+  "title": "Changelog: base images",
+  "summary": "Changelog entry for the base images",
+  "category": "conventions",
+  "body": "[2024-07-02] python base is now 3.13-slim. node stays on 20-alpine. Still pinned by digest and rebuilt weekly.",
+  "case": "update-log",
+  "update_of": "docker-base-images"
+ },
+ {
+  "title": "Did sprint length change?",
+  "summary": "Answer about the new sprint length",
+  "category": "process",
+  "body": "Yes. Sprints are three weeks now and start on Monday. Planning is Monday 10:00 and the retro is on the last Friday.",
+  "case": "update-question",
+  "update_of": "sprint-cadence"
+ },
+ {
+  "title": "Meeting 2024-06-18 roadmap sync",
+  "summary": "Notes from the roadmap sync",
+  "category": "projects",
+  "body": "Agreed in the roadmap sync: SSO moves to Q4 and usage-based billing is pulled forward. Self-serve onboarding stays first.",
+  "case": "update-log",
+  "update_of": "q3-roadmap"
+ },
+ {
+  "title": "Retention rules",
+  "summary": "Retention periods by data class",
+  "category": "process",
+  "body": "Application logs are kept 14 days, analytics events 13 months and database backups 35 days. Deletion jobs run nightly.",
+  "case": "update-multifact",
+  "update_of": "data-retention-policy"
+ },
+ {
+  "title": "Nimbus billing API endpoints",
+  "summary": "Billing API URL, auth and timeout",
+  "category": "projects",
+  "body": "Base URL is https://billing.lumenfold.io/v3. Authentication uses a bearer token read from Vault path secret/billing. Default request timeout is 10 seconds.",
+  "case": "update-multifact",
+  "update_of": "nimbus-billing-api"
+ },
+ {
+  "title": "Push notification worker",
+  "summary": "Queue and retry settings for push",
+  "category": "projects",
+  "body": "A Go service that sends push through FCM and APNs. Work is queued in the SQS queue notif-q-v2 and failed sends are retried 5 times.",
+  "case": "update-multifact",
+  "update_of": "notification-service"
+ },
+ {
+  "title": "Hardware and device management",
+  "summary": "Laptops, encryption and MDM",
+  "category": "process",
+  "body": "New hires get a MacBook Pro 14. FileVault must be on and devices are enrolled in Jamf. Screen lock after 5 minutes. Lost devices are reported to IT within an hour.",
+  "case": "update-multifact",
+  "update_of": "laptop-policy"
+ },
+ {
+  "title": "Thumbnail service",
+  "summary": "Thumbnail generation service",
+  "category": "projects",
+  "body": "Now a container on ECS Fargate that replaced the Lambda. Uses sharp, max input 50 MB, outputs avif and webp. Triggered by S3 uploads in the media bucket.",
+  "case": "update-title-differs",
+  "update_of": "image-resizer-lambda"
+ },
+ {
+  "title": "Where alerts go",
+  "summary": "Alert destinations",
+  "category": "environment",
+  "body": "Critical alerts page Opsgenie team lf-core. Warning alerts go to the Slack channel #alerts-warn only and never page anyone.",
+  "case": "update-title-differs",
+  "update_of": "alertmanager-routing"
+ },
+ {
+  "title": "Where product events land",
+  "summary": "Product events storage",
+  "category": "environment",
+  "body": "Product events are in Snowflake, account lf-xy123, database PROD_EVENTS. Access is granted through the analysts Okta group.",
+  "case": "update-title-differs",
+  "update_of": "analytics-warehouse"
+ },
+ {
+  "title": "DR exercise",
+  "summary": "Disaster recovery exercise result",
+  "category": "history",
+  "body": "The exercise runs quarterly. The last one was in November and a full restore took 27 minutes.",
+  "case": "update-title-differs",
+  "update_of": "backup-restore-drill"
+ },
+ {
+  "title": "Supportzeiten",
+  "summary": "Erreichbarkeit des Supports",
+  "category": "process",
+  "body": "Der Support ist Montag bis Freitag von 9 bis 18 Uhr erreichbar, samstags von 10 bis 14 Uhr nur per E-Mail.",
+  "case": "update-i18n",
+  "update_of": "kundendienst-zeiten"
+ },
+ {
+  "title": "Rechnungsnummern",
+  "summary": "Nummernkreis und Zahlungsbedingungen",
+  "category": "projects",
+  "body": "Rechnungen werden als RE-2025-xxxxx nummeriert, die Mehrwertsteuer betraegt 19 Prozent und das Zahlungsziel ist 14 Tage.",
+  "case": "update-i18n",
+  "update_of": "rechnungsstellung-konfiguration"
+ },
+ {
+  "title": "Mise en production Lyon",
+  "summary": "Serveur et horaire pour Lyon",
+  "category": "environment",
+  "body": "Le serveur lyon-app-03 heberge l'application pour le bureau de Lyon. La mise en production a lieu le mardi a 18h.",
+  "case": "update-i18n",
+  "update_of": "deploiement-lyon"
+ },
+ {
+  "title": "Python lint config",
+  "summary": "Python lint settings",
+  "category": "conventions",
+  "body": "## Python lint\n\n```toml\n[tool.ruff]\nline-length = 120\n```\n\nType hints are required in new modules. Docstrings only where behaviour is not obvious.",
+  "case": "update-markdown",
+  "update_of": "coding-style-python"
+ },
+ {
+  "title": "Branch naming",
+  "summary": "Branch workflow with an example",
+  "category": "conventions",
+  "body": "## Workflow\n\n```bash\ngit switch -c feat/ABC-123-short-slug\ngit push -u origin HEAD\n```\n\nTrunk-based with short-lived branches. Pull requests are rebase merged into main.",
+  "case": "update-markdown",
+  "update_of": "git-branching-convention"
+ },
+ {
+  "title": "Terraform remote state",
+  "summary": "Backend block for remote state",
+  "category": "environment",
+  "body": "```hcl\nterraform {\n  backend \"s3\" {\n    bucket         = \"lf-tfstate-eu\"\n    dynamodb_table = \"lf-tflock\"\n  }\n}\n```\n\nNever run apply from a laptop.",
+  "case": "update-markdown",
+  "update_of": "terraform-state-backend"
+ },
+ {
+  "title": "Primary database server (Postgres 17)",
+  "summary": "Primary Postgres after the major upgrade",
+  "category": "environment",
+  "body": "db-prim-02.internal upgraded to Postgres 17.0. Port 5432 and pgbouncer on 6432 are unchanged.",
+  "case": "update-chain",
+  "update_of": "primary-database-server"
+ },
+ {
+  "title": "Plans and prices v3",
+  "summary": "Subscription plans, third revision",
+  "category": "projects",
+  "body": "Free, Pro 39 EUR per month, Business 120 EUR per month, Enterprise on request.",
+  "case": "update-chain",
+  "update_of": "plans-and-prices"
+ },
+ {
+  "title": "Postgres read replica for analytics",
+  "summary": "Replica used by analytics jobs",
+  "category": "environment",
+  "body": "Analytics reads go to db-repl-02.internal. Alert fires when replication lag exceeds 120s. Never run migrations against it.",
+  "case": "distinct-sibling",
+  "update_of": null,
+  "reason": "sibling facet: second replica, different consumer"
+ },
+ {
+  "title": "Kubernetes cluster dev",
+  "summary": "Development cluster facts",
+  "category": "environment",
+  "body": "EKS cluster lf-dev in eu-central-1 on Kubernetes 1.30 with 2 nodes. It is scaled to zero at night.",
+  "case": "distinct-sibling",
+  "update_of": null,
+  "reason": "sibling facet: dev vs prod/staging"
+ },
+ {
+  "title": "Admin console URL",
+  "summary": "Address of the admin console",
+  "category": "environment",
+  "body": "The admin console is at https://admin.lumenfold.io and is only reachable over the VPN.",
+  "case": "distinct-sibling",
+  "update_of": null,
+  "reason": "sibling facet: different URL for a different app"
+ },
+ {
+  "title": "Redis job queue",
+  "summary": "Where background jobs are queued",
+  "category": "environment",
+  "body": "Background jobs live in redis-jobs.internal:6379 with maxmemory 1gb and noeviction. Nothing else should write to this instance.",
+  "case": "distinct-sibling",
+  "update_of": null,
+  "reason": "sibling facet: near-identical wording to session cache"
+ },
+ {
+  "title": "CI runner pool for macOS",
+  "summary": "macOS GitHub Actions runners",
+  "category": "environment",
+  "body": "Self-hosted GitHub Actions runners: 4 machines labelled lf-macos, hosted on MacStadium. iOS jobs must use the lf-macos label.",
+  "case": "distinct-sibling",
+  "update_of": null,
+  "reason": "sibling facet: same template, different platform"
+ },
+ {
+  "title": "Sprint cadence for the design team",
+  "summary": "Sprint rhythm of the design team",
+  "category": "process",
+  "body": "One-week sprints starting on Monday. Planning is Monday 09:30 and the review happens on Friday.",
+  "case": "distinct-sibling",
+  "update_of": null,
+  "reason": "sibling facet: different team"
+ },
+ {
+  "title": "Staging on-call rotation",
+  "summary": "Who is on call for staging",
+  "category": "process",
+  "body": "Weekly handoff on Monday at 10:00 CET. Primary on-call is Pia, secondary is Jonas. Swaps are agreed in #oncall-staging.",
+  "case": "distinct-sibling",
+  "update_of": null,
+  "reason": "sibling facet: staging vs production"
+ },
+ {
+  "title": "Support response targets for enterprise",
+  "summary": "Enterprise first-response targets",
+  "category": "process",
+  "body": "Enterprise customers get a first response within 30 minutes and a dedicated Slack channel. Breaches are escalated to the account owner.",
+  "case": "distinct-sibling",
+  "update_of": null,
+  "reason": "sibling facet: different plan"
+ },
+ {
+  "title": "Staging database host",
+  "summary": "Staging Postgres host and version",
+  "category": "environment",
+  "body": "The staging database is db-stg-01.internal running Postgres 16.2 on port 5432. Data is refreshed from an anonymised dump each Sunday.",
+  "case": "distinct-sibling",
+  "update_of": null,
+  "reason": "sibling facet: looks like a contradicting host but is another environment"
+ },
+ {
+  "title": "Dev environment URL",
+  "summary": "Address of the dev web app",
+  "category": "environment",
+  "body": "The dev environment is at https://dev.lumenfold.io behind basic auth. Credentials are in the 1Password vault Eng.",
+  "case": "distinct-sibling",
+  "update_of": null,
+  "reason": "sibling facet: dev vs staging"
+ },
+ {
+  "title": "Search load test",
+  "summary": "Load test of the search cluster",
+  "category": "history",
+  "body": "Marrow search sustained 800 qps with a p95 of 90 ms in the May run, using the three existing nodes.",
+  "case": "distinct-additive-numbers",
+  "update_of": null,
+  "reason": "different subject: other system's load test"
+ },
+ {
+  "title": "Postgres connection usage",
+  "summary": "Observed connection counts",
+  "category": "history",
+  "body": "Peak connections reached 340 of the 500 maximum on Tuesdays during the billing run. Consider raising the pool size if it passes 400.",
+  "case": "distinct-additive-numbers",
+  "update_of": null,
+  "reason": "additive observation about same host"
+ },
+ {
+  "title": "Payment processing fees",
+  "summary": "Cost of card payments",
+  "category": "history",
+  "body": "Card transactions cost 0.60 EUR plus 1.3 percent. Monthly volume is roughly 41k EUR and about 1100 transactions.",
+  "case": "distinct-additive-numbers",
+  "update_of": null,
+  "reason": "additive numbers, not a replacement"
+ },
+ {
+  "title": "Backup size",
+  "summary": "Size of the nightly dump",
+  "category": "history",
+  "body": "The nightly dump is about 480 GB compressed. A restore needs 2 TB of scratch space and roughly 40 minutes of copy time.",
+  "case": "distinct-additive-numbers",
+  "update_of": null,
+  "reason": "additive numbers about the same job"
+ },
+ {
+  "title": "Session cache memory usage",
+  "summary": "Observed Redis memory use",
+  "category": "history",
+  "body": "The session cache hovers around 1.2 GB of its limit with an eviction rate near zero. Peak was 1.7 GB during the April campaign.",
+  "case": "distinct-additive-numbers",
+  "update_of": null,
+  "reason": "additive observation about same instance"
+ },
+ {
+  "title": "Onboarding survey results",
+  "summary": "Feedback from new hires",
+  "category": "history",
+  "body": "New hires rated onboarding 4.3 out of 5. The main complaint is that access requests take about 2 days.",
+  "case": "distinct-additive-numbers",
+  "update_of": null,
+  "reason": "additive note about same checklist"
+ },
+ {
+  "title": "Mobile CI pipeline",
+  "summary": "How the Orchard app builds",
+  "category": "process",
+  "body": "Orchard builds on Bitrise and takes about 12 minutes on average. Signing certificates come from the shared match repository.",
+  "case": "distinct-different-subject",
+  "update_of": null,
+  "reason": "different subject, shares CI vocabulary"
+ },
+ {
+  "title": "Billing SLO alert",
+  "summary": "Alert on billing errors",
+  "category": "environment",
+  "body": "The billing SLO alert fires when 5xx responses exceed 1 percent for 5 minutes. It pages the secondary after 15 minutes.",
+  "case": "distinct-different-subject",
+  "update_of": null,
+  "reason": "different subject, shares alert vocabulary"
+ },
+ {
+  "title": "Keycloak admin access",
+  "summary": "Who can change auth settings",
+  "category": "process",
+  "body": "The Keycloak admin console is reachable only over the VPN. Realm changes need two-person approval.",
+  "case": "distinct-different-subject",
+  "update_of": null,
+  "reason": "related additive: same product, different facet"
+ },
+ {
+  "title": "Python SDK release process",
+  "summary": "How the Python SDK is released",
+  "category": "process",
+  "body": "Tag vX.Y.Z on main and a GitHub Action publishes to PyPI. The changelog is CHANGELOG.md.",
+  "case": "distinct-different-subject",
+  "update_of": null,
+  "reason": "different subject: process, not version"
+ },
+ {
+  "title": "Marrow has no Kibana",
+  "summary": "Tooling note for the search cluster",
+  "category": "environment",
+  "body": "The Marrow cluster has no Kibana. Use curl against the API or the opensearch-cli aliases from the dotfiles repo.",
+  "case": "distinct-negation",
+  "update_of": null,
+  "reason": "additive negation, nothing superseded"
+ },
+ {
+  "title": "Orchard does not use Expo",
+  "summary": "Stack note for the mobile app",
+  "category": "projects",
+  "body": "Orchard is bare React Native, not Expo. Native modules live in ios/ and android/.",
+  "case": "distinct-negation",
+  "update_of": null,
+  "reason": "additive negation, nothing superseded"
+ },
+ {
+  "title": "Staging has no real payments",
+  "summary": "Payments in staging",
+  "category": "environment",
+  "body": "Staging runs the payment provider in sandbox mode, so no real charges are possible.",
+  "case": "distinct-negation",
+  "update_of": null,
+  "reason": "additive negation about a different environment"
+ },
+ {
+  "title": "2024-05-03 search outage",
+  "summary": "Incident log for the search cluster",
+  "category": "history",
+  "body": "Marrow lost two nodes for 40 minutes after a disk-full event. Fixed by adding a 200 GB volume per node.",
+  "case": "distinct-log",
+  "update_of": null,
+  "reason": "log of an event, cluster definition unchanged"
+ },
+ {
+  "title": "Retro notes sprint 14",
+  "summary": "Retro outcomes",
+  "category": "history",
+  "body": "Retro: deploys felt slow. Action: investigate runner queue time. Owner is Ines.",
+  "case": "distinct-log",
+  "update_of": null,
+  "reason": "log, no fact replaced"
+ },
+ {
+  "title": "Release notes automation",
+  "summary": "How release notes are produced",
+  "category": "process",
+  "body": "Release Please opens a release PR on main after each merge. Notes come from conventional commit messages.",
+  "case": "distinct-related",
+  "update_of": null,
+  "reason": "related-but-additive to release process"
+ },
+ {
+  "title": "Lunch spots near the Berlin office",
+  "summary": "Places to eat near Rosenthaler Str.",
+  "category": "user",
+  "body": "Cocolo Ramen and Zeit fuer Brot are both a two minute walk from Rosenthaler Str. 40.",
+  "case": "distinct-unrelated",
+  "update_of": null,
+  "reason": "unrelated, shares address words"
+ },
+ {
+  "title": "Bike parking",
+  "summary": "Bike parking at the office",
+  "category": "environment",
+  "body": "There is no car parking at the office. Bike racks are in the courtyard on the 3rd floor side.",
+  "case": "distinct-unrelated",
+  "update_of": null,
+  "reason": "unrelated, shares office words"
+ }
+]

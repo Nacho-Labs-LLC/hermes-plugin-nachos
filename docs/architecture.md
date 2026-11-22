@@ -26,9 +26,9 @@ The injected contract tells the agent to route user facts to the user profile an
 ## Components
 
 - **MemoryService** is the API the adapter calls. It owns one or two **scopes**: `profile` (always) and an optional `shared` scope used by every Hermes profile on the machine.
-- **Store**: SQLite (default) or a flat file. It is the source of truth and holds title, summary, category and body only.
+- **Store**: SQLite (default) or a flat file. It is the source of truth and holds title, summary, category, body, plus per-entry `created_at`, `updated_at`, and optional `superseded_by` metadata (stored as columns in SQLite and as a backward-compatible `<!-- created: ... | updated: ... | superseded_by: ... -->` comment line under `## Title` in flatfile markdown; legacy entries backfill timestamps from the change log, `usage.first_seen`, or migration time and are marked approximate in status).
 - **Sidecar index**: `memory.index.db` next to the store, holding embedding vectors and usage counts. It is derived data; deleting it loses nothing but counts.
-- **Manifest**: a `title - summary` table of contents in the system prompt. It never omits an entry; over budget, summaries shorten and titles stay.
+- **Manifest**: a `title - summary` table of contents in the system prompt. It never omits an active entry; over budget, summaries shorten and titles stay. Superseded entries are hidden by default and summarised as a count footer (`N superseded entries hidden.`).
 
 Why a sidecar: flat-file memory stays human-editable, and a hand edit can never leave the store inconsistent.
 
@@ -42,7 +42,7 @@ There is no speculative prefetch: it adds a fixed per-turn cost for a weak title
 
 ## Writes
 
-Every write (title, summary, body) goes through an injected `redact` function; the adapter supplies Hermes' own redactor, so patterns stay in step. A quality gate (`nachos_core/quality.py`) rejects empty, placeholder or too-short summaries and bodies. Duplicate flagging compares embedding similarity against `duplicate_threshold`, or token overlap without an embedder, and returns `possible_duplicates`. It flags instead of blocking because the agent knows whether two similar entries are the same fact.
+Every write (title, summary, body) goes through an injected `redact` function; the adapter supplies Hermes' own redactor, so patterns stay in step. A quality gate (`nachos_core/quality.py`) rejects empty, placeholder or too-short summaries and bodies. Duplicate flagging compares embedding similarity against `duplicate_threshold`, or token overlap without an embedder, and returns `possible_duplicates`. When a duplicate looks like an outdated version (explicit update words such as "now"/"moved to"/"replaced", or changed numbers/versions/dates/paths), the response also returns `suggested_supersedes` without applying it automatically. Passing `supersedes` (key or list of keys) marks the old entries with `superseded_by` without deleting them; superseded entries leave the manifest and default search (still fetchable by exact key with a pointer note, or via `include_superseded=true`), and near-equal fused recall scores break ties in favour of the newer `updated_at`. Both the new write and each `supersede` transition are logged in `changes` so `revert` undoes them. It flags instead of blocking because the agent knows whether two similar entries are the same fact.
 
 Nothing is copied from other providers automatically, so memory never changes without the user asking; `tools/import_memories.py` imports explicitly through this same `put()` path (session id `import:<source>`).
 

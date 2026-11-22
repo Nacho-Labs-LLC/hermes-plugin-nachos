@@ -60,9 +60,21 @@ CATEGORIES = (
 def load_dataset(
     data_dir: Path = DATA_DIR,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """(memories, queries) from ``memories.json`` and ``queries.json``."""
+    """(memories, queries) from ``memories.json`` and ``queries.json``.
+
+    An optional ``updates.json`` (follow-up puts, applied in order after the base entries)
+    is appended; an entry with ``update_of`` becomes ``supersedes: [update_of]`` and one
+    with ``update_of: null`` is a distinct entry with no link.
+    """
     memories = json.loads((data_dir / "memories.json").read_text(encoding="utf-8"))
     queries = json.loads((data_dir / "queries.json").read_text(encoding="utf-8"))
+    updates_path = data_dir / "updates.json"
+    if updates_path.exists():
+        for upd in json.loads(updates_path.read_text(encoding="utf-8")):
+            mem = {k: v for k, v in upd.items() if k not in ("update_of", "reason")}
+            if upd.get("update_of"):
+                mem["supersedes"] = [upd["update_of"]]
+            memories.append(mem)
     return memories, queries
 
 
@@ -143,10 +155,17 @@ def summarize(ranks: list[int | None], latencies_ms: list[float]) -> dict[str, A
 
 def aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
     """Overall and per-category summaries of per-query ``rows`` (rank, ms, category)."""
+    blank = [r for r in rows if not r.get("expect", True)]
+    rows = [r for r in rows if r.get("expect", True)]
     out: dict[str, Any] = {
         "overall": summarize([r["rank"] for r in rows], [r["ms"] for r in rows]),
         "by_category": {},
     }
+    if blank:  # queries with no answer in memory: hit metrics do not apply
+        out["no_answer"] = {
+            "n": len(blank),
+            "returned_results": sum(1 for r in blank if r.get("n_results")),
+        }
     present = {r["category"] for r in rows}
     for cat in [c for c in CATEGORIES if c in present] + sorted(present - set(CATEGORIES)):
         sel = [r for r in rows if r["category"] == cat]
@@ -169,18 +188,26 @@ def build_service(directory: Path, embedder: Embedder | None) -> MemoryService:
 
 
 def load_memories(
-    svc: MemoryService, memories: list[dict[str, Any]], *, direct: bool = False
+    svc: MemoryService,
+    memories: list[dict[str, Any]],
+    *,
+    direct: bool = False,
+    apply_supersedes: bool = True,
 ) -> None:
     if direct:
         store = svc.profile.store
         for mem in memories:
+            key = slugify(mem["title"])
             store.put(
-                slugify(mem["title"]),
+                key,
                 title=mem["title"],
                 summary=mem["summary"],
                 category=mem["category"],
                 body=mem["body"],
             )
+            if apply_supersedes:
+                for old_key in mem.get("supersedes") or ():
+                    store.set_superseded_by(old_key, key)
         return
     for mem in memories:
         result = svc.put(
@@ -188,6 +215,7 @@ def load_memories(
             summary=mem["summary"],
             category=mem["category"],
             body=mem["body"],
+            supersedes=mem.get("supersedes") if apply_supersedes else None,
         )
         if "error" in result:
             raise ValueError(f"fixture entry {mem['title']!r} rejected: {result['error']}")
@@ -215,6 +243,7 @@ def run_queries(
                 "query": q["query"],
                 "expect": q["expect"],
                 "rank": rank_of(q["expect"], keys, q.get("match", "any")),
+                "n_results": len(keys),
                 "ms": percentile(timings, 50),
                 "top": keys[:3],
             }
@@ -281,7 +310,12 @@ def run_backend(
         svc = build_service(Path(tmp), embedder)
         try:
             start = time.perf_counter()
-            load_memories(svc, memories, direct=bool(getattr(opts, "synthetic", 0)))
+            load_memories(
+                svc,
+                memories,
+                direct=bool(getattr(opts, "synthetic", 0)),
+                apply_supersedes=not bool(getattr(opts, "no_supersedes", False)),
+            )
             run["build_s"] = round(time.perf_counter() - start, 3)
             start = time.perf_counter()
             svc.sync_index(svc.profile)  # reconcile pass; ~0 when put() already embedded everything
@@ -372,6 +406,180 @@ def format_report(report: dict[str, Any]) -> str:
             _table(["category", "n", "hit@1", "hit@5", "MRR@10", "p50 ms", "p95 ms"], cat_rows),
             "",
         ]
+        if "no_answer" in run:
+            na = run["no_answer"]
+            lines += [
+                f"no-answer queries: {na['returned_results']}/{na['n']} still returned results",
+                "",
+            ]
+    return "\n".join(lines)
+
+
+def _case_table(by_case: dict[str, dict[str, int]]) -> str:
+    rows = []
+    for case, c in sorted(by_case.items()):
+        upd, dist = c["updates"], c["distinct"]
+        r1 = f"{c['hit@1'] / upd:.3f}" if upd else "-"
+        r3 = f"{c['hit@3'] / upd:.3f}" if upd else "-"
+        fp1 = f"{c['fp@1'] / dist:.3f}" if dist else "-"
+        rows.append([case, str(c["n"]), r1, r3, fp1])
+    return _table(["case", "n", "recall@1", "recall@3", "fp@1"], rows)
+
+
+def _score_suggestions(
+    svc: MemoryService,
+    memories: list[dict[str, Any]],
+    gt: dict[str, set[str]],
+    near_dup_keys: set[str],
+) -> dict[str, Any]:
+    counts = dict.fromkeys(
+        (
+            "updates",
+            "hit1",
+            "hit3",
+            "distinct",
+            "distinct_fp1",
+            "near_dup",
+            "near_dup_fp1",
+            "other_distinct",
+            "other_distinct_fp1",
+        ),
+        0,
+    )
+    misses: list[dict[str, Any]] = []
+    by_case: dict[str, dict[str, int]] = {}
+    for mem in memories:
+        key = slugify(mem["title"])
+        res = svc.put(
+            title=mem["title"],
+            summary=mem["summary"],
+            category=mem["category"],
+            body=mem["body"],
+            supersedes=None,
+        )
+        cands = [u["key"] for u in (res.get("possible_updates") or [])]
+        expected = gt.get(key, set())
+        case = (
+            by_case.setdefault(
+                mem["case"],
+                dict.fromkeys(("n", "updates", "hit@1", "hit@3", "distinct", "fp@1"), 0),
+            )
+            if mem.get("case")
+            else None
+        )
+        if case is not None:
+            case["n"] += 1
+        if expected:
+            counts["updates"] += 1
+            hit1 = int(bool(cands[:1] and cands[0] in expected))
+            hit3 = int(any(c in expected for c in cands[:3]))
+            counts["hit1"] += hit1
+            counts["hit3"] += hit3
+            if case is not None:
+                case["updates"] += 1
+                case["hit@1"] += hit1
+                case["hit@3"] += hit3
+            if not hit3:
+                misses.append({"key": key, "expected": sorted(expected), "top3": cands[:3]})
+        else:
+            counts["distinct"] += 1
+            fp1 = int(bool(cands))
+            counts["distinct_fp1"] += fp1
+            bucket = "near_dup" if key in near_dup_keys else "other_distinct"
+            counts[bucket] += 1
+            counts[f"{bucket}_fp1"] += fp1
+            if case is not None:
+                case["distinct"] += 1
+                case["fp@1"] += fp1
+    upd = counts["updates"]
+    dist = counts["distinct"]
+    non_nd = counts["other_distinct"]
+    return {
+        "updates": upd,
+        "hit@1": counts["hit1"],
+        "hit@3": counts["hit3"],
+        "recall@1": round(counts["hit1"] / upd, 4) if upd else 1.0,
+        "recall@3": round(counts["hit3"] / upd, 4) if upd else 1.0,
+        "distinct_puts": dist,
+        "distinct_fp1_count": counts["distinct_fp1"],
+        "distinct_fp@1": round(counts["distinct_fp1"] / dist, 4) if dist else 0.0,
+        "near_dup_puts": counts["near_dup"],
+        "near_dup_fp@1": (
+            round(counts["near_dup_fp1"] / counts["near_dup"], 4) if counts["near_dup"] else 0.0
+        ),
+        "other_distinct_fp@1": (round(counts["other_distinct_fp1"] / non_nd, 4) if non_nd else 0.0),
+        "misses": misses,
+        **({"by_case": by_case} if by_case else {}),
+    }
+
+
+def eval_suggest_backend(
+    backend: str,
+    opts: argparse.Namespace,
+    memories: list[dict[str, Any]],
+    queries: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Replay ``memories`` through put() without supersedes and evaluate possible_updates."""
+    run: dict[str, Any] = {"backend": opts.label or backend, "status": "ok"}
+    embedder, reason = resolve_embedder(backend, opts)
+    if reason:
+        return {**run, "status": "skipped", "reason": reason}
+    if embedder is not None:
+        run["model_id"] = embedder.model_id
+        run["model_load_s"], error = probe(embedder)
+        run["model_load_s"] = round(run["model_load_s"], 3)
+        if error:
+            embedder.close()
+            return {**run, "status": "skipped", "reason": f"embedder unavailable: {error}"}
+    gt = {slugify(m["title"]): set(m["supersedes"]) for m in memories if m.get("supersedes")}
+    near_dup_keys = {k for q in queries if q["category"] == "near-dup" for k in q["expect"]}
+    with tempfile.TemporaryDirectory(prefix="nachos-suggest-") as tmp:
+        svc = build_service(Path(tmp), embedder)
+        try:
+            scored = _score_suggestions(svc, memories, gt, near_dup_keys)
+        finally:
+            svc.close()
+    run.update(scored)
+    return run
+
+
+def format_suggest_report(report: dict[str, Any]) -> str:
+    env = report["environment"]
+    lines = [
+        f"Nachos possible_updates eval: {env['memories']} memories "
+        f"(python {env['python']}, {env['machine']}, {env['cpus']} cpus)",
+        "",
+    ]
+    head = [
+        "backend",
+        "updates",
+        "recall@1",
+        "recall@3",
+        "distinct",
+        "distinct fp@1",
+        "non-dup fp@1",
+    ]
+    rows: list[list[str]] = []
+    skipped: list[str] = []
+    for run in report["runs"]:
+        if run["status"] != "ok":
+            skipped.append(f"{run['backend']}: skipped, {run['reason']}")
+            continue
+        rows.append(
+            [
+                run["backend"],
+                f"{run['hit@1']}/{run['hit@3']}/{run['updates']}",
+                f"{run['recall@1']:.3f}",
+                f"{run['recall@3']:.3f}",
+                str(run["distinct_puts"]),
+                f"{run['distinct_fp@1']:.3f}",
+                f"{run['other_distinct_fp@1']:.3f}",
+            ]
+        )
+    lines += [_table(head, rows), *skipped, ""] if rows else [*skipped, ""]
+    for run in report["runs"]:
+        if run["status"] == "ok" and run.get("by_case"):
+            lines += [f"{run['backend']} by case", _case_table(run["by_case"]), ""]
     return "\n".join(lines)
 
 
@@ -392,6 +600,23 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--no-types",
         action="store_true",
         help="nachos backend: never send the query/document type (pre-0.7 behaviour)",
+    )
+    ap.add_argument(
+        "--no-supersedes",
+        action="store_true",
+        help="load fixture without applying supersedes links (measure timestamps alone)",
+    )
+    ap.add_argument(
+        "--suggest-eval",
+        action="store_true",
+        help="evaluate put() possible_updates recall@1/@3 and distinct fp@1 on the fixture",
+    )
+    ap.add_argument(
+        "--data-dir",
+        type=Path,
+        default=DATA_DIR,
+        help="directory with memories.json, queries.json and optional updates.json "
+        "(default: bench/data; e.g. bench/data/adversarial)",
     )
     ap.add_argument(
         "--label", default="", help="name for this run in the report (default: backend)"
@@ -415,9 +640,24 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return opts
 
 
+def _emit_report(report: dict[str, Any], opts: argparse.Namespace, text: str) -> int:
+    if opts.json == "-":
+        print(json.dumps(report, indent=1))
+        return 0
+    print(text)
+    if opts.misses and not opts.suggest_eval:
+        for run in report["runs"]:
+            for row in run.get("queries", []):
+                if row["rank"] is None or row["rank"] > 5:
+                    print(f"[{run['backend']}] {row['id']} {row['category']}: {row['query']}")
+    if opts.json:
+        Path(opts.json).write_text(json.dumps(report, indent=1), encoding="utf-8")
+    return 0 if any(r["status"] == "ok" for r in report["runs"]) else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     opts = parse_args(argv)
-    memories, queries = load_dataset()
+    memories, queries = load_dataset(opts.data_dir)
     if opts.synthetic:
         memories = expand_synthetic_memories(memories, opts.synthetic)
     if opts.category:
@@ -425,20 +665,13 @@ def main(argv: list[str] | None = None) -> int:
     if not queries:
         print("no queries selected", file=sys.stderr)
         return 2
+    if opts.suggest_eval:
+        runs = [eval_suggest_backend(b, opts, memories, queries) for b in opts.backends]
+        report = {"environment": environment(len(memories), len(queries), opts), "runs": runs}
+        return _emit_report(report, opts, format_suggest_report(report))
     runs = [run_backend(b, opts, memories, queries) for b in opts.backends]
     report = {"environment": environment(len(memories), len(queries), opts), "runs": runs}
-    if opts.json == "-":
-        print(json.dumps(report, indent=1))
-        return 0
-    print(format_report(report))
-    if opts.misses:
-        for run in runs:
-            for row in run.get("queries", []):
-                if row["rank"] is None or row["rank"] > 5:
-                    print(f"[{run['backend']}] {row['id']} {row['category']}: {row['query']}")
-    if opts.json:
-        Path(opts.json).write_text(json.dumps(report, indent=1), encoding="utf-8")
-    return 0 if any(r["status"] == "ok" for r in runs) else 1
+    return _emit_report(report, opts, format_report(report))
 
 
 if __name__ == "__main__":
