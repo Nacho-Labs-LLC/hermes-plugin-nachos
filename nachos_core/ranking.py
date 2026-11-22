@@ -5,7 +5,7 @@ No store, index or embedder access; ``MemoryService`` supplies the data.
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from .calibration import assess_confidence, format_search_response
@@ -27,6 +27,36 @@ PASSAGE_CHARS = 1500
 #: Random-pair cosine percentile used to calibrate ``duplicate_threshold`` and ``possible_updates``.
 DUP_PERCENTILE = "p99"
 UPDATE_PERCENTILE = "p99"
+#: Max query variants fused in one multi-query search call.
+MAX_SEARCH_QUERIES = 4
+
+
+def normalize_queries(
+    query: str = "",
+    queries: Sequence[str] | None = None,
+    *,
+    max_queries: int = MAX_SEARCH_QUERIES,
+) -> list[str]:
+    """Combine ``query`` and optional ``queries`` into up to ``max_queries`` unique non-blank strings."""
+    raw: list[str] = []
+    if query:
+        raw.append(query)
+    if queries:
+        raw.extend(queries)
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in raw:
+        cleaned = str(item or "").strip()
+        if not cleaned:
+            continue
+        low = cleaned.lower()
+        if low in seen:
+            continue
+        seen.add(low)
+        out.append(cleaned)
+        if len(out) >= max_queries:
+            break
+    return out
 
 
 def rerank_passage(title: str, summary: str, body: str, chunk_no: int = 0) -> str:
@@ -203,23 +233,16 @@ def _top_coverage(
     return best
 
 
-def evaluate_search_confidence(
+def _assess_one_query(
     query: str,
-    results: list[dict[str, Any]],
+    top: Mapping[str, Any],
     stats: Mapping[str, list[float]],
     *,
-    top_lexical: LexicalIndex | None,
-    top_index: MemoryIndex | None,
-    top_metas: Mapping[str, EntryMeta] | None,
-    model_id: str | None,
+    top_lexical: LexicalIndex,
+    top_metas: Mapping[str, EntryMeta],
+    profile: Mapping[str, float] | None,
 ) -> dict[str, Any]:
-    """Compute per-query confidence and assemble the structured search response."""
-    if not results or top_lexical is None or top_index is None:
-        return format_search_response(
-            query, results, assess_confidence(has_results=False, lexical_coverage=0.0)
-        )
-    top = results[0]
-    lex_cov = _top_coverage(top_lexical, top_metas or {}, query, top["key"])
+    lex_cov = _top_coverage(top_lexical, top_metas, query, top["key"])
     lex_scores = sorted(stats.get("lex") or (), reverse=True)
     if len(lex_scores) >= 2 and lex_scores[0] > 0:
         lex_margin = (lex_scores[0] - lex_scores[min(4, len(lex_scores) - 1)]) / lex_scores[0]
@@ -228,20 +251,54 @@ def evaluate_search_confidence(
     sem_scores = sorted(stats.get("sem") or (), reverse=True)
     sem_top1 = sem_scores[0] if sem_scores else None
     sem_topk = sem_scores[min(4, len(sem_scores) - 1)] if len(sem_scores) >= 2 else None
-    profile = (
-        top_index.similarity_profile(model_id) if (model_id and sem_top1 is not None) else None
-    )
-    assessment = assess_confidence(
+    return assess_confidence(
         has_results=True,
         lexical_coverage=lex_cov,
         lexical_margin=lex_margin,
         semantic_top1=sem_top1,
         semantic_topk=sem_topk,
-        profile=profile,
+        profile=profile if sem_top1 is not None else None,
         agreement="lexical+semantic" in str(top.get("match", "")),
         rerank_score=top.get("rerank"),
     )
-    return format_search_response(query, results, assessment)
+
+
+def evaluate_search_confidence(
+    queries: Sequence[str],
+    results: list[dict[str, Any]],
+    stats_per_query: Sequence[Mapping[str, list[float]]],
+    *,
+    top_lexical: LexicalIndex | None,
+    top_index: MemoryIndex | None,
+    top_metas: Mapping[str, EntryMeta] | None,
+    model_id: str | None,
+) -> dict[str, Any]:
+    """Compute per-query confidence (best across query variants) and build the response."""
+    primary = queries[0] if queries else ""
+    if not results or not queries or top_lexical is None or top_index is None:
+        payload = format_search_response(
+            primary, results, assess_confidence(has_results=False, lexical_coverage=0.0)
+        )
+    else:
+        top = results[0]
+        has_sem = any(st.get("sem") for st in stats_per_query)
+        profile = top_index.similarity_profile(model_id) if (model_id and has_sem) else None
+        assessments = [
+            _assess_one_query(
+                q_text,
+                top,
+                q_stats,
+                top_lexical=top_lexical,
+                top_metas=top_metas or {},
+                profile=profile,
+            )
+            for q_text, q_stats in zip(queries, stats_per_query)
+        ]
+        best = max(assessments, key=lambda a: float(a["confidence_score"]))
+        payload = format_search_response(primary, results, best)
+    if len(queries) > 1:
+        payload["queries"] = list(queries)
+    return payload
 
 
 def fuse_scope_hits(
@@ -251,14 +308,52 @@ def fuse_scope_hits(
     *,
     rrf_k: int,
 ) -> None:
-    """Accumulate one scope's ranked hits into the RRF ``fused`` map."""
+    """Accumulate one scope's ranked hits into the RRF ``fused`` map (keeping best similarity)."""
     for key, rank, how, similarity, chunk in hits:
         row = fused.setdefault((scope_name, key), {"score": 0.0, "match": []})
         row["score"] += 1.0 / (rrf_k + rank)
-        row["match"].append(how)
+        if how not in row["match"]:
+            row["match"].append(how)
         if similarity is not None:
-            row["similarity"] = round(similarity, 3)
-            row["chunk"] = chunk
+            rounded = round(similarity, 3)
+            if "similarity" not in row or rounded > row["similarity"]:
+                row["similarity"] = rounded
+                row["chunk"] = chunk
+
+
+def fuse_multi_query(
+    query_list: Sequence[str],
+    qvecs: Sequence[list[float]] | None,
+    targets: Sequence[Any],
+    ranked_hits_fn: Any,
+    *,
+    limit: int,
+    include_superseded: bool,
+    collect_stats: bool,
+    rrf_k: int,
+) -> tuple[dict[tuple[str, str], dict[str, Any]], list[dict[str, list[float]]]]:
+    """Run ``ranked_hits_fn`` across all queries and scopes, fusing into one RRF map."""
+    fused: dict[tuple[str, str], dict[str, Any]] = {}
+    stats_list: list[dict[str, list[float]]] = []
+    for idx, q_text in enumerate(query_list):
+        qvec = qvecs[idx] if qvecs is not None else None
+        q_stats: dict[str, list[float]] = {"lex": [], "sem": []}
+        for s in targets:
+            fuse_scope_hits(
+                fused,
+                s.name,
+                ranked_hits_fn(
+                    s,
+                    q_text,
+                    qvec,
+                    limit,
+                    include_superseded=include_superseded,
+                    stats=q_stats if collect_stats else None,
+                ),
+                rrf_k=rrf_k,
+            )
+        stats_list.append(q_stats)
+    return fused, stats_list
 
 
 def hydrate_ranked(
@@ -279,7 +374,7 @@ def hydrate_ranked(
             "key": key,
             "scope": scope_name,
             "body": body,
-            "match": "+".join(row["match"]),
+            "match": "+".join(sorted(row["match"])),
         }
         if "similarity" in row:
             result["similarity"] = row["similarity"]

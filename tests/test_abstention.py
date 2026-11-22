@@ -22,7 +22,7 @@ from nachos_core.calibration import (
 from nachos_core.embeddings import Embedder
 from nachos_core.index import MemoryIndex
 from nachos_core.memory import PROFILE, MemoryService, Scope
-from nachos_core.ranking import update_threshold_for
+from nachos_core.ranking import normalize_queries, update_threshold_for
 from nachos_core.store import get_store
 from nachos_hermes.config import DEFAULTS, apply_config
 from nachos_hermes.memory_provider import NachosMemoryProvider
@@ -347,3 +347,138 @@ class TestConfidenceAndAbstention:
         assert ab["standard_recall"] == 1.0
         assert ab["near_miss_recall"] == 0.5
         assert ab["confident_hit@1"] == 0.5
+
+
+class _CountingEmbedder(_FixedModelEmbedder):
+    """Records every embed batch call so tests can verify single-batch multi-query embedding."""
+
+    def __init__(self, model_id: str, vectors_by_tag: dict[str, list[float]]) -> None:
+        super().__init__(model_id, vectors_by_tag)
+        self.calls: list[list[str]] = []
+
+    def _embed_batch(self, texts: list[str]) -> list[list[float]]:
+        self.calls.append(list(texts))
+        return super()._embed_batch(texts)
+
+
+class TestMultiQueryRecall:
+    def test_normalize_queries_dedupes_strips_and_caps_at_four(self) -> None:
+        assert normalize_queries("  foo ", ["FOO", "", "bar", "baz", "qux", "extra"]) == [
+            "foo",
+            "bar",
+            "baz",
+            "qux",
+        ]
+        assert normalize_queries("", ["  alpha  ", "beta"]) == ["alpha", "beta"]
+        assert normalize_queries("", None) == []
+
+    def test_multi_query_batches_embeddings_once_and_fuses_best_similarity_and_confidence(
+        self, tmp_path: Path
+    ) -> None:
+        emb = _CountingEmbedder(
+            "nachos:Xenova/all-MiniLM-L6-v2:q8",
+            {
+                "alembic": [1.0, 0.0, 0.0],
+                "schema migration": [0.95, 0.0, math.sqrt(1.0 - 0.95**2)],
+                "table changes": [0.15, 0.10, math.sqrt(1.0 - 0.15**2 - 0.10**2)],
+                "redis": [0.0, 1.0, 0.0],
+            },
+        )
+        svc = _make_service(tmp_path, embedder=emb)
+        try:
+            svc.put(
+                title="Database migrations",
+                summary="Decision: migrations run through Alembic before deploy",
+                body="All schema migrations are authored and executed via Alembic.",
+            )
+            svc.put(
+                title="Redis cache",
+                summary="Redis stores short-lived session state",
+                body="Redis 7 handles rate limiting and session tokens.",
+            )
+            emb.calls.clear()
+
+            # Single vague query alone has weak similarity and no lexical match -> low confidence.
+            weak = svc.search_with_confidence("table changes")
+            assert weak["confident"] is False
+            assert len(emb.calls) == 1
+
+            emb.calls.clear()
+            # Three variants fused in ONE embed call -> deduped hit, best similarity, confident!
+            multi = svc.search_with_confidence(
+                queries=[
+                    "table changes",
+                    "schema migration workflow",
+                    "Decision: migrations run through Alembic",
+                ]
+            )
+            assert len(emb.calls) == 1
+            assert len(emb.calls[0]) == 3
+            assert multi["queries"] == [
+                "table changes",
+                "schema migration workflow",
+                "Decision: migrations run through Alembic",
+            ]
+            assert multi["confident"] is True
+            top = multi["results"][0]
+            assert top["key"] == "database-migrations"
+            assert top["match"] == "lexical+semantic"
+            assert top["similarity"] == pytest.approx(1.0, abs=1e-3)
+            # Deduplicated: database-migrations appears once even though all 3 queries hit it.
+            assert [r["key"] for r in multi["results"]].count("database-migrations") == 1
+        finally:
+            svc.close()
+
+    def test_provider_recall_accepts_queries_list_with_or_without_query(
+        self, tmp_path: Path
+    ) -> None:
+        provider = NachosMemoryProvider()
+        provider.initialize("sess-mq", hermes_home=str(tmp_path))
+        try:
+            assert "queries" in RECALL_SCHEMA["parameters"]["properties"]
+            assert "Alembic" in RECALL_SCHEMA["description"]
+            provider.handle_tool_call(
+                "nachos_memory_put",
+                {
+                    "title": "Migration workflow",
+                    "summary": "Decision: migrations run through Alembic",
+                    "body": "Run alembic upgrade head before deploying API containers.",
+                },
+            )
+            res = json.loads(
+                provider.handle_tool_call(
+                    "nachos_memory_recall",
+                    {
+                        "queries": [
+                            "how do table changes ship",
+                            "Decision: migrations run through Alembic",
+                        ]
+                    },
+                )
+            )
+            assert res["confident"] is True
+            assert res["results"][0]["key"] == "migration-workflow"
+            assert len(res["queries"]) == 2
+        finally:
+            provider.shutdown()
+
+    def test_bench_multi_query_smoke(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+        out = tmp_path / "mq.json"
+        rc = recall.main(
+            [
+                "--embeddings",
+                "off",
+                "--multi-query",
+                "--json",
+                str(out),
+            ]
+        )
+        assert rc == 0
+        captured = capsys.readouterr().out
+        assert "Exact 3-query groups" in captured
+        report = json.loads(out.read_text(encoding="utf-8"))
+        run = report["runs"][0]
+        assert run["status"] == "ok"
+        assert run["triples"]["n"] == 29
+        assert run["triples"]["3-query"]["hit@1"] > run["triples"]["1-query"]["hit@1"]
+        assert run["all_groups"]["n"] >= 100

@@ -524,4 +524,100 @@ Readings:
 | Zero-dependency | `embeddings: off` | none | 1.1 s | 0.2 / 0.3 ms | 0.695 / 0.812 / 0.748 | 0.975 / 1.000 |
 
 - **Keep `rerank: off` by default**: with supersedes + redirect active, `gte-modernbert-base` q8 (`rerank: off`) already hits `1.000` on `outdated`, `long-body`, `near-dup`, and every adversarial query at `12–17 ms` p50, while `rerank: on` costs `120–320 ms` per recall and slightly degrades redirected old-wording queries.
-- **Defaults in code**: `chunk_penalty = 0.05`, `duplicate_calibration = "auto"`, `calibrate_updates = True` (`p99` floor when calibrated), `similarity_floor = "off"`, `rerank = "off"`.
+- **Defaults in code**: `chunk_penalty = 0.05`, `duplicate_calibration = "auto"`, `calibrate_updates = True` (`p99` floor when calibrated), `similarity_floor = "off"`, `rerank = "off"`, `abstention = "on"`.
+
+## Abstention, cold-start priors, and multi-query recall
+
+Measured on `naterchrdsn/abstain` (on top of `naterchrdsn/memory-next` commit `a0001a875a`). Adds per-query search confidence + explicit abstention (`abstention: on` default), offline per-model calibration priors blended across cold start (30–100 entries), and batched multi-query recall (`queries: [string]`, up to 4 variants).
+
+### Offline per-model priors and cold-start blending
+
+Previously, empirical random-pair calibration (`MemoryIndex.similarity_profile`) returned `None` below 30 entries, leaving shifted-range models like `gte-modernbert` on the raw `0.48` `possible_updates` floor during cold start. `nachos_core/calibration.py` now ships offline random-pair cosine tables for MiniLM plus every model family in `nachos-embeddings`' profiles, computed once over an 80-topic generic English corpus (3,160 distinct pairs, `q8`, `--type document`, zero overlap with the recall fixtures):
+
+| Model family | p50 | p75 | p90 | p95 | p99 | mean | std |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `all-minilm-l6-v2` (`nachos:default`) | 0.039 | 0.094 | 0.161 | 0.212 | 0.320 | 0.048 | 0.090 |
+| `snowflake-arctic-embed-v2.0` | 0.131 | 0.179 | 0.226 | 0.254 | 0.332 | 0.136 | 0.072 |
+| `bge-en-v1.5` | 0.470 | 0.516 | 0.562 | 0.595 | 0.651 | 0.476 | 0.066 |
+| `gte-modernbert` | 0.499 | 0.538 | 0.577 | 0.607 | 0.667 | 0.505 | 0.056 |
+| `nomic-embed-text-v1.5` | 0.567 | 0.597 | 0.629 | 0.648 | 0.684 | 0.569 | 0.045 |
+| `snowflake-arctic-embed-v1` | 0.671 | 0.702 | 0.732 | 0.748 | 0.779 | 0.672 | 0.045 |
+| `e5` | 0.775 | 0.797 | 0.819 | 0.833 | 0.854 | 0.777 | 0.032 |
+
+Below 30 stored heads, `similarity_profile()` returns the model's prior directly; from 30 to 99 heads it linearly blends `(1 - n/100) * prior + (n/100) * empirical`; at `>= 100` heads it uses 100% empirical store calibration. Unknown models keep the previous empirical-only behavior.
+
+Effect on cold-start `--suggest-eval` (`possible_updates`, before `a0001a8` vs after priors):
+
+| Backend | Original R@1 / R@3 | Original distinct fp@1 (non-dup) before -> after | Adversarial R@1 / R@3 | Adversarial distinct fp@1 before -> after |
+| --- | --- | --- | --- | --- |
+| lexical (`off`) | 0.933 / 1.000 | 0.233 (0.160) -> 0.233 (0.160) | 0.973 / 0.973 | 0.253 -> 0.253 |
+| MiniLM-L6 q8 | 1.000 / 1.000 | 0.394 (0.331) -> 0.394 (0.331) | 1.000 / 1.000 | 0.275 -> 0.275 |
+| **gte-modernbert q8** | **1.000 / 1.000** | **0.705 (0.692) -> 0.539 (0.503)** | **1.000 / 1.000** | **0.648 -> 0.352** |
+
+Priors nearly halve `gte-modernbert`'s distinct `fp@1` on the held-out adversarial set (`0.648 -> 0.352`, down from `0.989` uncalibrated) and cut original distinct `fp@1` by `16.6` percentage points (`0.705 -> 0.539`) with zero recall loss (`1.000 / 1.000` on both fixtures).
+
+### Per-query confidence and abstention (with near-miss negatives)
+
+Both benchmark suites were expanded with unanswerable **near-miss** negatives (same named service/topic as a stored entry, asking for unstored facts):
+- `bench/data/queries.json`: +20 near-miss negatives (`q424`–`q443`, total 50 unanswerable = 30 standard + 20 near-miss alongside 393 answerable).
+- `bench/data/adversarial/queries.json`: +15 near-miss negatives (`a097`–`a111`, total 30 no-answer = 15 standard + 15 near-miss alongside 81 answerable).
+
+`MemoryService.search_with_confidence` combines cheap per-query signals — OOV-aware lexical coverage (weighting out-of-vocabulary query terms at `max_idf`, checking redirected predecessors too), lexical top-1 vs top-5 margin, calibrated semantic z-score `(sim - mean) / std` against the model's profile, semantic margin, `lexical+semantic` agreement, and optional cross-encoder score — into a `0..1` `confidence_score` (`ABSTAIN_THRESHOLD = 0.38`). When below threshold, recall sets `confident: false`, `no_confident_match: true`, and a `note`, while keeping low-confidence candidates listed so hit@k never drops (`0.000` hit@1 / hit@5 / MRR@10 change across all runs).
+
+**Original (`bench/data`, 393 answerable + 50 negative [30 std + 20 near-miss]):**
+
+| Backend | Answerable hit@1 / hit@5 / MRR@10 | Confident hit@1 | Abstention P / R / F1 | Unanswerable abstained (std / near-miss) | Answerable abstained (non-paraphrase) |
+| --- | --- | --- | --- | --- | --- |
+| lexical (`off`) | 0.695 / 0.812 / 0.748 | 0.690 | 0.312 / 0.680 / 0.428 | 34/50 (23/30, 11/20) | 75/393 (19/333) |
+| MiniLM-L6 q8 | 0.758 / 0.924 / 0.832 | 0.733 | 0.354 / 0.560 / 0.434 | 28/50 (22/30, 6/20) | 51/393 (5/333) |
+| gte-modernbert q8 | 0.773 / 0.949 / 0.850 | 0.728 | 0.312 / 0.600 / 0.411 | 30/50 (25/30, 5/20) | 66/393 (12/333) |
+
+**Held-out adversarial (`bench/data/adversarial`, 81 answerable + 30 no-answer [15 std + 15 near-miss]):**
+
+| Backend | Answerable hit@1 / hit@5 / MRR@10 | Confident hit@1 | Abstention P / R / F1 | Unanswerable abstained (std / near-miss) | Answerable abstained |
+| --- | --- | --- | --- | --- | --- |
+| lexical (`off`) | 0.975 / 1.000 / 0.986 | 0.975 | **1.000 / 0.667 / 0.800** | 20/30 (9/15, 11/15) | **0/81** |
+| MiniLM-L6 q8 | 0.988 / 1.000 / 0.994 | 0.988 | **1.000 / 0.533 / 0.696** | 16/30 (10/15, 6/15) | **0/81** |
+| gte-modernbert q8 | 1.000 / 1.000 / 1.000 | 1.000 | **1.000 / 0.667 / 0.800** | 20/30 (11/15, 9/15) | **0/81** |
+
+- **Default decision (`abstention: on`)**: Ships on by default. It causes `0.000` hit@1 / hit@5 / MRR@10 regression (candidates remain visible), adds negligible overhead, achieves `1.000` abstention precision with `0/81` false abstentions on the held-out adversarial set (`R = 0.53–0.67`), and abstains on only `1.5%–5.7%` of non-paraphrase answerable queries on the original set (`5/333` MiniLM, `12/333` gte, `19/333` lexical). Most answerable abstentions on the original fixture are word-free `paraphrase` queries — precisely the queries where abstention triggers the multi-query retry loop below.
+
+### Multi-query recall (`--multi-query`, 1 vs 3 queries)
+
+`nachos_memory_recall` and `MemoryService.search` / `search_with_confidence` accept `queries: [string]` (up to 4 variants), embedding all variants in a single batched `_embed()` call and fusing results with RRF (deduplicating hits while keeping best per-hit similarity and best per-query confidence).
+
+Run with:
+
+```bash
+python -m bench.recall --embeddings off --multi-query --repeat 3
+python -m bench.recall --command ./shim --embeddings nachos --model Alibaba-NLP/gte-modernbert-base --dtype q8 --multi-query --repeat 3
+```
+
+**Original (`bench/data`), exact 3-query groups (`paraphrase + natural + keyword`, `n = 29`, `--repeat 3`):**
+
+| Backend | Mode | hit@1 | hit@5 | MRR@10 | p50 ms | p95 ms | Notes |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| lexical (`off`) | 1-query (paraphrase) | 0.000 | 0.000 | 0.000 | 0.5 | 0.9 | |
+| lexical (`off`) | 2-query (para + natural) | 0.000 | 0.621 | 0.210 | 0.7 | 1.1 | |
+| lexical (`off`) | **3-query** | **0.483** | **0.931** | **0.696** | **0.8** | **1.3** | 1.6x latency |
+| lexical (`off`) | retry-on-low-conf | 0.448 | 0.862 | 0.650 | 1.3 | 3.3 | retried 27/29 (93%) |
+| MiniLM-L6 q8 | 1-query (paraphrase) | 0.241 | 0.621 | 0.411 | 15.9 | 30.4 | |
+| MiniLM-L6 q8 | 2-query (para + natural) | 0.793 | 1.000 | 0.876 | 25.0 | 50.6 | |
+| MiniLM-L6 q8 | **3-query** | **0.966** | **1.000** | **0.983** | **33.8** | **62.0** | 2.1x latency |
+| MiniLM-L6 q8 | retry-on-low-conf | 0.828 | 1.000 | 0.905 | 46.1 | 85.3 | retried 24/29 (83%) |
+| gte-modernbert q8 | 1-query (paraphrase) | 0.172 | 0.655 | 0.377 | 44.0 | 75.1 | |
+| gte-modernbert q8 | 2-query (para + natural) | 0.862 | 0.966 | 0.912 | 72.6 | 97.0 | |
+| gte-modernbert q8 | **3-query** | **0.966** | **1.000** | **0.983** | **114.9** | **138.0** | 2.6x latency |
+| gte-modernbert q8 | retry-on-low-conf | 0.931 | 1.000 | 0.966 | 156.2 | 200.5 | retried 28/29 (97%) |
+
+**All multi-variant groups (`bench/data`, `n = 151`, avg `2.19` queries per group):**
+
+| Backend | 1-query hit@1 / hit@5 / MRR@10 | multi-query hit@1 / hit@5 / MRR@10 | retry-on-low-conf hit@1 / hit@5 / MRR@10 | p50 ms (1 / multi / retry) | Retry rate |
+| --- | --- | --- | --- | --- | --- |
+| lexical (`off`) | 0.450 / 0.550 / 0.496 | 0.623 / 0.940 / 0.752 | 0.576 / 0.907 / 0.713 | 0.5 / 0.7 / 0.6 | 45% (68/151) |
+| MiniLM-L6 q8 | 0.576 / 0.834 / 0.689 | 0.947 / 1.000 / 0.970 | 0.808 / 0.987 / 0.888 | 13.8 / 25.6 / 21.6 | 32% (49/151) |
+| gte-modernbert q8 | 0.596 / 0.881 / 0.721 | 0.974 / 1.000 / 0.987 | 0.874 / 0.993 / 0.931 | 38.6 / 64.7 / 50.3 | 38% (57/151) |
+
+Readings:
+- Multi-query recall turns the hardest category in the benchmark (`paraphrase`) from `0.172–0.241` hit@1 into **`0.966` hit@1 / `1.000` hit@5** (and even `2-query` without title keywords jumps to `0.793–0.862` hit@1), while batching all 3 queries into one embedding call keeps latency sub-linear (`1.6x–2.6x` single-query p50).
+- Pairing abstention with retry-on-low-confidence captures most of the gain automatically (`hit@1 0.172 -> 0.931` on `gte` triples, `hit@5 0.655 -> 1.000`; `0/22` retries and `0 ms` extra latency on the adversarial multi-variant set where 1-query already hits `1.000`).

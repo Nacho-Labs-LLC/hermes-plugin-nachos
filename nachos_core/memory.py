@@ -33,7 +33,7 @@ from __future__ import annotations
 import contextlib
 import logging
 from collections import OrderedDict
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -55,8 +55,9 @@ from .ranking import (
     evaluate_search_confidence,
     find_duplicate_pairs,
     find_similar_entries,
-    fuse_scope_hits,
+    fuse_multi_query,
     hydrate_ranked,
+    normalize_queries,
     rerank_rows,
     scope_ranked_hits,
     update_threshold_for,
@@ -390,29 +391,31 @@ class MemoryService:
 
     def search(
         self,
-        query: str,
+        query: str = "",
         *,
+        queries: Sequence[str] | None = None,
         limit: int = 10,
         scope: str | None = None,
         include_superseded: bool = False,
     ) -> list[dict[str, Any]]:
-        results, _stats = self._run_search(
-            query, limit=limit, scope=scope, include_superseded=include_superseded
+        results, _query_list, _stats = self._run_search(
+            query, queries=queries, limit=limit, scope=scope, include_superseded=include_superseded
         )
         return results
 
     def search_with_confidence(
         self,
-        query: str,
+        query: str = "",
         *,
+        queries: Sequence[str] | None = None,
         limit: int = 10,
         scope: str | None = None,
         include_superseded: bool = False,
     ) -> dict[str, Any]:
         """Search and attach a per-query confidence assessment + explicit abstention signal."""
-        cleaned = (query or "").strip()
-        results, stats = self._run_search(
-            cleaned,
+        results, query_list, stats = self._run_search(
+            query,
+            queries=queries,
             limit=limit,
             scope=scope,
             include_superseded=include_superseded,
@@ -421,7 +424,7 @@ class MemoryService:
         top_scope = self.scopes[results[0]["scope"]] if results else None
         embedder = self._active_embedder()
         return evaluate_search_confidence(
-            cleaned,
+            query_list,
             results,
             stats,
             top_lexical=self._lexical_index(top_scope) if top_scope is not None else None,
@@ -432,41 +435,36 @@ class MemoryService:
 
     def _run_search(
         self,
-        query: str,
+        query: str = "",
         *,
+        queries: Sequence[str] | None = None,
         limit: int = 10,
         scope: str | None = None,
         include_superseded: bool = False,
         collect_stats: bool = False,
-    ) -> tuple[list[dict[str, Any]], dict[str, list[float]]]:
-        query = (query or "").strip()
-        stats: dict[str, list[float]] = {"lex": [], "sem": []}
-        if not query:
-            return [], stats
+    ) -> tuple[list[dict[str, Any]], list[str], list[dict[str, list[float]]]]:
+        query_list = normalize_queries(query, queries)
+        if not query_list:
+            return [], [], []
         targets = self._scopes_for(scope)
-        qvec = self._query_vector(targets, query)
-        fused: dict[tuple[str, str], dict[str, Any]] = {}
-        for s in targets:
-            fuse_scope_hits(
-                fused,
-                s.name,
-                self._ranked_hits(
-                    s,
-                    query,
-                    qvec,
-                    limit,
-                    include_superseded=include_superseded,
-                    stats=stats if collect_stats else None,
-                ),
-                rrf_k=_RRF_K,
-            )
+        qvecs = self._query_vectors(targets, query_list)
+        fused, stats_list = fuse_multi_query(
+            query_list,
+            qvecs,
+            targets,
+            self._ranked_hits,
+            limit=limit,
+            include_superseded=include_superseded,
+            collect_stats=collect_stats,
+            rrf_k=_RRF_K,
+        )
 
         reranking = self._reranking()
         pool_limit = max(limit, self.rerank_candidates) if reranking else limit
         ranked = self._select_ranked(fused, limit=pool_limit, include_superseded=include_superseded)
         if reranking:
-            ranked = self._rerank(query, ranked, limit)
-        return self._hydrate(ranked), stats
+            ranked = self._rerank(query_list[0], ranked, limit)
+        return hydrate_ranked(ranked, self.scopes, self._scope_meta), query_list, stats_list
 
     def _reranking(self) -> bool:
         embedder = self._active_embedder()
@@ -496,14 +494,16 @@ class MemoryService:
             logger.warning("Nachos reranking disabled for this session (%s).", self._rerank_error)
         return out
 
-    def _query_vector(self, targets: list[Scope], query: str) -> list[float] | None:
-        """Embedding of ``query`` (after syncing the target indexes), or None if lexical-only."""
-        if not self.semantic_enabled:
+    def _query_vectors(
+        self, targets: list[Scope], query_list: list[str]
+    ) -> list[list[float]] | None:
+        """Batched query embeddings (after syncing target indexes), or None if lexical-only."""
+        if not self.semantic_enabled or not query_list:
             return None
         for s in targets:
             self.sync_index(s)
-        vectors = self._embed([query], QUERY)
-        return vectors[0] if vectors else None
+        vectors = self._embed(query_list, QUERY)
+        return vectors if vectors and len(vectors) == len(query_list) else None
 
     def _ranked_hits(
         self,
@@ -535,12 +535,6 @@ class MemoryService:
         return duplicate_threshold_for(
             s.index, model_id, self.duplicate_threshold, calibrate=self.calibrate_duplicates
         )
-
-    def _hydrate(
-        self, ranked: list[tuple[tuple[str, str], dict[str, Any]]]
-    ) -> list[dict[str, Any]]:
-        """Turn fused ranking rows into result dicts, recording a hit per returned entry."""
-        return hydrate_ranked(ranked, self.scopes, self._scope_meta)
 
     # -- duplicates --------------------------------------------------------
 

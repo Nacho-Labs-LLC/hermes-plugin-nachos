@@ -271,8 +271,9 @@ class NachosMemoryProvider(MemoryProvider):
             "an outdated fact; if the response lists a `possible_updates` entry "
             "that is an older version of the same fact, call `nachos_memory_put` "
             "again with `supersedes=[key]`); recall with `nachos_memory_recall` "
-            "(if it returns `no_confident_match: true`, treat any listed entries as "
-            "low-confidence candidates rather than confirmed answers), remove with "
+            "(if it returns `no_confident_match: true`, treat listed entries as "
+            "low-confidence candidates and retry with 1-3 rephrasings in `queries`, "
+            "including one phrased like the stored fact), remove with "
             "`nachos_memory_remove`. Never use the built-in `memory` tool with "
             '`target: "memory"`: it is disabled and not shown to you. Persona and '
             "identity belong to SOUL.md and are not memory. Earlier conversation that was "
@@ -516,25 +517,41 @@ class NachosMemoryProvider(MemoryProvider):
     def _recall(self, service: MemoryService, args: dict[str, Any]) -> str:
         key = (args.get("key") or "").strip()
         query = (args.get("query") or "").strip()
+        raw_queries = args.get("queries")
+        queries = [str(q) for q in raw_queries] if isinstance(raw_queries, list) else None
         scope = (args.get("scope") or "").strip() or None
         if key:
             entry = service.get_entry(key, scope)
             if entry is None:
                 return json.dumps({"error": f"No entry with key {key!r}"})
             return json.dumps(entry)
-        if query:
+        if query or (queries and any(q.strip() for q in queries)):
             limit = clamp_int(args.get("limit"), 10, 1, 25)
             include_superseded = bool(args.get("include_superseded", False))
             if self._cfg.get("abstention", "on") == "on":
                 payload = service.search_with_confidence(
-                    query, limit=limit, scope=scope, include_superseded=include_superseded
+                    query,
+                    queries=queries,
+                    limit=limit,
+                    scope=scope,
+                    include_superseded=include_superseded,
                 )
                 return json.dumps(payload)
             results = service.search(
-                query, limit=limit, scope=scope, include_superseded=include_superseded
+                query,
+                queries=queries,
+                limit=limit,
+                scope=scope,
+                include_superseded=include_superseded,
             )
-            return json.dumps({"query": query, "count": len(results), "results": results})
-        return json.dumps({"error": "Provide 'key' or 'query'."})
+            return json.dumps(
+                {
+                    "query": query or (queries[0].strip() if queries else ""),
+                    "count": len(results),
+                    "results": results,
+                }
+            )
+        return json.dumps({"error": "Provide 'key', 'query', or 'queries'."})
 
     def _put(self, service: MemoryService, args: dict[str, Any]) -> str:
         if not self._primary:
