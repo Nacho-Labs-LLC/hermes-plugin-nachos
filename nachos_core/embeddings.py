@@ -71,8 +71,13 @@ def parse_cli_version(text: str) -> tuple[int, int, int] | None:
     return (int(match.group(1)), int(match.group(2)), int(match.group(3)))
 
 
-def _probe_cli_version(command: str) -> tuple[int, int, int] | None:
-    """Ask ``command --version`` for its semver; return None if unsupported or unparseable."""
+def _probe_cli_version(command: str) -> tuple[bool, tuple[int, int, int] | None]:
+    """Run ``command --version``: ``(ran, semver)``.
+
+    ``ran`` is False when the binary is missing or hangs (no verdict; embedding then fails or
+    falls back to lexical as usual). A CLI that runs but exits non-zero or prints nothing
+    parseable has no ``--version`` and so predates 0.6.0: ``(True, None)``.
+    """
     try:
         proc = subprocess.run(  # noqa: S603 - argv list from operator config, no shell
             [command, "--version"],
@@ -82,10 +87,10 @@ def _probe_cli_version(command: str) -> tuple[int, int, int] | None:
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired):
-        return None
+        return False, None
     if proc.returncode != 0:
-        return None
-    return parse_cli_version(proc.stdout)
+        return True, None
+    return True, parse_cli_version(proc.stdout)
 
 
 class Embedder(ABC):
@@ -275,21 +280,30 @@ class CliEmbedder(Embedder):
         if self._version_checked:
             return
         self._version_checked = True
-        self._apply_cli_version(_probe_cli_version(self.command))
+        ran, version = _probe_cli_version(self.command)
+        if version is not None:
+            self._apply_cli_version(version)
+        elif ran:
+            self._degrade_to_legacy("(no --version)")
 
-    def _apply_cli_version(self, version: tuple[int, int, int] | None) -> None:
-        if version is None:
-            return
+    def _apply_cli_version(self, version: tuple[int, int, int]) -> None:
+        """Record the CLI's version; a ready-line version also overrides an earlier probe verdict."""
         self.cli_version = version
         if version >= MIN_CLI_VERSION:
+            if self._legacy_cli:
+                self._legacy_cli = False
+                self._rerank_failed = False
             return
+        self._degrade_to_legacy(".".join(str(part) for part in version))
+
+    def _degrade_to_legacy(self, found: str) -> None:
+        """Stop using input types, reranking and model overrides; warn once."""
         self._legacy_cli = True
         self.supports_type = False
         self.supports_rerank = False
         self._rerank_failed = True
         if not self._version_warned:
             self._version_warned = True
-            found = ".".join(str(part) for part in version)
             logger.warning(
                 "nachos-embeddings %s is older than %s; disabling input types, reranking, "
                 "and model overrides (upgrade with: npm i -g @nacho-labs/nachos-embeddings).",
@@ -300,7 +314,9 @@ class CliEmbedder(Embedder):
     def _check_ready_version(self, msg: dict[str, Any]) -> None:
         ver = msg.get("version")
         if isinstance(ver, str):
-            self._apply_cli_version(parse_cli_version(ver))
+            parsed = parse_cli_version(ver)
+            if parsed is not None:
+                self._apply_cli_version(parsed)
 
     # -- worker lifecycle -------------------------------------------------
     def _model_args(self) -> list[str]:

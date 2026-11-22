@@ -3,7 +3,7 @@
 Only explicit labels (fixed memory store label plus the caller's exact skill and
 reference allowlist) are read, through the pinned no-follow SourceBoundary. A
 SQLite store is read through the shared WAL-safe read-only reader
-(nachos_core.index.open_read_only_sqlite: direct mode=ro for rollback databases, a
+(nachos_core.sqlite_util.open_read_only_sqlite: direct mode=ro for rollback databases, a
 private verified copy for WAL ones), after the pinned boundary has confirmed the label
 is a regular file; only a fixed authorizer-restricted SELECT ever runs. Flatfile memory is parsed from captured bytes by a pure reimplementation
 of store/md_store.py parsing. Store content (keys, titles, bodies) is hostile:
@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from ..index import close_sqlite, open_read_only_sqlite
+from ..sqlite_util import close_sqlite, open_read_only_sqlite
 from ..store.md_store import slugify
 from .boundary import AcquisitionError, SourceBoundary
 from .hashing import canonical_json, file_sha256, memory_sha256

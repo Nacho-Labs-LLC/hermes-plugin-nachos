@@ -10,7 +10,7 @@ import time
 from collections.abc import Mapping
 from pathlib import Path
 
-from ..index import close_sqlite, open_read_only_sqlite
+from ..sqlite_util import close_sqlite, open_read_only_sqlite
 from .base import Entry, EntryMeta, MemoryStore
 
 

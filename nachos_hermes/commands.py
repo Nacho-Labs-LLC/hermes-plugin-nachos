@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from nachos_core.history import checkpoint_stats
+from nachos_core.index import MemoryIndex
 from nachos_core.memory import PROFILE, MemoryService
 
 UNAVAILABLE = "Nachos memory store unavailable."
@@ -140,7 +141,7 @@ def audit_text(service: MemoryService | None, older_than_days: float = 30) -> st
 # -- review inbox ------------------------------------------------------------
 
 
-def _inbox_item(index, target: str) -> dict[str, Any] | None:
+def _inbox_item(index: MemoryIndex, target: str) -> dict[str, Any] | None:
     ident = target.lstrip("#")
     return index.get_inbox(int(ident)) if ident.isdigit() else None
 
@@ -161,7 +162,7 @@ def _is_grounded(row: dict[str, Any]) -> bool | None:
     return row.get("grounded")
 
 
-def _inbox_list(index, queued: int) -> str:
+def _inbox_list(index: MemoryIndex, queued: int) -> str:
     note = (
         f"\nProcessing {queued} captured session(s) in the background -- run again shortly."
         if queued
@@ -180,7 +181,7 @@ def _inbox_list(index, queued: int) -> str:
     return "\n".join(lines) + note
 
 
-def _inbox_show(index, target: str) -> str:
+def _inbox_show(index: MemoryIndex, target: str) -> str:
     row = _inbox_item(index, target)
     if not row:
         return f"No inbox item {target}."
@@ -280,7 +281,7 @@ def _audit_days(raw_args: str) -> float:
         return 30.0
 
 
-def register_commands(ctx, provider) -> None:
+def register_commands(ctx: Any, provider: Any) -> None:
     """Register the ``/nachos-memory-*`` slash commands for ``provider`` on a plugin context."""
     ctx.register_command(
         "nachos-memory-status",

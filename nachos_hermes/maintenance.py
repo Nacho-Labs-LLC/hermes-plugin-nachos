@@ -9,6 +9,7 @@ import os
 import sqlite3
 from collections import OrderedDict
 from pathlib import Path
+from typing import Any
 
 from nachos_core.capture import pending_jobs
 from nachos_core.index import MemoryIndex, index_path_for
@@ -16,7 +17,7 @@ from nachos_core.memory import PROFILE, MemoryService, Scope
 from nachos_core.quality import flag_reason
 from nachos_core.reconciliation.findings import generate_findings
 from nachos_core.reconciliation.signals import collect_signals
-from nachos_core.store import MDStore, SqliteStore
+from nachos_core.store import MDStore, MemoryStore, SqliteStore
 
 _CHECKS = (
     "summaries",
@@ -31,7 +32,7 @@ _CHECKS = (
 )
 
 
-def _summaries(store):
+def _summaries(store: MemoryStore) -> dict[str, Any]:
     flagged = []
     for key, title, summary, category in store.list():
         reason = flag_reason(title, summary, store.get(key) or "")
@@ -40,7 +41,7 @@ def _summaries(store):
     return {"count": len(flagged), "items": flagged}
 
 
-def _links(service):
+def _links(service: MemoryService) -> dict[str, Any]:
     report = service.link_report()
     kinds = (
         ("broken_link", "broken_links"),
@@ -95,7 +96,7 @@ def _reconciliation(service: MemoryService) -> dict[str, object]:
     }
 
 
-def _store_check(name, service):
+def _store_check(name: str, service: MemoryService) -> dict[str, Any] | None:
     """Checks that read only the store (no usage telemetry)."""
     if name == "summaries":
         return _summaries(service.profile.store)
@@ -109,7 +110,9 @@ def _store_check(name, service):
     return None
 
 
-def _check(name, service, home, days, index_available):
+def _check(
+    name: str, service: MemoryService, home: Path, days: float, index_available: bool
+) -> dict[str, Any]:
     result = _store_check(name, service)
     if result is not None:
         return result
@@ -142,7 +145,7 @@ def _check(name, service, home, days, index_available):
     }
 
 
-def _provenance(service, index_available):
+def _provenance(service: MemoryService, index_available: bool) -> dict[str, Any]:
     """Entries without a recorded origin. Informational only: older entries never had one."""
     if not index_available:
         return {"count": 0, "items": [], "severity": "info", "available": False}
@@ -209,7 +212,7 @@ def resolve_profile_home(supplied: Path) -> Path:
     return expanded.resolve()
 
 
-def _report(args):
+def _report(args: argparse.Namespace) -> dict[str, Any]:
     if not math.isfinite(args.days) or args.days < 0:
         raise ValueError("--days must be finite and nonnegative")
     home = resolve_profile_home(args.profile_home)
@@ -230,7 +233,7 @@ def _report(args):
         service.close()
 
 
-def _human_report(report):
+def _human_report(report: dict[str, Any]) -> str:
     lines = [f"REPORT ONLY: {report['store_path']}"]
     if not report["index_available"]:
         lines.append("index unavailable: usage history and candidate inbox are unknown")

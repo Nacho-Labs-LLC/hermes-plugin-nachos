@@ -12,8 +12,9 @@ from .calibration import assess_confidence, format_search_response, is_borderlin
 from .chunking import embed_chunks
 from .index import dot
 from .lexical import jaccard
+from .links import resolve_successor
 from .provenance import source_view
-from .validity import redirect_hits, resolve_successor
+from .validity import redirect_hits
 
 if TYPE_CHECKING:
     from .embeddings import Embedder

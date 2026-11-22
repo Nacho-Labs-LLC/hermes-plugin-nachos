@@ -84,7 +84,7 @@ max-complexity = 12
 # ABC-override + slash-handler params are contract-mandated, not slop.
 # Every interpolated SQL fragment is a class constant (column lists) or an internal column
 # name; all values go through bound parameters.
-"nachos_core/index.py" = ["S608"]
+"nachos_core/index*.py" = ["S608"]
 "tests/*" = ["S101", "S603"]  # S101: assert is pytest style; S603: tests spawn fixed argv  # assert is how pytest tests work
 # Catalog wrapper: the sys.path bootstrap must run before the package import, and the
 # imports are a deliberate re-export (Hermes' directory scan looks for the class name).
@@ -124,9 +124,9 @@ ignore-docstrings = true
 ignore-imports = true
 
 [tool.mypy]
-# Gate: `bash scripts/check.sh` runs `python -m mypy` (config here). nachos_core is fully
-# annotated (disallow_untyped_defs); adapter and tools are checked (check_untyped_defs) but
-# may keep unannotated defs. Tests are excluded: they are not part of the shipped surface.
+# Gate: `bash scripts/check.sh` runs `python -m mypy` (config here). nachos_core, the adapter and
+# the tools are fully annotated (disallow_untyped_defs). Tests are excluded: they are not part of
+# the shipped surface.
 python_version = "3.9"
 files = ["nachos_core", "nachos_hermes", "tools"]
 mypy_path = "$MYPY_CONFIG_FILE_DIR:$MYPY_CONFIG_FILE_DIR/tools"
@@ -139,7 +139,7 @@ check_untyped_defs = true
 warn_unused_configs = true
 
 [[tool.mypy.overrides]]
-module = ["nachos_core", "nachos_core.*"]
+module = ["nachos_core", "nachos_core.*", "nachos_hermes", "nachos_hermes.*", "_common", "memory_audit", "import_memories", "correct_summaries"]
 disallow_untyped_defs = true
 disallow_incomplete_defs = true
 

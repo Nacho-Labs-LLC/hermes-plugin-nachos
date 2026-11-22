@@ -102,6 +102,7 @@ def fake_serve_cli(tmp_path, monkeypatch):
     path.chmod(path.stat().st_mode | stat.S_IEXEC)
     counter = tmp_path / "starts.txt"
     monkeypatch.setenv("FAKE_COUNTER", str(counter))
+    monkeypatch.setenv("FAKE_VERSION", "0.6.0")  # a current CLI answers --version
     return path, counter
 
 
@@ -217,6 +218,7 @@ def fake_cli(tmp_path, monkeypatch):
     path.write_text(_FAKE_CLI.format(python=sys.executable))
     path.chmod(path.stat().st_mode | stat.S_IEXEC)
     monkeypatch.setenv("PATH", f"{path.parent}{os.pathsep}{os.environ.get('PATH', '')}")
+    monkeypatch.setenv("FAKE_VERSION", "0.6.0")  # a current CLI answers --version
     return path
 
 
@@ -708,3 +710,58 @@ def test_cli_version_0_6_0_keeps_full_features(fake_serve_cli, monkeypatch, tmp_
     finally:
         embedder.close()
     assert not caplog.records
+
+
+def test_cli_without_version_flag_is_treated_as_older_and_warns_once(
+    fake_serve_cli, monkeypatch, tmp_path, caplog
+):
+    path, _ = fake_serve_cli
+    args_file = tmp_path / "args.txt"
+    reqs_file = tmp_path / "reqs.txt"
+    monkeypatch.delenv("FAKE_VERSION")  # the fake exits 1 on --version, like a 0.5.x CLI
+    monkeypatch.setenv("FAKE_TYPED", "1")
+    monkeypatch.setenv("FAKE_RERANK", "1")
+    monkeypatch.setenv("FAKE_ARGS", str(args_file))
+    monkeypatch.setenv("FAKE_REQS", str(reqs_file))
+    embedder = CliEmbedder(str(path), "org/m", dtype="q8", rerank=True, pooling="cls")
+    try:
+        with caplog.at_level("WARNING", logger="nachos_core.embeddings"):
+            assert embedder.embed(["abc"], input_type="query") == [[3.0, 2.0]]
+            assert embedder.embed(["de"], input_type="document") == [[2.0, 2.0]]
+            assert embedder.rerank("q", ["hit"]) is None
+        assert embedder.cli_version is None
+        assert embedder.supports_type is False
+        assert embedder.supports_rerank is False
+        assert args_file.read_text() == "--model org/m --dtype q8"
+        assert reqs_file.read_text().splitlines() == ["None", "None"]
+    finally:
+        embedder.close()
+    assert sum("older than 0.6.0" in r.message for r in caplog.records) == 1
+
+
+def test_ready_line_version_overrides_a_failed_version_probe(fake_serve_cli, monkeypatch, tmp_path):
+    path, _ = fake_serve_cli
+    reqs_file = tmp_path / "reqs.txt"
+    monkeypatch.delenv("FAKE_VERSION")
+    monkeypatch.setenv("FAKE_TYPED", "1")
+    monkeypatch.setenv("FAKE_READY_EXTRA", json.dumps({"version": "0.6.0"}))
+    monkeypatch.setenv("FAKE_REQS", str(reqs_file))
+    embedder = CliEmbedder(str(path))
+    try:
+        assert embedder.embed(["abc"], input_type="query") == [[3.0, 2.0]]
+        assert embedder.cli_version == (0, 6, 0)
+        assert embedder.supports_type is True
+        assert reqs_file.read_text().splitlines() == ["query"]
+    finally:
+        embedder.close()
+
+
+def test_missing_cli_binary_is_not_mistaken_for_an_old_cli(tmp_path, caplog):
+    embedder = CliEmbedder(str(tmp_path / "no-such-nachos-embeddings"), timeout=2.0)
+    with (
+        caplog.at_level("WARNING", logger="nachos_core.embeddings"),
+        pytest.raises(Exception),  # noqa: B017, PT011 - any backend failure; the service degrades
+    ):
+        embedder.embed(["abc"])
+    assert embedder.cli_version is None
+    assert not any("older than" in r.message for r in caplog.records)

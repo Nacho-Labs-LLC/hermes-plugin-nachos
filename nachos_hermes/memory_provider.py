@@ -51,15 +51,15 @@ except ModuleNotFoundError:  # pragma: no cover - exercised outside Hermes
         """Fallback base so the module stays importable outside Hermes."""
 
 
-from nachos_core.history import locate_quote, open_ref, parse_ref, prune_checkpoints, search_history
+from nachos_core.embeddings import Embedder
+from nachos_core.history import locate_quote, prune_checkpoints
 from nachos_core.index import MemoryIndex, index_path_for
 from nachos_core.memory import PROFILE, SHARED, MemoryService, Scope
 from nachos_core.snapshots import SnapshotStore
 from nachos_core.store import get_store
-from nachos_core.store.md_store import slugify
 from nachos_core.toc import render_toc
 
-from . import capture_adapter, commands
+from . import capture_adapter, commands, memory_tools
 from .config import (
     CONFIG_SCHEMA,
     DEFAULTS,
@@ -77,7 +77,6 @@ from .schemas import (
     RECALL_SCHEMA,
     RECALL_SCHEMA_HINT,
     REMOVE_SCHEMA,
-    clamp_int,
     with_scope,
 )
 
@@ -89,7 +88,7 @@ class NachosMemoryProvider(MemoryProvider):
 
     pre_compress_checkpoint_api_version = 2
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._service: MemoryService | None = None
         self._cfg: dict[str, Any] = dict(DEFAULTS)
         self._session_id = ""
@@ -108,14 +107,9 @@ class NachosMemoryProvider(MemoryProvider):
     def is_available(self) -> bool:
         return True  # local, always ready
 
-    @property
-    def _store(self):
-        """Profile store (kept for older callers)."""
-        return self._service.profile.store if self._service else None
-
     # -- lifecycle ---------------------------------------------------------
 
-    def initialize(self, session_id: str, **kwargs) -> None:
+    def initialize(self, session_id: str, **kwargs: Any) -> None:
         self._session_id = session_id or ""
         self._lineage = [self._session_id] if self._session_id else []
         self._primary = kwargs.get("agent_context", "primary") == "primary"
@@ -198,7 +192,7 @@ class NachosMemoryProvider(MemoryProvider):
         path = store_file(directory, self._cfg["store"])
         return Scope(name, get_store(self._cfg["store"], path), MemoryIndex(index_path_for(path)))
 
-    def _make_embedder(self):
+    def _make_embedder(self) -> Embedder | None:
         try:
             return make_embedder_from_config(self._cfg)
         except Exception as e:
@@ -452,7 +446,7 @@ class NachosMemoryProvider(MemoryProvider):
         parent_session_id: str = "",
         reset: bool = False,
         rewound: bool = False,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         """Track the logical conversation across session id rotations."""
         if not new_session_id:
@@ -474,7 +468,7 @@ class NachosMemoryProvider(MemoryProvider):
     # -- delegation --------------------------------------------------------
 
     def on_delegation(
-        self, task: str, result: str, *, child_session_id: str = "", **kwargs
+        self, task: str, result: str, *, child_session_id: str = "", **kwargs: Any
     ) -> None:
         """Record a finished subagent task/result so history search can find it. Never raises."""
         try:
@@ -510,9 +504,15 @@ class NachosMemoryProvider(MemoryProvider):
             schemas = [with_scope(s) for s in schemas]
         return [*schemas, HISTORY_SCHEMA, RECONCILE_SCHEMA]
 
-    def handle_tool_call(self, tool_name: str, args: dict[str, Any], **kwargs) -> str:
+    def handle_tool_call(self, tool_name: str, args: dict[str, Any], **kwargs: Any) -> str:
         if tool_name == "nachos_history_search":
-            return self._history(args)
+            return memory_tools.history(
+                args,
+                checkpoint_root=self._checkpoint_root,
+                cfg=self._cfg,
+                session_ids=list(self._lineage) or ([self._session_id] if self._session_id else []),
+                redact=self._redact,
+            )
         service = self._service
         if not service:
             return json.dumps({"error": "Nachos memory store not available"})
@@ -520,156 +520,22 @@ class NachosMemoryProvider(MemoryProvider):
             return handle_reconcile(
                 service, self._hermes_home, self._cfg["store"], self._primary, args
             )
-        handler = {
-            "nachos_memory_recall": self._recall,
-            "nachos_memory_put": self._put,
-            "nachos_memory_remove": self._remove,
-        }.get(tool_name)
+        handlers: dict[str, Callable[[], str]] = {
+            "nachos_memory_recall": lambda: memory_tools.recall(
+                service, args, abstain_mode=self._cfg.get("abstention", "hint")
+            ),
+            "nachos_memory_put": lambda: memory_tools.put(service, args, primary=self._primary),
+            "nachos_memory_remove": lambda: memory_tools.remove(
+                service, args, primary=self._primary
+            ),
+        }
+        handler = handlers.get(tool_name)
         if handler is None:
             return json.dumps({"error": f"Unknown tool: {tool_name}"})
         try:
-            return handler(service, args)
+            return handler()
         except KeyError as e:
             return json.dumps({"error": f"Unknown or disabled scope {e}"})
-
-    def _recall(self, service: MemoryService, args: dict[str, Any]) -> str:
-        key = (args.get("key") or "").strip()
-        scope = (args.get("scope") or "").strip() or None
-        if key:
-            entry = service.get_entry(key, scope)
-            if entry is None:
-                return json.dumps({"error": f"No entry with key {key!r}"})
-            return json.dumps(entry)
-        query = (args.get("query") or "").strip()
-        raw_queries = args.get("queries")
-        queries = [str(q) for q in raw_queries] if isinstance(raw_queries, list) else None
-        entity = (args.get("entity") or "").strip()
-        if not (query or entity or (queries and any(q.strip() for q in queries))):
-            return json.dumps({"error": "Provide 'key', 'query', 'queries', or 'entity'."})
-        return json.dumps(self._recall_query(service, args, query, queries, entity, scope))
-
-    def _recall_query(
-        self,
-        service: MemoryService,
-        args: dict[str, Any],
-        query: str,
-        queries: list[str] | None,
-        entity: str,
-        scope: str | None,
-    ) -> dict[str, Any]:
-        limit = clamp_int(args.get("limit"), 10, 1, 25)
-        include_superseded = bool(args.get("include_superseded", False))
-        abstain_mode = self._cfg.get("abstention", "hint")
-        if abstain_mode in ("hint", "on"):
-            return service.search_with_confidence(
-                query,
-                queries=queries,
-                limit=limit,
-                scope=scope,
-                include_superseded=include_superseded,
-                entity=entity or None,
-                mode=abstain_mode,
-            )
-        results = service.search(
-            query,
-            queries=queries,
-            limit=limit,
-            scope=scope,
-            include_superseded=include_superseded,
-            entity=entity or None,
-        )
-        out: dict[str, Any] = {
-            "query": query or (queries[0].strip() if queries else ""),
-            "count": len(results),
-            "results": results,
-        }
-        if entity:
-            out["entity"] = entity
-        return out
-
-    def _put(self, service: MemoryService, args: dict[str, Any]) -> str:
-        if not self._primary:
-            return json.dumps({"skipped": "non-primary agent context"})
-        try:
-            result = service.put(
-                title=args.get("title") or "",
-                body=args.get("body") or "",
-                summary=args.get("summary") or "",
-                category=args.get("category") or "general",
-                scope=(args.get("scope") or PROFILE).strip(),
-                supersedes=args.get("supersedes"),
-            )
-        except Exception as e:
-            result = {"error": str(e)}
-        return json.dumps(result)
-
-    def _remove(self, service: MemoryService, args: dict[str, Any]) -> str:
-        if not self._primary:
-            return json.dumps({"skipped": "non-primary agent context"})
-        key = (args.get("key") or "").strip()
-        if not key and args.get("title"):
-            key = slugify(args["title"].strip())
-        if not key:
-            return json.dumps({"error": "Provide 'key' or 'title'."})
-        scope = (args.get("scope") or "").strip() or None
-        try:
-            removed_from = service.remove(key, scope)
-        except KeyError:
-            raise
-        except Exception as e:
-            return json.dumps({"error": str(e)})
-        if removed_from is None:
-            return json.dumps({"error": f"No entry with key {key!r}"})
-        return json.dumps({"removed": key, "scope": removed_from})
-
-    def _history(self, args: dict[str, Any]) -> str:
-        query = (args.get("query") or "").strip()
-        ref = (args.get("ref") or "").strip()
-        if not query and not ref:
-            return json.dumps({"error": "query or ref is required"})
-        if not self._checkpoint_root:
-            return json.dumps({"error": "Nachos checkpoint store is not initialized"})
-        cfg = self._cfg
-        before = clamp_int(args.get("before"), int(cfg["history_context_before"]), 0, 10)
-        after = clamp_int(args.get("after"), int(cfg["history_context_after"]), 0, 10)
-        max_chars = max(500, int(cfg["history_max_chars"]))
-        session, checkpoint, _index = parse_ref(ref) if ref else ("", None, None)
-        if ref and checkpoint:
-            result = open_ref(
-                self._checkpoint_root, ref, before=before, after=after, max_chars=max_chars
-            )
-            if result is None:
-                return json.dumps(
-                    {
-                        "error": f"Checkpoint for ref {ref!r} is gone (checkpoints expire after "
-                        f"checkpoint_max_age_days); search the session with query instead.",
-                    }
-                )
-            results = [result]
-        elif not query:
-            return json.dumps(
-                {"error": "ref names no checkpoint message; add a query to search it"}
-            )
-        else:
-            sessions = None
-            if session:
-                sessions = [session]
-            elif (args.get("scope") or "conversation") != "all":
-                sessions = list(self._lineage) or ([self._session_id] if self._session_id else [])
-            results = search_history(
-                self._checkpoint_root,
-                query,
-                limit=clamp_int(args.get("limit"), 8, 1, 25),
-                session_ids=sessions,
-                before=before,
-                after=after,
-                max_chars=max_chars,
-            )
-        for row in results:
-            row["excerpt"] = self._redact(row["excerpt"])
-            for part in row["context"]:
-                part["text"] = self._redact(part["text"])
-        return json.dumps({"query": query, "count": len(results), "results": results})
 
     def shutdown(self) -> None:
         with contextlib.suppress(Exception):
@@ -677,7 +543,7 @@ class NachosMemoryProvider(MemoryProvider):
                 self._service.close()
 
 
-def register(ctx) -> None:
+def register(ctx: Any) -> None:
     provider = NachosMemoryProvider()
     ctx.register_memory_provider(provider)
     commands.register_commands(ctx, provider)

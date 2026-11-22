@@ -83,3 +83,25 @@ Retention is by age (`checkpoint_max_age_days`), not count: the oldest checkpoin
 The index counts first-seen time, exact-key recalls and query hits per entry. Nothing reads it on the hot path; it feeds `/nachos-memory-audit` and `tools/memory_audit.py` to surface never-recalled entries and near-duplicates. Deleting is left to a person or the agent.
 
 To keep recall latency low, `memory.index.db` opens in SQLite WAL mode with `PRAGMA synchronous=NORMAL` for usage telemetry (avoiding a per-query `fsync`) and checkpoints on normal close. On an abrupt crash or power loss before a WAL checkpoint, the last few seconds of usage counts may be lost, while `changes` undo-log writes stay committed immediately under `PRAGMA synchronous=FULL`.
+
+## Module map
+
+`nachos_core` is harness-agnostic (stdlib only; it never imports `nachos_hermes` or Hermes). `nachos_hermes` is the Hermes adapter.
+
+| Module | Responsibility |
+| --- | --- |
+| `memory.py` | `MemoryService`: the public API (scopes, manifest, writes, revert, supersedes, hygiene, status). Delegates reads to `recall.py` and embedding state to `reindex.SemanticRuntime`. |
+| `recall.py` | `Recall`: hybrid search, confidence/abstention, similar-entry and duplicate-pair lookups; live tunables arrive as a `RecallTuning`. |
+| `scope.py` | `Scope` (store + index) and `ScopeCaches`, the fingerprint-keyed lexical and metadata caches. |
+| `writes.py` | `Draft`/`prepare_draft` (redaction, summary defaulting, key derivation, quality gate) and change-log snapshots. |
+| `reindex.py` | `SemanticRuntime` (embedder, failure state, per-scope re-embed progress) and the bounded re-embed after a model change. |
+| `index.py`, `index_schema.py`, `index_records.py`, `sqlite_util.py` | Sidecar SQLite index: vectors, links and calibration (`index.py`); DDL and migrations; usage, change log, inbox and provenance tables; read-only SQLite opener. |
+| `ranking.py`, `validity.py`, `calibration.py` | Fusion, rerank and confidence scoring; supersedes/recency/hygiene queries; per-model similarity priors. |
+| `links.py`, `entities.py`, `graph.py`, `linked.py` | `[[links]]` and link suggestions; entity extraction and index; per-scope link graph; recall-side link helpers. |
+| `lexical.py`, `chunking.py`, `quality.py`, `toc.py` | Lexical index, body chunking, write quality gate, manifest rendering. |
+| `embeddings.py` | Embedder backends (nachos-embeddings CLI, OpenAI-compatible, sentence-transformers). |
+| `capture.py`, `history.py`, `snapshots.py`, `provenance.py` | Session capture and inbox, checkpoint history, checkpoint store, provenance views. |
+| `store/` | `MemoryStore` interface with the SQLite and flat-file drivers. |
+| `reconciliation/` | Offline, report-only reconciliation: inventory, findings, packets, validation, apply, viewer. |
+| `nachos_hermes/memory_provider.py` | Hermes `MemoryProvider`: lifecycle, config, manifest block, dispatch. Tool handlers live in `memory_tools.py`, slash-command text in `commands.py`, config parsing in `config.py`. |
+| `bench/` | `recall.py` (recall benchmark and CLI), `link_eval.py` (suggestion and link evals), `multi_query.py`, `history.py`, `diagnose.py`. |
