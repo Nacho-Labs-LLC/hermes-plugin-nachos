@@ -525,3 +525,22 @@ Readings:
 
 - **Keep `rerank: off` by default**: with supersedes + redirect active, `gte-modernbert-base` q8 (`rerank: off`) already hits `1.000` on `outdated`, `long-body`, `near-dup`, and every adversarial query at `12–17 ms` p50, while `rerank: on` costs `120–320 ms` per recall and slightly degrades redirected old-wording queries.
 - **Defaults in code**: `chunk_penalty = 0.05`, `duplicate_calibration = "auto"`, `calibrate_updates = True` (`p99` floor when calibrated), `similarity_floor = "off"`, `rerank = "off"`.
+
+## Reconciliation branch check (no ranking change expected)
+
+The reconciliation work adds `MemoryService.link_supersede`/`unlink_supersede` and a `key`
+argument to `put`/`prepare`, and does not touch ranking. `python -m bench --repeat 3`, rerank
+off, memory-next before and this branch after (hit@1 / hit@5 / MRR@10):
+
+| Data set | Backend | Before | After |
+| --- | --- | --- | --- |
+| original (393 positive queries) | lexical | 0.695 / 0.812 / 0.748 | 0.695 / 0.812 / 0.748 |
+| original | MiniLM q8 | 0.758 / 0.924 / 0.832 | 0.758 / 0.924 / 0.832 |
+| original | gte-modernbert q8 | 0.766 / 0.949 / 0.847 | 0.773 / 0.949 / 0.850 |
+| adversarial | lexical | 0.975 / 1.000 / 0.986 | 0.975 / 1.000 / 0.986 |
+| adversarial | MiniLM q8 | 0.988 / 1.000 / 0.994 | 0.988 / 1.000 / 0.994 |
+| adversarial | gte-modernbert q8 | 1.000 / 1.000 / 1.000 | 1.000 / 1.000 / 1.000 |
+
+No backend regressed. The +0.007 hit@1 for gte-modernbert on the original set is not explained
+by any code change (ranking is untouched); I treat it as run-to-run variation in the embedding
+worker, not an improvement.

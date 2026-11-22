@@ -172,3 +172,5 @@ The primary-agent write guard is unchanged. If a scheduled/delegated session
 reports `skipped: non-primary agent context`, stop and hand the audit report to
 an authorized primary session. Never impersonate a primary provider, change
 context flags, or edit SQLite to get around that refusal.
+
+To turn these findings into reviewed, applied fixes see [reconciliation](reconciliation.md).
