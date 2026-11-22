@@ -1,4 +1,4 @@
-"""Cross-feature integration tests for Round 4 on naterchrdsn/memory-next."""
+"""Cross-feature integration: links, provenance, reconciliation and model switches together."""
 
 from __future__ import annotations
 
