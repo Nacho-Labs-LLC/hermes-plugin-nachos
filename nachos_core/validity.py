@@ -120,13 +120,13 @@ def resolve_successor(key: str, metas: Mapping[str, EntryMeta]) -> str | None:
 
 
 def redirect_hits(
-    hits: Iterable[tuple[str, float | None]],
+    hits: Iterable[tuple[str, float | None, int]],
     metas: Mapping[str, EntryMeta] | None,
     *,
     limit: int,
-) -> list[tuple[str, float | None]]:
-    """Substitute each superseded hit with its active successor (or pass through when ``metas`` is None)."""
-    out: list[tuple[str, float | None]] = []
+) -> list[tuple[str, float | None, int]]:
+    """Substitute each superseded hit with its active successor (resetting chunk to 0 on redirect)."""
+    out: list[tuple[str, float | None, int]] = []
     if metas is None:
         for item in hits:
             out.append(item)
@@ -134,12 +134,12 @@ def redirect_hits(
                 break
         return out
     seen: set[str] = set()
-    for key, sim in hits:
+    for key, sim, chunk in hits:
         resolved = resolve_successor(key, metas)
         if resolved is None or resolved in seen:
             continue
         seen.add(resolved)
-        out.append((resolved, sim))
+        out.append((resolved, sim, chunk if resolved == key else 0))
         if len(out) >= limit:
             break
     return out
@@ -474,21 +474,20 @@ def history_rows(
 
 
 def find_similar_entries(
-    scopes: Mapping[str, tuple[LexicalIndex, MemoryIndex, Mapping[str, EntryMeta]]],
+    scopes: Mapping[str, tuple[LexicalIndex, MemoryIndex, Mapping[str, EntryMeta], float]],
     title: str,
     summary: str,
     *,
     exclude: tuple[str, str] | None,
     vector: list[float] | None,
     model_id: str | None,
-    duplicate_threshold: float,
     lexical_threshold: float,
     limit: int,
 ) -> list[dict[str, Any]]:
     """Existing active entries that look like the same memory, most similar first."""
     found: dict[tuple[str, str], dict[str, Any]] = {}
     label = f"{title} {summary}"
-    for scope_name, (lex, index, metas) in scopes.items():
+    for scope_name, (lex, index, metas, duplicate_threshold) in scopes.items():
         excluded_key = exclude[1] if exclude and exclude[0] == scope_name else None
         for key, doc_title, score in lex.similar_labels(
             label, threshold=lexical_threshold, exclude=excluded_key

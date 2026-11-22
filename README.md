@@ -52,7 +52,13 @@ Run `hermes memory setup` or edit `$HERMES_HOME/nachos/config.json`. Settings ar
 | `embedding_api_key_env` | blank | Name of the env var holding the API key. |
 | `embedding_query_prefix` | blank | Prepended to search queries for the `openai` and `sentence-transformers` backends, e.g. `query: ` (E5) or `search_query: ` (nomic). Spaces are kept. The `nachos` backend applies its own per-model prefixes. Changing it re-embeds. |
 | `embedding_document_prefix` | blank | Prepended to stored entries for the same backends, e.g. `passage: ` (E5) or `search_document: ` (nomic). Changing it re-embeds. |
-| `duplicate_threshold` | `0.65` | Similarity (0-1) above which a new entry is flagged as a likely duplicate. |
+| `duplicate_threshold` | `0.65` | Similarity (0-1) above which a new entry is flagged as a likely duplicate. With `duplicate_calibration: auto` this is a minimum: it is raised to the embedding model's own random-pair 99th percentile when that is higher. Any value other than `0.65` is used exactly as given. |
+| `duplicate_calibration` | `auto` | `auto` calibrates the default threshold per embedding model (cosine ranges differ a lot between models); `off` uses `duplicate_threshold` as is. |
+| `similarity_floor` | `off` | `auto` drops semantic hits below the model's own 75th percentile of random-pair similarity, calibrated from the stored vectors. |
+| `rerank` | `off` | `nachos` re-scores the top fused results with a cross-encoder served by `nachos-embeddings` (needs the `nachos` backend and a CLI with `--rerank-model`; silently ignored otherwise). Adds roughly 0.3 s per recall. |
+| `rerank_model` | blank | Cross-encoder id (blank = `jinaai/jina-reranker-v1-tiny-en`, about 35 MB at q8). |
+| `rerank_dtype` | blank | Cross-encoder precision, e.g. `q8`. |
+| `rerank_candidates` | `25` | How many top fused results the reranker re-scores. |
 | `shared_store` | `off` | `on` adds a memory scope shared by every profile on the machine. |
 | `shared_store_path` | blank | Shared store directory (blank = `<hermes root>/nachos-shared`). |
 | `redact_secrets` | `on` | Redact secrets in everything written to memory. |

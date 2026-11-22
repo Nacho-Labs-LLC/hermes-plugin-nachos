@@ -31,6 +31,7 @@ import atexit
 import contextlib
 import importlib.util
 import json
+import logging
 import os
 import queue
 import shutil
@@ -42,6 +43,9 @@ import weakref
 from abc import ABC, abstractmethod
 from typing import IO, Any
 
+logger = logging.getLogger(__name__)
+
+DEFAULT_RERANK_MODEL = "jinaai/jina-reranker-v1-tiny-en"
 EMBEDDING_BACKENDS = ("auto", "nachos", "openai", "sentence-transformers", "off")
 
 _BATCH = 64
@@ -60,6 +64,12 @@ class Embedder(ABC):
     #: Client-side prefixes for backends without a native input type.
     query_prefix: str = ""
     document_prefix: str = ""
+    #: True once the backend can score (query, passage) pairs with a cross-encoder.
+    supports_rerank: bool = False
+
+    def rerank(self, query: str, passages: list[str]) -> list[float] | None:  # noqa: ARG002
+        """Relevance scores (higher is better, one per passage), or None if unsupported."""
+        return None
 
     @abstractmethod
     def _embed_batch(self, texts: list[str]) -> list[list[float]]:
@@ -180,10 +190,17 @@ class CliEmbedder(Embedder):
         timeout: float = 180.0,
         request_timeout: float = 60.0,
         dtype: str = "",
+        rerank: bool = False,
+        rerank_model: str = "",
+        rerank_dtype: str = "",
     ):
         self.command = command
         self.model = model
         self.dtype = dtype
+        #: Ask the serve worker to load a cross-encoder (needs a CLI with ``--rerank-model``).
+        self.rerank_enabled = rerank
+        self.rerank_model = rerank_model or DEFAULT_RERANK_MODEL
+        self.rerank_dtype = rerank_dtype
         # First run downloads the model (~25MB), so allow a generous timeout.
         self.timeout = timeout
         self.request_timeout = request_timeout
@@ -198,6 +215,7 @@ class CliEmbedder(Embedder):
         self.send_type = True
         self._restarts = 0
         self._next_id = 0
+        self._rerank_failed = False  # logged once, then reranking stays off for the process
         atexit.register(_close_ref, weakref.ref(self))
 
     # -- worker lifecycle -------------------------------------------------
@@ -207,10 +225,24 @@ class CliEmbedder(Embedder):
             cmd += ["--model", self.model]
         if self.dtype:
             cmd += ["--dtype", self.dtype]
+        if self.rerank_enabled and not self._rerank_failed:
+            cmd += ["--rerank-model", self.rerank_model]
+            if self.rerank_dtype:
+                cmd += ["--rerank-dtype", self.rerank_dtype]
         return cmd
 
     def _start_worker(self) -> _Worker:
-        worker = _Worker(self._serve_cmd())
+        try:
+            return self._launch(self._serve_cmd())
+        except _WorkerError:
+            if not (self.rerank_enabled and not self._rerank_failed):
+                raise
+            # An older CLI exits on the unknown --rerank-* flags: embed without reranking.
+            self._note_rerank_unavailable("the CLI did not start with --rerank-model")
+            return self._launch(self._serve_cmd())
+
+    def _launch(self, cmd: list[str]) -> _Worker:
+        worker = _Worker(cmd)
         try:
             msg = worker.read(self.timeout)
             if msg.get("ready") is not True:
@@ -219,7 +251,14 @@ class CliEmbedder(Embedder):
             worker.stop()
             raise
         self._adopt_ready(msg)
+        if self.rerank_enabled and not self.supports_rerank:
+            self._note_rerank_unavailable("the CLI's ready line has no rerank support")
         return worker
+
+    def _note_rerank_unavailable(self, why: str) -> None:
+        if not self._rerank_failed:
+            self._rerank_failed = True
+            logger.warning("Nachos reranking disabled (%s); results keep their fused order.", why)
 
     def _adopt_ready(self, msg: dict[str, Any]) -> None:
         """Take the dimension, type support and vector-affecting settings from the ready line.
@@ -235,6 +274,7 @@ class CliEmbedder(Embedder):
             self.dimension = dim
         # Type support shipped together with these fields; older CLIs lack all of them.
         self.supports_type = any(k in msg for k in ("pooling", "queryPrefix", "documentPrefix"))
+        self.supports_rerank = isinstance(msg.get("rerank"), dict)
         pooling = msg.get("pooling") if isinstance(msg.get("pooling"), str) else "mean"
         doc_prefix = msg.get("documentPrefix") if isinstance(msg.get("documentPrefix"), str) else ""
         suffix = f":pooling={pooling}" if pooling != "mean" else ""
@@ -276,6 +316,41 @@ class CliEmbedder(Embedder):
             if not isinstance(vectors, list):
                 raise _WorkerError("reply without vectors")
             return vectors
+
+    def rerank(self, query: str, passages: list[str]) -> list[float] | None:
+        """Cross-encoder scores via the serve worker, or None when reranking is unavailable.
+
+        Raises ``RuntimeError`` for an error reply (the caller disables reranking).
+        """
+        if not self.rerank_enabled or not passages:
+            return None
+        with self._lock:
+            if self._serve_disabled:
+                return None
+            try:
+                if self._worker is None:
+                    self._worker = self._start_worker()
+                if not self.supports_rerank:
+                    return None
+                return self._rerank_request(self._worker, query, passages)
+            except (_WorkerError, OSError) as exc:
+                self._drop_worker()
+                raise RuntimeError(f"nachos-embeddings rerank worker failed: {exc}") from None
+
+    def _rerank_request(self, worker: _Worker, query: str, passages: list[str]) -> list[float]:
+        self._next_id += 1
+        rid = self._next_id
+        worker.send({"id": rid, "op": "rerank", "query": query, "passages": passages})
+        while True:
+            msg = worker.read(self.request_timeout)
+            if msg.get("id") != rid:
+                continue
+            if "error" in msg:
+                raise RuntimeError(f"nachos-embeddings rerank: {str(msg['error'])[:200]}")
+            scores = msg.get("scores")
+            if not isinstance(scores, list) or len(scores) != len(passages):
+                raise _WorkerError("rerank reply without one score per passage")
+            return [float(x) for x in scores]
 
     def _type_enabled(self) -> bool:
         return self.supports_type and self.send_type
@@ -415,20 +490,35 @@ def make_embedder(
     dtype: str = "",
     query_prefix: str = "",
     document_prefix: str = "",
+    rerank: bool = False,
+    rerank_model: str = "",
+    rerank_dtype: str = "",
 ) -> Embedder | None:
     """Resolve a configured backend name to an Embedder, or None for lexical-only.
 
     ``query_prefix`` / ``document_prefix`` apply to ``openai`` and
     ``sentence-transformers`` only; the ``nachos`` CLI has its own per-model prefixes.
+    ``rerank*`` apply to the ``nachos`` CLI only (``auto`` resolving to it included).
     """
     kind = (backend or "auto").strip().lower()
     if kind == "off":
         return None
     prefixes = (query_prefix, document_prefix)
+
+    def cli() -> CliEmbedder:
+        return CliEmbedder(
+            command,
+            model,
+            dtype=dtype,
+            rerank=rerank,
+            rerank_model=rerank_model,
+            rerank_dtype=rerank_dtype,
+        )
+
+    if kind == "nachos" or (kind == "auto" and shutil.which(command)):
+        return cli()
     if kind == "auto":
-        return _auto_embedder(model, base_url, api_key_env, command, dtype, prefixes)
-    if kind == "nachos":
-        return CliEmbedder(command, model, dtype=dtype)
+        return _auto_embedder(model, base_url, api_key_env, prefixes)
     if kind == "openai":
         return OpenAICompatEmbedder(
             base_url, model, api_key_env, query_prefix=prefixes[0], document_prefix=prefixes[1]
@@ -439,16 +529,9 @@ def make_embedder(
 
 
 def _auto_embedder(
-    model: str,
-    base_url: str,
-    api_key_env: str,
-    command: str,
-    dtype: str = "",
-    prefixes: tuple[str, str] = ("", ""),
+    model: str, base_url: str, api_key_env: str, prefixes: tuple[str, str]
 ) -> Embedder | None:
-    """First available backend: nachos CLI, sentence-transformers, then OpenAI-compatible."""
-    if shutil.which(command):
-        return CliEmbedder(command, model, dtype=dtype)
+    """``auto`` without the nachos CLI: sentence-transformers, then OpenAI-compatible."""
     if importlib.util.find_spec("sentence_transformers") is not None:
         return SentenceTransformersEmbedder(model, *prefixes)
     if base_url and model:

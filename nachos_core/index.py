@@ -18,6 +18,7 @@ import hashlib
 import json
 import math
 import os
+import random
 import shutil
 import sqlite3
 import tempfile
@@ -29,6 +30,31 @@ from typing import Any
 
 _SQLITE_MAGIC = b"SQLite format 3\x00"
 _SNAPSHOT_ATTEMPTS = 4  # initial attempt + 3 retries
+
+
+_CALIBRATION_MIN_HEADS = 30  # fewer entries than this give a meaningless spread
+_CALIBRATION_DRIFT = 0.2  # re-sample once the head count moves this far from the last sample
+_CALIBRATION_PAIRS = 4000
+_PROFILE_PERCENTILES = (50, 75, 80, 85, 90, 95, 99, 99.5)
+
+
+def _pair_profile(vectors: list[list[float]]) -> dict[str, float]:
+    """Percentiles of cosine similarity over a fixed-seed sample of distinct vector pairs."""
+    rnd = random.Random(0)  # noqa: S311 - deterministic sampling, not security
+    n = len(vectors)
+    seen: set[tuple[int, int]] = set()
+    sims: list[float] = []
+    target = min(_CALIBRATION_PAIRS, n * (n - 1) // 2)
+    while len(sims) < target:
+        a, b = rnd.sample(range(n), 2)
+        pair = (a, b) if a < b else (b, a)
+        if pair in seen:
+            continue
+        seen.add(pair)
+        sims.append(dot(vectors[a], vectors[b]))
+    sims.sort()
+    last = len(sims) - 1
+    return {f"p{p:g}": sims[min(last, round(p / 100 * last))] for p in _PROFILE_PERCENTILES}
 
 
 def index_path_for(store_path: Path) -> Path:
@@ -210,6 +236,11 @@ class MemoryIndex:
                 prev_superseded_by TEXT
             );
             CREATE INDEX IF NOT EXISTS changes_key ON changes (key);
+            CREATE TABLE IF NOT EXISTS calibration (
+                model      TEXT PRIMARY KEY,
+                head_count INTEGER NOT NULL,
+                profile    TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS inbox (
                 id              INTEGER PRIMARY KEY AUTOINCREMENT,
                 created_ts      REAL NOT NULL,
@@ -372,18 +403,51 @@ class MemoryIndex:
         exclude: str | None = None,
         *,
         head_only: bool = False,
+        chunk_penalty: float = 0.0,
     ) -> list[tuple[str, float]]:
+        return [
+            (key, score)
+            for key, score, _chunk in self.search_chunks(
+                query_vec,
+                model,
+                top_k,
+                exclude,
+                head_only=head_only,
+                chunk_penalty=chunk_penalty,
+            )
+        ]
+
+    def search_chunks(
+        self,
+        query_vec: list[float],
+        model: str,
+        top_k: int = 10,
+        exclude: str | None = None,
+        *,
+        head_only: bool = False,
+        chunk_penalty: float = 0.0,
+    ) -> list[tuple[str, float, int]]:
+        """(key, score, best chunk_no) by descending score.
+
+        An entry scores its head vector, or its best body chunk minus ``chunk_penalty`` when
+        that is higher: body chunks are narrower evidence than the head, so a small penalty
+        keeps a chunk from outranking a head with an equal score.
+        """
         q = _normalize(query_vec)
+        heads, all_vecs = self._load_vectors(model)
+        scored: list[tuple[str, float, int]] = []
         if head_only:
-            heads = self._load_vectors(model)[0]
-            scored = [(key, dot(q, vec)) for key, vec in heads.items() if key != exclude]
+            scored = [(key, dot(q, vec), 0) for key, vec in heads.items() if key != exclude]
         else:
-            all_vecs = self._load_vectors(model)[1]
-            scored = [
-                (key, max(dot(q, vec) for vec in vecs))
-                for key, vecs in all_vecs.items()
-                if key != exclude and vecs
-            ]
+            for key, vecs in all_vecs.items():
+                if key == exclude or not vecs:
+                    continue
+                best, best_chunk = dot(q, vecs[0]), 0
+                for chunk_no in range(1, len(vecs)):
+                    sim = dot(q, vecs[chunk_no]) - chunk_penalty
+                    if sim > best:
+                        best, best_chunk = sim, chunk_no
+                scored.append((key, best, best_chunk))
         scored.sort(key=lambda item: -item[1])
         return scored[:top_k]
 
@@ -406,6 +470,40 @@ class MemoryIndex:
                 0
             ]
         )
+
+    # -- similarity calibration -------------------------------------------
+
+    def similarity_profile(self, model: str) -> dict[str, float] | None:
+        """Random-pair cosine percentiles of ``model``'s head vectors, or None if too few.
+
+        Cosine ranges differ a lot between embedding models (random pairs sit near 0.1 for
+        MiniLM and near 0.5 for bge), so absolute similarity cutoffs are not portable. This
+        measures the model's own spread from the stored vectors: a fixed-seed sample of head
+        pairs, keyed by ``model`` and cached in the index. The cache is recomputed when the
+        number of head vectors drifts more than ``_CALIBRATION_DRIFT`` from the sampled count.
+        """
+        heads = self._load_vectors(model)[0]
+        count = len(heads)
+        if count < _CALIBRATION_MIN_HEADS:
+            return None
+        row = None
+        with contextlib.suppress(sqlite3.OperationalError):  # read-only copy of an old index
+            row = self._conn.execute(
+                "SELECT head_count, profile FROM calibration WHERE model = ?", (model,)
+            ).fetchone()
+        if row is not None and abs(count - int(row[0])) <= _CALIBRATION_DRIFT * int(row[0]):
+            profile: dict[str, float] = json.loads(row[1])
+            return profile
+        profile = _pair_profile(list(heads.values()))
+        if not self._read_only:
+            self._conn.execute(
+                "INSERT INTO calibration (model, head_count, profile) VALUES (?, ?, ?) "
+                "ON CONFLICT(model) DO UPDATE SET head_count=excluded.head_count, "
+                "profile=excluded.profile",
+                (model, count, json.dumps(profile)),
+            )
+            self._conn.commit()
+        return profile
 
     # -- usage -------------------------------------------------------------
 

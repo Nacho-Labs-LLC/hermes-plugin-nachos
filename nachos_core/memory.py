@@ -49,6 +49,12 @@ from .embeddings import DOCUMENT, QUERY, Embedder
 from .index import MemoryIndex
 from .lexical import LexicalIndex
 from .quality import low_signal_reason
+from .ranking import (
+    DEFAULT_BLEND,
+    duplicate_threshold_for,
+    rerank_rows,
+    scope_ranked_hits,
+)
 from .store.base import Entry, EntryMeta, MemoryStore
 from .store.md_store import slugify
 from .validity import (
@@ -62,7 +68,6 @@ from .validity import (
     history_rows,
     normalize_supersedes,
     possible_updates_for,
-    redirect_hits,
     restore_from_change,
     scope_status,
     select_ranked,
@@ -90,6 +95,9 @@ PROFILE = "profile"
 SHARED = "shared"
 
 _RRF_K = 60
+# Body chunks score their cosine minus this, so a chunk must beat the head by a margin; 0.05 won
+# paraphrase hit@1 back without hurting long-body on bench/ (0.12 starts to; see docs/benchmark.md).
+CHUNK_PENALTY = 0.05
 # Hybrid recall only: a lexical hit must match at least this IDF-weighted share of the query's
 # terms to take part in fusion. Weak partial matches ("service", "internal") are noise next to
 # a semantic list, and RRF would otherwise let them displace or double-count real answers.
@@ -136,6 +144,11 @@ class MemoryService:
         embedder: Embedder | None = None,
         duplicate_threshold: float = 0.65,
         redact: Callable[[str], str] | None = None,
+        chunk_penalty: float = CHUNK_PENALTY,
+        similarity_floor: float | str | None = None,
+        calibrate_duplicates: bool = False,
+        rerank_candidates: int = 25,
+        rerank_mode: str = DEFAULT_BLEND,
     ):
         if PROFILE not in scopes:
             raise ValueError("a 'profile' scope is required")
@@ -143,6 +156,18 @@ class MemoryService:
         self.embedder = embedder
         self.duplicate_threshold = duplicate_threshold
         self.redact = redact or (lambda text: text)
+        #: Subtracted from body-chunk similarities so a chunk must beat the head by this much.
+        self.chunk_penalty = chunk_penalty
+        #: None = no floor; a float = absolute cosine; a profile key such as "p95" = that
+        #: percentile of the model's own random-pair cosine (see MemoryIndex.similarity_profile).
+        self.similarity_floor = similarity_floor
+        #: Raise ``duplicate_threshold`` to the model's random-pair ``_DUP_PERCENTILE`` when higher.
+        #: Off by default so an explicitly configured threshold is used exactly as given.
+        self.calibrate_duplicates = calibrate_duplicates
+        #: Fused results sent to the cross-encoder, when the embedder offers one.
+        self.rerank_candidates = rerank_candidates
+        self.rerank_mode = rerank_mode
+        self._rerank_error: str | None = None
         self.embedder_error: str | None = None
         self.session_id: str = ""
         self._seen_keys: dict[str, frozenset] = {}
@@ -370,7 +395,7 @@ class MemoryService:
         qvec = self._query_vector(targets, query)
         fused: dict[tuple[str, str], dict[str, Any]] = {}
         for s in targets:
-            for key, rank, how, similarity in self._ranked_hits(
+            for key, rank, how, similarity, chunk in self._ranked_hits(
                 s, query, qvec, limit, include_superseded=include_superseded
             ):
                 row = fused.setdefault((s.name, key), {"score": 0.0, "match": []})
@@ -378,9 +403,42 @@ class MemoryService:
                 row["match"].append(how)
                 if similarity is not None:
                     row["similarity"] = round(similarity, 3)
+                    row["chunk"] = chunk
 
-        ranked = self._select_ranked(fused, limit=limit, include_superseded=include_superseded)
+        reranking = self._reranking()
+        pool_limit = max(limit, self.rerank_candidates) if reranking else limit
+        ranked = self._select_ranked(fused, limit=pool_limit, include_superseded=include_superseded)
+        if reranking:
+            ranked = self._rerank(query, ranked, limit)
         return self._hydrate(ranked)
+
+    def _reranking(self) -> bool:
+        embedder = self._active_embedder()
+        return embedder is not None and embedder.supports_rerank and self._rerank_error is None
+
+    def _rerank(
+        self,
+        query: str,
+        ranked: list[tuple[tuple[str, str], dict[str, Any]]],
+        limit: int,
+    ) -> list[tuple[tuple[str, str], dict[str, Any]]]:
+        """Reorder the top fused candidates with the embedder's cross-encoder (best effort)."""
+        embedder = self._active_embedder()
+        if embedder is None:
+            return ranked[:limit]
+        out, error = rerank_rows(
+            embedder,
+            query,
+            ranked,
+            self.scopes,
+            limit=limit,
+            rerank_candidates=self.rerank_candidates,
+            rerank_mode=self.rerank_mode,
+        )
+        if error is not None:
+            self._rerank_error = error
+            logger.warning("Nachos reranking disabled for this session (%s).", self._rerank_error)
+        return out
 
     def _query_vector(self, targets: list[Scope], query: str) -> list[float] | None:
         """Embedding of ``query`` (after syncing the target indexes), or None if lexical-only."""
@@ -399,24 +457,26 @@ class MemoryService:
         limit: int,
         *,
         include_superseded: bool = False,
-    ) -> Iterator[tuple[str, int, str, float | None]]:
-        """(key, rank, how, similarity) hits for one scope, lexical then semantic."""
-        # With an embedder, lexical sits half a step below semantic so a
-        # lexical-only rank-0 hit does not tie a semantic-only rank-0 hit.
-        offset = 1 if qvec is not None else 0
-        min_coverage = _MIN_LEXICAL_COVERAGE if qvec is not None else 0.0
-        metas = None if include_superseded else self._scope_meta(s)
-        lex_hits = redirect_hits(
-            ((k, None) for k in self._lexical(s, query, min_coverage)), metas, limit=limit * 3
-        )
-        for rank, (key, _sim) in enumerate(lex_hits):
-            yield key, rank + offset, "lexical", None
+    ) -> Iterator[tuple[str, int, str, float | None, int]]:
+        """(key, rank, how, similarity, best chunk_no) hits for one scope, lexical then semantic."""
         embedder = self._active_embedder()
-        if qvec is not None and embedder is not None:
-            extra = 0 if metas is None else sum(1 for m in metas.values() if m.superseded_by)
-            raw_sem = s.index.search(qvec, embedder.model_id, top_k=limit * 3 + extra)
-            for rank, (key, sim) in enumerate(redirect_hits(raw_sem, metas, limit=limit * 3)):
-                yield key, rank, "semantic", sim
+        return scope_ranked_hits(
+            self._lexical_index(s),
+            s.index,
+            None if include_superseded else self._scope_meta(s),
+            query,
+            qvec,
+            embedder.model_id if embedder is not None else None,
+            limit=limit,
+            min_lexical_coverage=_MIN_LEXICAL_COVERAGE,
+            chunk_penalty=self.chunk_penalty,
+            similarity_floor=self.similarity_floor,
+        )
+
+    def _duplicate_threshold_for(self, s: Scope, model_id: str) -> float:
+        return duplicate_threshold_for(
+            s.index, model_id, self.duplicate_threshold, calibrate=self.calibrate_duplicates
+        )
 
     def _hydrate(
         self, ranked: list[tuple[tuple[str, str], dict[str, Any]]]
@@ -438,6 +498,8 @@ class MemoryService:
             }
             if "similarity" in row:
                 result["similarity"] = row["similarity"]
+            if "rerank" in row:
+                result["rerank"] = row["rerank"]
             meta = self._scope_meta(s).get(key)
             if meta is not None and meta.superseded_by:
                 result["superseded_by"] = meta.superseded_by
@@ -459,8 +521,16 @@ class MemoryService:
     ) -> list[dict[str, Any]]:
         """Existing entries that look like the same memory, most similar first."""
         embedder = self._active_embedder()
+        model_id = embedder.model_id if embedder is not None else None
         scope_map = {
-            s.name: (self._lexical_index(s), s.index, self._scope_meta(s))
+            s.name: (
+                self._lexical_index(s),
+                s.index,
+                self._scope_meta(s),
+                self._duplicate_threshold_for(s, model_id)
+                if model_id is not None
+                else self.duplicate_threshold,
+            )
             for s in self.scopes.values()
         }
         return find_similar_entries(
@@ -469,8 +539,7 @@ class MemoryService:
             summary,
             exclude=exclude,
             vector=vector,
-            model_id=embedder.model_id if embedder is not None else None,
-            duplicate_threshold=self.duplicate_threshold,
+            model_id=model_id,
             lexical_threshold=_LEXICAL_DUP_THRESHOLD,
             limit=limit,
         )
@@ -485,11 +554,16 @@ class MemoryService:
             for s in self.scopes.values():
                 self.sync_index(s)
         embedder = self._active_embedder()
+        model_id = embedder.model_id if embedder is not None else None
+        threshold = self.duplicate_threshold
+        if model_id is not None:
+            for s in self.scopes.values():
+                threshold = max(threshold, self._duplicate_threshold_for(s, model_id))
         scope_map = {s.name: (s.store, s.index, self._scope_meta(s)) for s in self.scopes.values()}
         return find_duplicate_pairs(
             scope_map,
-            model_id=embedder.model_id if embedder is not None else None,
-            duplicate_threshold=self.duplicate_threshold,
+            model_id=model_id,
+            duplicate_threshold=threshold,
             lexical_threshold=_LEXICAL_DUP_THRESHOLD,
         )
 
