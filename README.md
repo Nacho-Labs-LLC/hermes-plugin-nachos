@@ -106,7 +106,7 @@ Any OpenAI-compatible `/embeddings` endpoint works (Ollama above); for a hosted 
 
 ### Choosing a model
 
-Name the model you want; there are no presets. Blank `embedding_model` means the backend default (MiniLM through `nachos-embeddings`). For example, the best measured model:
+Name the model you want explicitly. Blank `embedding_model` means the backend default (MiniLM through `nachos-embeddings`). For example, the best measured model:
 
 ```json
 { "embeddings": "nachos",
@@ -162,9 +162,10 @@ These are chat models, not embedding models, and use Hermes' own `auxiliary` set
 
 | Name | Purpose |
 | --- | --- |
-| `nachos_memory_recall` | Fetch an entry by `key` (returns a `superseded_by` note if superseded), or search with `query` and/or up to 4 rephrasings in `queries` (batched in one embedding call and fused with RRF; `limit`, optional `include_superseded`). With `abstention: hint` (default) or `on`, weak searches flag `no_confident_match: true` while keeping low-confidence candidates visible. |
-| `nachos_memory_put` | Add or update an entry (`title`, `body`, optional `summary`, `category`, `supersedes`); rejects low-signal text, lists `possible_duplicates` and `suggested_supersedes`. |
+| `nachos_memory_recall` | Fetch an entry by `key` (returns `superseded_by`, `links`/`backlinks`/`broken_links`, and `source` provenance with `evidence` quote), or search with `query`, `queries` (up to 4 rephrasings batched in one embedding call and fused with RRF), and/or `entity` (`limit`, `include_superseded`); results include `related` links, `source`, and (with `abstention: hint`/`on`) `confident`/`no_confident_match`. |
+| `nachos_memory_put` | Add or update an entry (`title`, `body`, optional `summary`, `category`, `supersedes`); rejects low-signal text, lists `possible_duplicates`, `possible_updates` (alias `suggested_supersedes`), `suggested_links`, and `broken_links`. |
 | `nachos_memory_remove` | Delete an entry by `key` or `title`. |
+| `nachos_memory_reconcile` | Offline-backed reconciliation workflow (`review`, `status`, `approve`, `apply`); primary-agent only for anything that writes. |
 | `nachos_history_search` | Recover details compression removed from the current conversation, including subagent results (`query`, `scope`: `conversation` or `all`, `limit`, `before`/`after` context turns). Hits are ranked by IDF-weighted word match (no need for every word; one common word cannot match a multi-word query), newest first on ties, and come back with the neighbouring turns labelled by role and position. Every result has a stable `ref` (`<session>@<checkpoint>#<index>`); pass `ref` (or a memory entry's `source.ref`) to reopen that spot. For past sessions use Hermes' `session_search`. |
 
 With `shared_store: on`, recall, put and remove also take `scope: "shared"`; the default is the private profile scope. The provider follows session lineage across compression, `/resume` and `/branch`, so history search covers the whole logical conversation.
@@ -197,7 +198,7 @@ command with explicit profile selection:
 
 ```bash
 /path/to/venv/bin/nachos-maintain --profile-home /absolute/path/to/profile --json all
-# Independently schedulable: inbox | summaries | duplicates | unused | superseded | suspicious_supersedes | provenance | links | all
+# Independently schedulable: inbox | summaries | duplicates | unused | superseded | suspicious_supersedes | provenance | links | reconciliation | all
 /path/to/venv/bin/nachos-maintain --profile-home /absolute/path/to/profile --days 90 unused
 ```
 

@@ -779,3 +779,31 @@ off, memory-next before and this branch after (hit@1 / hit@5 / MRR@10):
 No backend regressed. The +0.007 hit@1 for gte-modernbert on the original set is not explained
 by any code change (ranking is untouched); I treat it as run-to-run variation in the embedding
 worker, not an improvement.
+
+## Consolidated Round 4 matrix (`naterchrdsn/memory-next` HEAD)
+
+Measured on the fully integrated `naterchrdsn/memory-next` branch (merging `models`, `history-provenance`, `abstain`, `links`, `reconcile`, and cross-feature wiring). `nachos-embeddings` CLI (`q8`, typed queries), supersedes applied, 16-CPU host.
+
+### Recall & abstention (original + held-out adversarial)
+
+| Backend | Rerank | Orig hit@1 / hit@5 / MRR@10 | Orig outdated | Orig p50 / p95 ms | Orig abstention P / R / F1 | Adv hit@1 / hit@5 / MRR@10 | Adv outdated | Adv p50 / p95 ms | Adv abstention P / R / F1 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| lexical (`off`) | off | 0.695 / 0.812 / 0.748 | 0.867 | 0.5 / 0.7 | 0.312 / 0.680 / 0.428 | 0.975 / 1.000 / 0.986 | 1.000 | 0.5 / 0.7 | 1.000 / 0.667 / 0.800 |
+| MiniLM-L6 q8 | off | 0.758 / 0.924 / 0.832 | 1.000 | 9.2 / 19.1 | 0.448 / 0.520 / 0.481 | 0.988 / 1.000 / 0.994 | 1.000 | 5.9 / 6.9 | 1.000 / 0.333 / 0.500 |
+| **gte-modernbert q8** | **off** | **0.773 / 0.949 / 0.850** | **1.000** | **22.0 / 43.5** | **0.367 / 0.580 / 0.450** | **1.000 / 1.000 / 1.000** | **1.000** | **16.9 / 32.8** | **1.000 / 0.467 / 0.636** |
+| gte-modernbert q8 | `borderline` | 0.773 / 0.949 / 0.850 | 1.000 | 32.4 / 200.1 (12.6% ver) | 0.326 / 0.560 / 0.412 | 1.000 / 1.000 / 1.000 | 1.000 | 15.8 / 24.9 (9.9% ver) | **1.000 / 0.567 / 0.723** |
+| gte-modernbert q8 | `nachos` (`sum:1`) | 0.791 / 0.949 / 0.858 | 0.967 | 441.4 / 730.8 | 0.330 / 0.580 / 0.420 | 0.951 / 1.000 / 0.975 | 0.875 | 204.9 / 274.2 | 1.000 / 0.533 / 0.696 |
+
+### Feature evaluations (post-merge)
+
+| Eval | Subset | lexical (`off`) | MiniLM-L6 q8 | gte-modernbert q8 |
+| --- | --- | --- | --- | --- |
+| `--suggest-eval` | Original (15 upd / 193 dist) | R@1 0.933 / R@3 1.000, fp@1 0.233 | R@1 1.000 / R@3 1.000, fp@1 0.394 | R@1 1.000 / R@3 1.000, fp@1 **0.539** (was 0.705) |
+| `--suggest-eval` | Adversarial (37 upd / 91 dist) | R@1 0.973 / R@3 0.973, fp@1 0.253 | R@1 1.000 / R@3 1.000, fp@1 0.275 | R@1 1.000 / R@3 1.000, fp@1 **0.352** (was 0.648) |
+| `--link-eval` | Adversarial (61 pairs) | P 0.660 / R 0.459 (35/18) | P 0.631 / R 0.557 (41/24) | P 0.646 / R 0.557 (42/23) |
+| `--link-eval` | Held-out (78 pairs, 15 hard neg) | P 0.480 / R 0.154 (0/15 hard FP) | P 0.550 / R 0.282 (0/15 hard FP) | P 0.538 / R 0.269 (2/15 hard FP) |
+| `--multi-query` | Original 3-query triples (`n = 29`, `--repeat 3`) | 1q 0.000 -> 3q 0.483 / 0.931 (0.7 ms) | 1q 0.241 -> 3q **0.966 / 1.000** (18.6 ms) | 1q 0.172 -> 3q **0.966 / 1.000** (55.1 ms) |
+| `--multi-query` | All multi-variant (`n = 151`, avg 2.19 q) | 1q 0.450 -> mq 0.623 / 0.940 (0.6 ms) | 1q 0.576 -> mq **0.947 / 1.000** (13.7 ms) | 1q 0.596 -> mq **0.974 / 1.000** (37.5 ms) |
+| `bench.history` | Base / `+200` checkpoints | before: m@1 0.318 / ctx@5 0.318 (FP 0.143) -> **IDF+ctx: m@1 0.864 / ctx@5 1.000 (FP 0.000, 0.66 ms)**; `+200`: m@1 0.727 / ctx@5 0.864 (FP 0.000, 17.7 ms) | n/a | n/a |
+
+Zero regression across every metric versus `a0001a875a` (`0.000` hit@1 / hit@5 / MRR@10 drift across lexical, MiniLM q8, and gte-modernbert q8 on both datasets).
