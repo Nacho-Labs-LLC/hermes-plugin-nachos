@@ -35,9 +35,9 @@ RECALL_SCHEMA = {
         "Pull full memory entry content on demand. Provide 'key' for an exact "
         "entry from the manifest (superseded entries still return their content "
         "plus a superseded_by pointer), or 'query' to search: matches by keywords "
-        "and, when embeddings are enabled, by meaning, excluding superseded entries "
-        "unless include_superseded is true. Use when the manifest shows a relevant "
-        "entry or you suspect one exists."
+        "and, when embeddings are enabled, by meaning, redirecting superseded hits "
+        "to their current successor unless include_superseded is true. Use when "
+        "the manifest shows a relevant entry or you suspect one exists."
     ),
     "parameters": {
         "type": "object",
@@ -61,9 +61,10 @@ PUT_SCHEMA = {
         "taken from the first line of body, so write body summary-first. category "
         "groups the entry in the manifest. Low-signal body/summary (empty, "
         "placeholder, too short) is rejected. Pass supersedes (key or list of keys) "
-        "when replacing an outdated entry so the old entry stays archived out of "
+        "up front when replacing an outdated entry so it stays archived out of "
         "default recall and the manifest. The response lists possible_duplicates "
-        "(and suggested_supersedes when it looks like an update). Secrets are "
+        "and possible_updates; if one of possible_updates is an older version of "
+        "the same fact, call put again with supersedes=[key]. Secrets are "
         "redacted before storage."
     ),
     "parameters": {

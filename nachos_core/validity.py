@@ -5,18 +5,21 @@ and long-superseded hygiene queries.
 from __future__ import annotations
 
 import time
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from typing import Any
 
 from .index import MemoryIndex, dot
 from .lexical import LexicalIndex, jaccard
-from .quality import core_title_tokens, looks_like_update
+from .quality import update_signal
 from .store.base import EntryMeta, MemoryStore
 
 # Recency tie-break tolerance on RRF scores: covers exact ties and symmetric (0,1)/(1,0)
 # hybrid rank swaps (1/60 + 1/62 - 2/61 ~= 8.8e-6) without overriding wider score gaps.
 RECENCY_TIE_EPS = 1e-5
 RECENCY_MIN_GAP_SECONDS = 60.0
+UPDATE_CANDIDATE_LIMIT = 3
+LEXICAL_UPDATE_THRESHOLD = 0.25
+SEMANTIC_UPDATE_THRESHOLD = 0.48
 
 
 def normalize_supersedes(supersedes: str | list[str] | None, self_key: str) -> list[str]:
@@ -101,72 +104,141 @@ def backfill_scope_timestamps(store: MemoryStore, index: MemoryIndex) -> int:
     return store.backfill_timestamps(to_fill)
 
 
-def _title_subject_candidates(
+def resolve_successor(key: str, metas: Mapping[str, EntryMeta]) -> str | None:
+    """Follow ``superseded_by`` chains to the active successor; None on cycle or dangling link."""
+    cur = key
+    seen = {cur}
+    while True:
+        meta = metas.get(cur)
+        if meta is None or not meta.superseded_by:
+            return cur
+        nxt = meta.superseded_by
+        if nxt in seen or nxt not in metas:
+            return None
+        seen.add(nxt)
+        cur = nxt
+
+
+def redirect_hits(
+    hits: Iterable[tuple[str, float | None]],
+    metas: Mapping[str, EntryMeta] | None,
+    *,
+    limit: int,
+) -> list[tuple[str, float | None]]:
+    """Substitute each superseded hit with its active successor (or pass through when ``metas`` is None)."""
+    out: list[tuple[str, float | None]] = []
+    if metas is None:
+        for item in hits:
+            out.append(item)
+            if len(out) >= limit:
+                break
+        return out
+    seen: set[str] = set()
+    for key, sim in hits:
+        resolved = resolve_successor(key, metas)
+        if resolved is None or resolved in seen:
+            continue
+        seen.add(resolved)
+        out.append((resolved, sim))
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _raw_update_candidates(
     lexical_index: LexicalIndex,
-    metas: Mapping[str, EntryMeta],
+    index: MemoryIndex,
+    *,
+    model_id: str | None,
+    vector: list[float] | None,
     title: str,
-    exclude_keys: set[str],
-) -> list[str]:
-    """Active keys in ``lexical_index`` whose core subject title matches ``title``."""
-    new_core = core_title_tokens(title)
-    if len(new_core) < 2:
-        return []
-    hits: set[str] = set()
-    for term in new_core:
-        bucket = lexical_index.label_postings.get(term)
-        if bucket:
-            hits.update(bucket)
-    matched: list[str] = []
-    for key in sorted(hits):
-        if key in exclude_keys:
-            continue
-        meta = metas.get(key)
-        if meta is not None and meta.superseded_by:
-            continue
-        doc = lexical_index.docs.get(key)
-        if doc is None:
-            continue
-        old_core = core_title_tokens(doc.title)
-        if old_core and old_core == new_core:
-            matched.append(key)
-    return matched
+    summary: str,
+    body: str,
+    excluded: set[str],
+    semantic_threshold: float,
+    lexical_threshold: float,
+    pool_limit: int,
+) -> list[tuple[str, float, tuple[str, ...]]]:
+    if vector is not None and model_id is not None:
+        raw = index.search(vector, model_id, top_k=pool_limit + len(excluded), head_only=True)
+        out: list[tuple[str, float, tuple[str, ...]]] = [
+            (k, sim, ()) for k, sim in raw if k not in excluded and sim >= semantic_threshold
+        ]
+        return out[:pool_limit]
+    return lexical_index.similar_documents(
+        title=title,
+        summary=summary,
+        body=body,
+        threshold=lexical_threshold,
+        exclude=excluded,
+        limit=pool_limit,
+    )
 
 
-def suggest_supersedes_for(
+def possible_updates_for(
     store: MemoryStore,
     lexical_index: LexicalIndex,
+    index: MemoryIndex,
     metas: Mapping[str, EntryMeta],
-    scope_name: str,
     *,
+    model_id: str | None,
+    vector: list[float] | None,
     self_key: str,
     title: str,
-    new_text: str,
-    similar: list[dict[str, Any]],
+    summary: str,
+    body: str,
     already_superseded: set[str],
-) -> list[str]:
-    """Return active keys in ``scope_name`` that read like outdated versions of ``new_text``."""
-    excluded = already_superseded | {self_key}
-    candidate_keys = [
-        dup["key"] for dup in similar if dup["scope"] == scope_name and dup["key"] not in excluded
-    ]
-    for key in _title_subject_candidates(lexical_index, metas, title, excluded):
-        if key not in candidate_keys:
-            candidate_keys.append(key)
-    if not candidate_keys:
+    semantic_threshold: float = SEMANTIC_UPDATE_THRESHOLD,
+    lexical_threshold: float = LEXICAL_UPDATE_THRESHOLD,
+    limit: int = UPDATE_CANDIDATE_LIMIT,
+) -> list[dict[str, Any]]:
+    """Return up to ``limit`` active entries ranked as possible older versions of this put."""
+    excluded = already_superseded | {self_key} | {k for k, m in metas.items() if m.superseded_by}
+    raw = _raw_update_candidates(
+        lexical_index,
+        index,
+        model_id=model_id,
+        vector=vector,
+        title=title,
+        summary=summary,
+        body=body,
+        excluded=excluded,
+        semantic_threshold=semantic_threshold,
+        lexical_threshold=lexical_threshold,
+        pool_limit=max(limit * 4, 12),
+    )
+    if not raw:
         return []
-    suggested: list[str] = []
-    for key in candidate_keys:
-        meta = metas.get(key)
-        if meta is not None and meta.superseded_by:
-            continue
+    new_text = f"{title}\n{summary}\n{body}"
+    scored: list[tuple[float, float, str, dict[str, Any]]] = []
+    for key, sim, shared_terms in raw:
         doc = lexical_index.docs.get(key)
-        body = store.get(key)
-        if doc is None or body is None:
+        old_body = store.get(key)
+        if doc is None or old_body is None:
             continue
-        old_text = f"{doc.title}\n{body}"
-        if looks_like_update(old_text, new_text, old_title=doc.title, new_title=title):
-            suggested.append(key)
-    return suggested
+        boost, reason = update_signal(
+            f"{doc.title}\n{old_body}",
+            new_text,
+            old_title=doc.title,
+            new_title=title,
+            shared_terms=shared_terms,
+        )
+        scored.append(
+            (
+                sim + boost,
+                sim,
+                key,
+                {
+                    "key": key,
+                    "title": doc.title,
+                    "summary": doc.summary,
+                    "similarity": round(sim, 3),
+                    "reason": reason,
+                },
+            )
+        )
+    scored.sort(key=lambda item: (-item[0], -item[1], item[2]))
+    return [row for *_sort_key, row in scored[:limit]]
 
 
 def superseded_entries(
@@ -210,17 +282,25 @@ def select_ranked(
     eps: float = RECENCY_TIE_EPS,
     min_gap_seconds: float = RECENCY_MIN_GAP_SECONDS,
 ) -> list[tuple[tuple[str, str], dict[str, Any]]]:
-    """Filter superseded entries (unless requested) and apply recency tie-breaking."""
+    """Redirect superseded entries to their active successor (unless requested) and tie-break."""
     if not fused:
         return []
-    items = [
-        item
-        for item in fused.items()
-        if include_superseded
-        or not (
-            (meta := metas_by_scope[item[0][0]].get(item[0][1])) is not None and meta.superseded_by
-        )
-    ]
+    if include_superseded:
+        items = list(fused.items())
+    else:
+        resolved: dict[tuple[str, str], dict[str, Any]] = {}
+        for (scope_name, key), row in fused.items():
+            target = resolve_successor(key, metas_by_scope[scope_name])
+            if target is None:
+                continue
+            dest = (scope_name, target)
+            prev = resolved.get(dest)
+            if prev is None or (row["score"], len(row["match"])) > (
+                prev["score"],
+                len(prev["match"]),
+            ):
+                resolved[dest] = row
+        items = list(resolved.items())
     items.sort(key=lambda item: (-item[1]["score"], -len(item[1]["match"])))
     items = apply_recency_tiebreak(items, metas_by_scope, eps=eps, min_gap_seconds=min_gap_seconds)
     return items[:limit]
@@ -290,9 +370,9 @@ def format_put_result(
     is_update: bool,
     applied_supersedes: list[str],
     similar: list[dict[str, Any]],
-    suggested_supersedes: list[str],
+    possible_updates: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    """Assemble the ``MemoryService.put`` response dict with duplicate/supersede hints."""
+    """Assemble the ``MemoryService.put`` response dict with duplicate/update hints."""
     result: dict[str, Any] = {
         "stored": key,
         "title": title,
@@ -304,12 +384,13 @@ def format_put_result(
         result["superseded"] = applied_supersedes
     if similar:
         result["possible_duplicates"] = similar
-    if suggested_supersedes:
-        result["suggested_supersedes"] = suggested_supersedes
+    if possible_updates:
+        result["possible_updates"] = possible_updates
+        result["suggested_supersedes"] = [u["key"] for u in possible_updates]
         result["note"] = (
-            "Similar entries already exist and this looks like an update. If it replaces "
-            f"them, re-put with supersedes={suggested_supersedes!r} "
-            "(or merge and remove the old entry)."
+            "Similar existing entries are listed in possible_updates. If one is an older "
+            "version of the same fact, call put again with supersedes=[key]"
+            + (" (or merge and remove the other if it is a duplicate)." if similar else ".")
         )
     elif similar:
         result["note"] = (
@@ -390,6 +471,56 @@ def history_rows(
             )
     rows.sort(key=lambda r: r["ts"], reverse=True)
     return rows[:limit]
+
+
+def find_similar_entries(
+    scopes: Mapping[str, tuple[LexicalIndex, MemoryIndex, Mapping[str, EntryMeta]]],
+    title: str,
+    summary: str,
+    *,
+    exclude: tuple[str, str] | None,
+    vector: list[float] | None,
+    model_id: str | None,
+    duplicate_threshold: float,
+    lexical_threshold: float,
+    limit: int,
+) -> list[dict[str, Any]]:
+    """Existing active entries that look like the same memory, most similar first."""
+    found: dict[tuple[str, str], dict[str, Any]] = {}
+    label = f"{title} {summary}"
+    for scope_name, (lex, index, metas) in scopes.items():
+        excluded_key = exclude[1] if exclude and exclude[0] == scope_name else None
+        for key, doc_title, score in lex.similar_labels(
+            label, threshold=lexical_threshold, exclude=excluded_key
+        ):
+            if metas.get(key) and metas[key].superseded_by:
+                continue
+            found[(scope_name, key)] = {
+                "key": key,
+                "scope": scope_name,
+                "title": doc_title,
+                "similarity": round(score, 3),
+                "match": "lexical",
+            }
+        if vector is not None and model_id is not None:
+            for key, sim in index.search(vector, model_id, top_k=limit + 1, head_only=True):
+                if (
+                    (scope_name, key) == exclude
+                    or sim < duplicate_threshold
+                    or (metas.get(key) and metas[key].superseded_by)
+                ):
+                    continue
+                prev = found.get((scope_name, key))
+                if prev is None or sim > prev["similarity"]:
+                    doc = lex.docs.get(key)
+                    found[(scope_name, key)] = {
+                        "key": key,
+                        "scope": scope_name,
+                        "title": doc.title if doc is not None else key,
+                        "similarity": round(sim, 3),
+                        "match": "semantic",
+                    }
+    return sorted(found.values(), key=lambda d: -d["similarity"])[:limit]
 
 
 def find_duplicate_pairs(

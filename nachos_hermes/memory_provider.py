@@ -257,8 +257,10 @@ class NachosMemoryProvider(MemoryProvider):
             "style, personal details) go to the built-in user profile: the `memory` "
             'tool with `target: "user"`. All other durable knowledge goes to '
             "`nachos_memory_put` (pass `supersedes` with the old key when replacing "
-            "an outdated fact); recall with `nachos_memory_recall`, remove with "
-            "`nachos_memory_remove`. Never use the built-in `memory` tool with "
+            "an outdated fact; if the response lists a `possible_updates` entry "
+            "that is an older version of the same fact, call `nachos_memory_put` "
+            "again with `supersedes=[key]`); recall with `nachos_memory_recall`, "
+            "remove with `nachos_memory_remove`. Never use the built-in `memory` tool with "
             '`target: "memory"`: it is disabled and not shown to you. Persona and '
             "identity belong to SOUL.md and are not memory. Earlier conversation that was "
             "compressed out of THIS conversation can be recovered with "

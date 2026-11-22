@@ -16,11 +16,12 @@ import pytest
 
 from nachos_core.index import MemoryIndex, index_path_for
 from nachos_core.memory import PROFILE, SHARED, MemoryService, Scope
-from nachos_core.quality import looks_like_update
+from nachos_core.quality import looks_like_update, update_signal
 from nachos_core.store import MDStore, SqliteStore, get_store
 from nachos_core.toc import render_toc
 from nachos_hermes import commands
 from nachos_hermes.memory_provider import NachosMemoryProvider
+from nachos_hermes.schemas import PUT_SCHEMA
 
 
 def _make_service(tmp_path: Path, *, kind: str = "sqlite", shared: bool = False) -> MemoryService:
@@ -284,13 +285,74 @@ class TestSupersedesAndRevert:
             assert "Deploy tooling (legacy)" not in toc
             assert "1 superseded entry hidden." in toc
 
-            # Default search excludes superseded entry; include_superseded=True includes it.
+            # Default search redirects superseded hits to their current successor;
+            # include_superseded=True returns the superseded entry directly.
             default_keys = [r["key"] for r in svc.search("spinnaker deploy pipelines")]
             assert "deploy-tooling-legacy" not in default_keys
+            assert default_keys[0] == "deploy-tooling-current"
+            assert default_keys.count("deploy-tooling-current") == 1
             all_hits = svc.search("spinnaker deploy pipelines", include_superseded=True)
             by_key = {r["key"]: r for r in all_hits}
             assert "deploy-tooling-legacy" in by_key
             assert by_key["deploy-tooling-legacy"]["superseded_by"] == "deploy-tooling-current"
+        finally:
+            svc.close()
+
+    def test_search_redirect_follows_chains_avoids_cycles_and_deduplicates(
+        self, tmp_path: Path
+    ) -> None:
+        svc = _make_service(tmp_path)
+        try:
+            # Chain A -> B -> C where C no longer mentions A's old wording.
+            svc.put(
+                title="Payment gateway v1",
+                summary="Billing runs through OldPay processor",
+                body="All card charges route through OldPay merchant accounts.",
+            )
+            svc.put(
+                title="Payment gateway v2",
+                summary="Billing migrated to MidPay gateway",
+                body="Card billing switched to MidPay API endpoints.",
+                supersedes="payment-gateway-v1",
+            )
+            svc.put(
+                title="Billing processor",
+                summary="Payments settle via Adyen platform",
+                body="All merchant settlements now run on Adyen.",
+                supersedes="payment-gateway-v2",
+            )
+
+            # Query using only v1's old wording redirects across the chain to the current entry.
+            old_word_hits = svc.search("OldPay merchant")
+            assert [r["key"] for r in old_word_hits] == ["billing-processor"]
+
+            # Query matching all three entries returns the active successor exactly once.
+            broad_hits = svc.search("OldPay MidPay Adyen")
+            assert [r["key"] for r in broad_hits] == ["billing-processor"]
+
+            # include_superseded=True skips redirect and returns archived entries directly.
+            raw_hits = [r["key"] for r in svc.search("OldPay merchant", include_superseded=True)]
+            assert "payment-gateway-v1" in raw_hits
+
+            # Cycle (X -> Y -> X) terminates cleanly and drops both from default search.
+            svc.put(title="Cycle alpha", body="Zirconium cycle alpha entry text.")
+            svc.put(
+                title="Cycle beta",
+                body="Zirconium cycle beta entry text.",
+                supersedes="cycle-alpha",
+            )
+            svc.profile.store.set_superseded_by("cycle-beta", "cycle-alpha")
+            assert svc.search("zirconium cycle") == []
+
+            # Dangling superseded_by (pointing to a removed key) drops cleanly without error.
+            svc.put(title="Orphan old", body="Yttrium orphan old entry text.")
+            svc.put(
+                title="Orphan next",
+                body="Yttrium orphan next entry text.",
+                supersedes="orphan-old",
+            )
+            svc.remove("orphan-next")
+            assert svc.search("yttrium orphan") == []
         finally:
             svc.close()
 
@@ -373,67 +435,133 @@ class TestSuggestionHeuristic:
     def test_negative_pure_duplicate_cases(self, old_text: str, new_text: str) -> None:
         assert looks_like_update(old_text, new_text) is False
 
-    @pytest.mark.parametrize(
-        ("old_title", "old_body", "new_title", "new_body"),
-        [
-            (
-                "Database connection details: staging",
-                "Staging Postgres runs on port 5432 at stage-pg-01.",
-                "Database connection details: production",
-                "Production Postgres runs on port 5433 at prod-pg-01.",
-            ),
-            (
-                "On-call contacts: EU rotation",
-                "EU on-call rotation starts at 08:00 UTC.",
-                "On-call contacts: US rotation",
-                "US on-call rotation starts at 14:00 UTC.",
-            ),
-            (
-                "Wiki migration notes",
-                "Notes covering 2024 wiki migration steps.",
-                "Annual penetration test preparation",
-                "Preparation checklist updated for 2026 pen test.",
-            ),
-        ],
-    )
-    def test_negative_distinct_siblings_and_unrelated_titles(
-        self, old_title: str, old_body: str, new_title: str, new_body: str
-    ) -> None:
-        assert (
-            looks_like_update(old_body, new_body, old_title=old_title, new_title=new_title) is False
+    def test_update_signal_reasons_and_boost_without_title_gate(self) -> None:
+        # Changed numeric value gives explicit diff reason and positive boost.
+        boost, reason = update_signal(
+            "Postgres runs on port 5432 in production",
+            "Primary database server listens on port 6432 in production",
+            old_title="Postgres primary host",
+            new_title="Primary database server",
         )
+        assert boost > 0
+        assert reason == "changed: 5432 -> 6432"
 
-    def test_put_suggests_supersedes_without_auto_applying(self, tmp_path: Path) -> None:
+        # Negation cue gives explicit cue reason even with a completely different title.
+        boost2, reason2 = update_signal(
+            "Errors are tracked in Sentry",
+            "We no longer use Sentry for error reporting",
+            old_title="Error tracker",
+            new_title="Observability stack change",
+        )
+        assert boost2 > 0
+        assert reason2 == "new text says no longer"
+
+        # No cue or fact diff still returns zero boost and a neutral reason (never a veto).
+        boost3, reason3 = update_signal(
+            "Postgres runs on port 5432 in production",
+            "Production Postgres listens on port 5432",
+            shared_terms=("postgres", "production"),
+        )
+        assert boost3 == 0.0
+        assert reason3 == "shared terms: postgres, production"
+
+    def test_put_returns_possible_updates_and_alias_without_auto_applying(
+        self, tmp_path: Path
+    ) -> None:
         svc = _make_service(tmp_path)
         try:
             svc.put(
-                title="Log retention policy",
-                summary="Application logs are kept for 7 days in storage",
-                body="Application logs are kept for 7 days in cold storage.",
+                title="Postgres primary host",
+                summary="Primary Postgres database runs on port 5432 at db-01.internal",
+                body="Production Postgres database listens on port 5432 at db-01.internal.",
             )
+            # Retitled update still surfaces the old entry in possible_updates (no title gate).
             res = svc.put(
-                title="Log retention policy update",
-                summary="Application logs are kept for 30 days in storage",
-                body="Application logs are now kept for 30 days in cold storage.",
+                title="Primary database server",
+                summary="Production Postgres database listens on port 6432 at db-01.internal",
+                body="Production Postgres database now listens on port 6432 at db-01.internal.",
             )
-            assert res["suggested_supersedes"] == ["log-retention-policy"]
-            assert "supersedes=" in res["note"]
+            updates = res["possible_updates"]
+            assert len(updates) >= 1
+            top = updates[0]
+            assert top["key"] == "postgres-primary-host"
+            assert top["title"] == "Postgres primary host"
+            assert "5432" in top["summary"]
+            assert isinstance(top["similarity"], float)
+            assert top["reason"] == "changed: 5432 -> 6432"
+            # One-release backward-compatibility alias stays populated.
+            assert res["suggested_supersedes"] == [u["key"] for u in updates]
+            assert "possible_updates" in res["note"]
+            assert "supersedes=[key]" in res["note"]
             # Must NOT auto-apply supersedes.
-            assert svc.profile.store.get_meta("log-retention-policy").superseded_by is None
+            assert svc.profile.store.get_meta("postgres-primary-host").superseded_by is None
 
-            # Pure rephrasing with same number does NOT suggest supersedes.
+            # Agent follows the contract: re-put with supersedes=[key] archives the old entry.
+            res_apply = svc.put(
+                title="Primary database server",
+                summary="Production Postgres database listens on port 6432 at db-01.internal",
+                body="Production Postgres database now listens on port 6432 at db-01.internal.",
+                supersedes=[top["key"]],
+            )
+            assert res_apply["superseded"] == ["postgres-primary-host"]
+            assert svc.profile.store.get_meta("postgres-primary-host").superseded_by == (
+                "primary-database-server"
+            )
+            assert "possible_updates" not in res_apply
+        finally:
+            svc.close()
+
+    def test_put_possible_updates_uses_head_vectors_when_embedder_active(
+        self, tmp_path: Path
+    ) -> None:
+        class _StubEmbedder:
+            model_id = "stub-embed"
+            dimension = 2
+
+            def warm_up(self) -> None:
+                pass
+
+            def embed(self, texts: list[str], _input_type: str = "document") -> list[list[float]]:
+                out: list[list[float]] = []
+                for text in texts:
+                    low = text.lower()
+                    if any(w in low for w in ("billing", "stripe", "adyen", "payment")):
+                        out.append([1.0, 0.0])
+                    else:
+                        out.append([0.0, 1.0])
+                return out
+
+            def close(self) -> None:
+                pass
+
+        store = get_store("sqlite", tmp_path / "memory.db")
+        index = MemoryIndex(tmp_path / "idx.db")
+        svc = MemoryService(
+            OrderedDict([(PROFILE, Scope(PROFILE, store, index))]),
+            embedder=_StubEmbedder(),  # type: ignore[arg-type]
+        )
+        try:
             svc.put(
-                title="Postgres database port",
-                summary="Production Postgres runs on port 5432",
-                body="Production Postgres database listens on port 5432.",
+                title="Stripe gateway",
+                summary="Card charges use Stripe accounts",
+                body="Card charges go through Stripe.",
             )
-            res2 = svc.put(
-                title="Postgres port config",
-                summary="Production Postgres runs on port 5432",
-                body="Our production Postgres listens on port 5432.",
+            svc.put(
+                title="Office Wi-Fi",
+                summary="Guest wireless network credentials",
+                body="Guest wireless network rotates monthly.",
             )
-            assert res2["possible_duplicates"]
-            assert "suggested_supersedes" not in res2
+            # Zero shared lexical words, completely retitled, no update cue:
+            # head vectors still surface the old billing entry in possible_updates!
+            res = svc.put(
+                title="Adyen settlement",
+                summary="Merchant payment settlement uses Adyen",
+                body="Merchant payment settlement runs on Adyen.",
+            )
+            updates = res["possible_updates"]
+            assert [u["key"] for u in updates] == ["stripe-gateway"]
+            assert updates[0]["similarity"] == pytest.approx(1.0)
+            assert updates[0]["reason"] == "similar topic"
         finally:
             svc.close()
 
@@ -530,6 +658,9 @@ class TestSurfacesAndProvider:
         try:
             prompt = provider.system_prompt_block()
             assert "supersedes" in prompt
+            assert "possible_updates" in prompt
+            assert "possible_updates" in PUT_SCHEMA["description"]
+            assert "supersedes=[key]" in PUT_SCHEMA["description"]
 
             put1 = json.loads(
                 provider.handle_tool_call(

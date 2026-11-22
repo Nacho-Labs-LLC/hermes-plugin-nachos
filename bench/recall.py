@@ -418,33 +418,35 @@ def format_report(report: dict[str, Any]) -> str:
 def _case_table(by_case: dict[str, dict[str, int]]) -> str:
     rows = []
     for case, c in sorted(by_case.items()):
-        tp, fp, fn = c["tp"], c["fp"], c["fn"]
-        prec = f"{tp / (tp + fp):.2f}" if tp + fp else "-"
-        rec = f"{tp / (tp + fn):.2f}" if tp + fn else "-"
-        rows.append([case, str(c["n"]), str(tp), str(fp), str(fn), prec, rec])
-    return _table(["case", "n", "TP", "FP", "FN", "precision", "recall"], rows)
+        upd, dist = c["updates"], c["distinct"]
+        r1 = f"{c['hit@1'] / upd:.3f}" if upd else "-"
+        r3 = f"{c['hit@3'] / upd:.3f}" if upd else "-"
+        fp1 = f"{c['fp@1'] / dist:.3f}" if dist else "-"
+        rows.append([case, str(c["n"]), r1, r3, fp1])
+    return _table(["case", "n", "recall@1", "recall@3", "fp@1"], rows)
 
 
 def _score_suggestions(
     svc: MemoryService,
     memories: list[dict[str, Any]],
     gt: dict[str, set[str]],
-    tune_keys: set[str],
     near_dup_keys: set[str],
 ) -> dict[str, Any]:
-    counts = {
-        "tp": 0,
-        "fp": 0,
-        "fn": 0,
-        "tp_tune": 0,
-        "fn_tune": 0,
-        "tp_hold": 0,
-        "fn_hold": 0,
-        "fp_near_dup": 0,
-        "fp_other": 0,
-    }
+    counts = dict.fromkeys(
+        (
+            "updates",
+            "hit1",
+            "hit3",
+            "distinct",
+            "distinct_fp1",
+            "near_dup",
+            "near_dup_fp1",
+            "other_distinct",
+            "other_distinct_fp1",
+        ),
+        0,
+    )
     misses: list[dict[str, Any]] = []
-    false_positives: list[dict[str, Any]] = []
     by_case: dict[str, dict[str, int]] = {}
     for mem in memories:
         key = slugify(mem["title"])
@@ -455,62 +457,58 @@ def _score_suggestions(
             body=mem["body"],
             supersedes=None,
         )
-        sug = set(res.get("suggested_supersedes") or [])
+        cands = [u["key"] for u in (res.get("possible_updates") or [])]
         expected = gt.get(key, set())
-        split = "tune" if key in tune_keys else "hold"
-        case = None
-        if mem.get("case"):
-            case = by_case.setdefault(mem["case"], dict.fromkeys(("n", "tp", "fp", "fn"), 0))
-            case["n"] += 1
-            case["tp"] += len(sug & expected)
-            case["fp"] += len(sug - expected)
-            case["fn"] += len(expected - sug)
-        for s_key in sorted(sug):
-            if s_key in expected:
-                counts["tp"] += 1
-                counts[f"tp_{split}"] += 1
-            else:
-                counts["fp"] += 1
-                bucket = (
-                    "fp_near_dup"
-                    if (key in near_dup_keys or s_key in near_dup_keys)
-                    else "fp_other"
-                )
-                counts[bucket] += 1
-                false_positives.append({"key": key, "suggested": s_key})
-        for e_key in sorted(expected - sug):
-            counts["fn"] += 1
-            counts[f"fn_{split}"] += 1
-            misses.append(
-                {"key": key, "expected": e_key, "split": "held-out" if split == "hold" else "tune"}
+        case = (
+            by_case.setdefault(
+                mem["case"],
+                dict.fromkeys(("n", "updates", "hit@1", "hit@3", "distinct", "fp@1"), 0),
             )
-    tp, fp, fn = counts["tp"], counts["fp"], counts["fn"]
-    precision = tp / (tp + fp) if (tp + fp) else 1.0
-    recall_all = tp / (tp + fn) if (tp + fn) else 1.0
-    recall_tune = (
-        counts["tp_tune"] / (counts["tp_tune"] + counts["fn_tune"])
-        if (counts["tp_tune"] + counts["fn_tune"])
-        else 1.0
-    )
-    recall_hold = (
-        counts["tp_hold"] / (counts["tp_hold"] + counts["fn_hold"])
-        if (counts["tp_hold"] + counts["fn_hold"])
-        else 1.0
-    )
-    f1 = 2 * precision * recall_all / (precision + recall_all) if (precision + recall_all) else 0.0
+            if mem.get("case")
+            else None
+        )
+        if case is not None:
+            case["n"] += 1
+        if expected:
+            counts["updates"] += 1
+            hit1 = int(bool(cands[:1] and cands[0] in expected))
+            hit3 = int(any(c in expected for c in cands[:3]))
+            counts["hit1"] += hit1
+            counts["hit3"] += hit3
+            if case is not None:
+                case["updates"] += 1
+                case["hit@1"] += hit1
+                case["hit@3"] += hit3
+            if not hit3:
+                misses.append({"key": key, "expected": sorted(expected), "top3": cands[:3]})
+        else:
+            counts["distinct"] += 1
+            fp1 = int(bool(cands))
+            counts["distinct_fp1"] += fp1
+            bucket = "near_dup" if key in near_dup_keys else "other_distinct"
+            counts[bucket] += 1
+            counts[f"{bucket}_fp1"] += fp1
+            if case is not None:
+                case["distinct"] += 1
+                case["fp@1"] += fp1
+    upd = counts["updates"]
+    dist = counts["distinct"]
+    non_nd = counts["other_distinct"]
     return {
-        "tp": tp,
-        "fp": fp,
-        "fp_near_dup": counts["fp_near_dup"],
-        "fp_other": counts["fp_other"],
-        "fn": fn,
-        "precision": round(precision, 4),
-        "recall": round(recall_all, 4),
-        "f1": round(f1, 4),
-        "tune_recall": round(recall_tune, 4),
-        "heldout_recall": round(recall_hold, 4),
+        "updates": upd,
+        "hit@1": counts["hit1"],
+        "hit@3": counts["hit3"],
+        "recall@1": round(counts["hit1"] / upd, 4) if upd else 1.0,
+        "recall@3": round(counts["hit3"] / upd, 4) if upd else 1.0,
+        "distinct_puts": dist,
+        "distinct_fp1_count": counts["distinct_fp1"],
+        "distinct_fp@1": round(counts["distinct_fp1"] / dist, 4) if dist else 0.0,
+        "near_dup_puts": counts["near_dup"],
+        "near_dup_fp@1": (
+            round(counts["near_dup_fp1"] / counts["near_dup"], 4) if counts["near_dup"] else 0.0
+        ),
+        "other_distinct_fp@1": (round(counts["other_distinct_fp1"] / non_nd, 4) if non_nd else 0.0),
         "misses": misses,
-        "false_positives": false_positives,
         **({"by_case": by_case} if by_case else {}),
     }
 
@@ -521,7 +519,7 @@ def eval_suggest_backend(
     memories: list[dict[str, Any]],
     queries: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    """Replay ``memories`` through put() without supersedes and evaluate suggested_supersedes."""
+    """Replay ``memories`` through put() without supersedes and evaluate possible_updates."""
     run: dict[str, Any] = {"backend": opts.label or backend, "status": "ok"}
     embedder, reason = resolve_embedder(backend, opts)
     if reason:
@@ -534,43 +532,32 @@ def eval_suggest_backend(
             embedder.close()
             return {**run, "status": "skipped", "reason": f"embedder unavailable: {error}"}
     gt = {slugify(m["title"]): set(m["supersedes"]) for m in memories if m.get("supersedes")}
-    gt_keys = list(gt)
-    split_idx = (len(gt_keys) * 2) // 3
-    tune_keys = set(gt_keys[:split_idx])
     near_dup_keys = {k for q in queries if q["category"] == "near-dup" for k in q["expect"]}
     with tempfile.TemporaryDirectory(prefix="nachos-suggest-") as tmp:
         svc = build_service(Path(tmp), embedder)
         try:
-            scored = _score_suggestions(svc, memories, gt, tune_keys, near_dup_keys)
+            scored = _score_suggestions(svc, memories, gt, near_dup_keys)
         finally:
             svc.close()
-    run.update(
-        {
-            "pairs": len(gt),
-            "tune_pairs": len(tune_keys),
-            "heldout_pairs": len(gt_keys) - len(tune_keys),
-            **scored,
-        }
-    )
+    run.update(scored)
     return run
 
 
 def format_suggest_report(report: dict[str, Any]) -> str:
     env = report["environment"]
     lines = [
-        f"Nachos suggested_supersedes eval: {env['memories']} memories "
+        f"Nachos possible_updates eval: {env['memories']} memories "
         f"(python {env['python']}, {env['machine']}, {env['cpus']} cpus)",
         "",
     ]
     head = [
         "backend",
-        "precision",
-        "recall",
-        "F1",
-        "tune rec",
-        "held-out rec",
-        "TP/FP/FN",
-        "FP (near-dup/other)",
+        "updates",
+        "recall@1",
+        "recall@3",
+        "distinct",
+        "distinct fp@1",
+        "non-dup fp@1",
     ]
     rows: list[list[str]] = []
     skipped: list[str] = []
@@ -581,13 +568,12 @@ def format_suggest_report(report: dict[str, Any]) -> str:
         rows.append(
             [
                 run["backend"],
-                f"{run['precision']:.3f}",
-                f"{run['recall']:.3f}",
-                f"{run['f1']:.3f}",
-                f"{run['tune_recall']:.3f}",
-                f"{run['heldout_recall']:.3f}",
-                f"{run['tp']}/{run['fp']}/{run['fn']}",
-                f"{run['fp_near_dup']}/{run['fp_other']}",
+                f"{run['hit@1']}/{run['hit@3']}/{run['updates']}",
+                f"{run['recall@1']:.3f}",
+                f"{run['recall@3']:.3f}",
+                str(run["distinct_puts"]),
+                f"{run['distinct_fp@1']:.3f}",
+                f"{run['other_distinct_fp@1']:.3f}",
             ]
         )
     lines += [_table(head, rows), *skipped, ""] if rows else [*skipped, ""]
@@ -623,7 +609,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     ap.add_argument(
         "--suggest-eval",
         action="store_true",
-        help="evaluate put() suggested_supersedes precision/recall on the fixture",
+        help="evaluate put() possible_updates recall@1/@3 and distinct fp@1 on the fixture",
     )
     ap.add_argument(
         "--data-dir",

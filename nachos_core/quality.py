@@ -94,21 +94,23 @@ def shares_vocabulary(summary: str, body: str, *, min_overlap: int = 1) -> bool:
     return len(summary_words & body_words) >= min_overlap
 
 
-_UPDATE_CUES_RE = re.compile(
-    r"\b(?:now|no longer|moved to|moved from|replaced|migrated to|migrated from|"
+_STRONG_UPDATE_CUES_RE = re.compile(
+    r"\b(?:no longer|moved to|moved from|replaced|migrated to|migrated from|"
     r"switched to|retired|deprecated|cancelled|canceled|end of life|supersedes|"
-    r"instead of|formerly|updated to|changed to)\b",
+    r"instead of|formerly|updated to|changed to|decommissioned|sunset|"
+    r"dropped|removed)\b",
     re.IGNORECASE,
 )
+_WEAK_UPDATE_CUE_RE = re.compile(r"\bnow\b", re.IGNORECASE)
 _FACT_NUMBER_RE = re.compile(r"\b(?:v?\d+(?:[.:-]\d+)+|\d{4}-\d{2}-\d{2}|\d+)\b")
 _FACT_PATH_RE = re.compile(r"(?:https?://[^\s,;)]+|(?:/[\w.-]+){2,}|[a-z0-9_.-]+/[a-z0-9_.-]+)")
+_FACT_HOST_RE = re.compile(r"\b[a-z][a-z0-9-]*(?:\.[a-z0-9-]+)+\b")
 _FACT_WORD_RE = re.compile(
     r"\b(?:single|double|triple|one|two|three|four|five|six|seven|eight|nine|ten|"
     r"hourly|daily|weekly|biweekly|fortnightly|monthly|quarterly|yearly|annually)\b",
     re.IGNORECASE,
 )
 _YEAR_RE = re.compile(r"\b(19\d\d|20\d\d)\b")
-_YEAR_OR_VER_RE = re.compile(r"^(?:19\d\d|20\d\d|v\d+(?:\.\d+)*)$")
 _OLD_TEMPORAL_WORDS = frozenset(
     {
         "old",
@@ -125,32 +127,6 @@ _OLD_TEMPORAL_WORDS = frozenset(
     }
 )
 _NEW_TEMPORAL_WORDS = frozenset({"new", "current", "latest", "update", "updated", "revised"})
-_TEMPORAL_TITLE_WORDS = _OLD_TEMPORAL_WORDS | _NEW_TEMPORAL_WORDS | frozenset({"setup"})
-
-
-def core_title_tokens(title: str) -> frozenset[str]:
-    """Stemmed subject tokens of ``title``, stripping years, versions and temporal tags."""
-    return frozenset(
-        t for t in tokens(title) if t not in _TEMPORAL_TITLE_WORDS and not _YEAR_OR_VER_RE.match(t)
-    )
-
-
-def _titles_compatible_for_supersede(old_title: str, new_title: str) -> bool:
-    """True when two titles refer to the same subject rather than distinct facets or topics."""
-    old_core = core_title_tokens(old_title)
-    new_core = core_title_tokens(new_title)
-    if not old_core or not new_core:
-        return True
-    shared = old_core & new_core
-    if not shared:
-        return False
-    if len(shared) < 2 and len(shared) / len(old_core | new_core) < 0.5:
-        return False
-    # Distinct non-temporal qualifiers on both sides (e.g. production vs staging, EU vs US)
-    # indicate parallel siblings rather than an update of the same entry.
-    old_only = old_core - new_core
-    new_only = new_core - old_core
-    return not (old_only and new_only)
 
 
 def _has_temporal_progression(old_title: str, new_title: str) -> bool:
@@ -165,13 +141,104 @@ def _has_temporal_progression(old_title: str, new_title: str) -> bool:
     return old_dated and new_current
 
 
-def _factual_tokens(text: str) -> set[str]:
+def _host_tokens(text: str) -> set[str]:
+    return {
+        m
+        for m in _FACT_HOST_RE.findall(text)
+        if any(ch.isalpha() for ch in m.rsplit(".", 1)[-1]) and not m.startswith("v")
+    }
+
+
+def _fact_groups(text: str) -> tuple[set[str], set[str], set[str], set[str]]:
     lowered = (text or "").lower()
-    return (
-        set(_FACT_NUMBER_RE.findall(lowered))
-        | set(_FACT_PATH_RE.findall(lowered))
-        | set(_FACT_WORD_RE.findall(lowered))
+    paths = set(_FACT_PATH_RE.findall(lowered))
+    hosts = {h for h in _host_tokens(lowered) if not any(h in p for p in paths)}
+    numbers = set(_FACT_NUMBER_RE.findall(lowered))
+    words = set(_FACT_WORD_RE.findall(lowered))
+    return paths, hosts, numbers, words
+
+
+def _number_shape(tok: str) -> str:
+    if ":" in tok:
+        return "time"
+    if "-" in tok:
+        return "date"
+    if "." in tok:
+        return "version"
+    return "year" if _YEAR_RE.fullmatch(tok) else "int"
+
+
+def _pick_changed_pair(removed: list[str], added: list[str], *, by_shape: bool) -> tuple[str, str]:
+    if by_shape:
+        for old_tok in removed:
+            shape = _number_shape(old_tok)
+            for new_tok in added:
+                if _number_shape(new_tok) == shape:
+                    return old_tok, new_tok
+    return removed[0], added[0]
+
+
+def _changed_fact_pair(old_text: str, new_text: str) -> tuple[str, str] | None:
+    old_groups = _fact_groups(old_text)
+    new_groups = _fact_groups(new_text)
+    for idx, (old_set, new_set) in enumerate(zip(old_groups, new_groups)):
+        removed = sorted(old_set - new_set)
+        added = sorted(new_set - old_set)
+        if removed and added:
+            return _pick_changed_pair(removed, added, by_shape=(idx == 2))
+    return None
+
+
+def _format_update_reason(
+    fact_pair: tuple[str, str] | None,
+    strong_cue: re.Match[str] | None,
+    temporal: bool,
+    weak_cue: re.Match[str] | None,
+    shared_terms: tuple[str, ...],
+) -> str:
+    if fact_pair:
+        return f"changed: {fact_pair[0]} -> {fact_pair[1]}"
+    if strong_cue:
+        return f"new text says {strong_cue.group(0).lower()}"
+    if temporal:
+        return "newer version of topic"
+    if weak_cue:
+        return "new text says now"
+    if shared_terms:
+        return f"shared terms: {', '.join(shared_terms[:3])}"
+    return "similar topic"
+
+
+def update_signal(
+    old_text: str,
+    new_text: str,
+    *,
+    old_title: str = "",
+    new_title: str = "",
+    shared_terms: tuple[str, ...] = (),
+) -> tuple[float, str]:
+    """Return ``(rank_boost, short_reason)`` describing why ``new_text`` may update ``old_text``.
+
+    Never gates candidates: when no update cue or factual diff fires, returns a zero boost
+    and a neutral similarity reason so the calling agent can still inspect the candidate.
+    """
+    fact_pair = _changed_fact_pair(old_text, new_text)
+    strong_cue = _STRONG_UPDATE_CUES_RE.search(new_text or "")
+    weak_cue = None if strong_cue else _WEAK_UPDATE_CUE_RE.search(new_text or "")
+    temporal = bool(
+        old_title
+        and new_title
+        and _has_temporal_progression(old_title, new_title)
+        and (old_text or "").strip() != (new_text or "").strip()
     )
+    boost = min(
+        (0.05 if fact_pair else 0.0)
+        + (0.06 if strong_cue else (0.02 if weak_cue else 0.0))
+        + (0.03 if temporal else 0.0),
+        0.10,
+    )
+    reason = _format_update_reason(fact_pair, strong_cue, temporal, weak_cue, shared_terms)
+    return boost, reason
 
 
 def looks_like_update(
@@ -181,23 +248,6 @@ def looks_like_update(
     old_title: str = "",
     new_title: str = "",
 ) -> bool:
-    """Deterministic heuristic: True when ``new_text`` reads like an update of ``old_text``.
-
-    When titles are supplied, rejects unrelated topics and distinct-facet siblings
-    (such as staging vs production or EU vs US). Fires on explicit replacement wording,
-    changed numeric/date/version/cadence/path tokens, or temporal title progression.
-    """
-    if old_title and new_title and not _titles_compatible_for_supersede(old_title, new_title):
-        return False
-    if _UPDATE_CUES_RE.search(new_text or ""):
-        return True
-    if (
-        old_title
-        and new_title
-        and _has_temporal_progression(old_title, new_title)
-        and (old_text or "").strip() != (new_text or "").strip()
-    ):
-        return True
-    old_facts = _factual_tokens(old_text)
-    new_facts = _factual_tokens(new_text)
-    return bool(old_facts and new_facts and old_facts != new_facts)
+    """True when ``new_text`` shows an update cue, changed factual token, or temporal progression."""
+    boost, _reason = update_signal(old_text, new_text, old_title=old_title, new_title=new_title)
+    return boost > 0.0

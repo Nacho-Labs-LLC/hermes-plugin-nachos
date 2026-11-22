@@ -57,13 +57,15 @@ from .validity import (
     backfill_scope_timestamps,
     entry_payload,
     find_duplicate_pairs,
+    find_similar_entries,
     format_put_result,
     history_rows,
     normalize_supersedes,
+    possible_updates_for,
+    redirect_hits,
     restore_from_change,
     scope_status,
     select_ranked,
-    suggest_supersedes_for,
     superseded_entries,
     unused_entries,
 )
@@ -368,7 +370,9 @@ class MemoryService:
         qvec = self._query_vector(targets, query)
         fused: dict[tuple[str, str], dict[str, Any]] = {}
         for s in targets:
-            for key, rank, how, similarity in self._ranked_hits(s, query, qvec, limit):
+            for key, rank, how, similarity in self._ranked_hits(
+                s, query, qvec, limit, include_superseded=include_superseded
+            ):
                 row = fused.setdefault((s.name, key), {"score": 0.0, "match": []})
                 row["score"] += 1.0 / (_RRF_K + rank)
                 row["match"].append(how)
@@ -388,19 +392,30 @@ class MemoryService:
         return vectors[0] if vectors else None
 
     def _ranked_hits(
-        self, s: Scope, query: str, qvec: list[float] | None, limit: int
+        self,
+        s: Scope,
+        query: str,
+        qvec: list[float] | None,
+        limit: int,
+        *,
+        include_superseded: bool = False,
     ) -> Iterator[tuple[str, int, str, float | None]]:
         """(key, rank, how, similarity) hits for one scope, lexical then semantic."""
         # With an embedder, lexical sits half a step below semantic so a
         # lexical-only rank-0 hit does not tie a semantic-only rank-0 hit.
         offset = 1 if qvec is not None else 0
         min_coverage = _MIN_LEXICAL_COVERAGE if qvec is not None else 0.0
-        for rank, key in enumerate(self._lexical(s, query, min_coverage)[: limit * 3]):
+        metas = None if include_superseded else self._scope_meta(s)
+        lex_hits = redirect_hits(
+            ((k, None) for k in self._lexical(s, query, min_coverage)), metas, limit=limit * 3
+        )
+        for rank, (key, _sim) in enumerate(lex_hits):
             yield key, rank + offset, "lexical", None
         embedder = self._active_embedder()
         if qvec is not None and embedder is not None:
-            hits = s.index.search(qvec, embedder.model_id, top_k=limit * 3)
-            for rank, (key, sim) in enumerate(hits):
+            extra = 0 if metas is None else sum(1 for m in metas.values() if m.superseded_by)
+            raw_sem = s.index.search(qvec, embedder.model_id, top_k=limit * 3 + extra)
+            for rank, (key, sim) in enumerate(redirect_hits(raw_sem, metas, limit=limit * 3)):
                 yield key, rank, "semantic", sim
 
     def _hydrate(
@@ -443,46 +458,22 @@ class MemoryService:
         limit: int = 3,
     ) -> list[dict[str, Any]]:
         """Existing entries that look like the same memory, most similar first."""
-        found: dict[tuple[str, str], dict[str, Any]] = {}
-        label = f"{title} {summary}"
-        for s in self.scopes.values():
-            index = self._lexical_index(s)
-            metas = self._scope_meta(s)
-            excluded_key = exclude[1] if exclude and exclude[0] == s.name else None
-            for key, doc_title, score in index.similar_labels(
-                label, threshold=_LEXICAL_DUP_THRESHOLD, exclude=excluded_key
-            ):
-                if metas.get(key) and metas[key].superseded_by:
-                    continue
-                found[(s.name, key)] = {
-                    "key": key,
-                    "scope": s.name,
-                    "title": doc_title,
-                    "similarity": round(score, 3),
-                    "match": "lexical",
-                }
-            embedder = self._active_embedder()
-            if vector is not None and embedder is not None:
-                for key, sim in s.index.search(
-                    vector, embedder.model_id, top_k=limit + 1, head_only=True
-                ):
-                    if (
-                        (s.name, key) == exclude
-                        or sim < self.duplicate_threshold
-                        or (metas.get(key) and metas[key].superseded_by)
-                    ):
-                        continue
-                    prev = found.get((s.name, key))
-                    if prev is None or sim > prev["similarity"]:
-                        doc = index.docs.get(key)
-                        found[(s.name, key)] = {
-                            "key": key,
-                            "scope": s.name,
-                            "title": doc.title if doc is not None else key,
-                            "similarity": round(sim, 3),
-                            "match": "semantic",
-                        }
-        return sorted(found.values(), key=lambda d: -d["similarity"])[:limit]
+        embedder = self._active_embedder()
+        scope_map = {
+            s.name: (self._lexical_index(s), s.index, self._scope_meta(s))
+            for s in self.scopes.values()
+        }
+        return find_similar_entries(
+            scope_map,
+            title,
+            summary,
+            exclude=exclude,
+            vector=vector,
+            model_id=embedder.model_id if embedder is not None else None,
+            duplicate_threshold=self.duplicate_threshold,
+            lexical_threshold=_LEXICAL_DUP_THRESHOLD,
+            limit=limit,
+        )
 
     def duplicate_pairs(self, *, sync: bool = True) -> list[dict[str, Any]]:
         """Every pair above the duplicate threshold; ``sync=False`` never updates the index.
@@ -702,16 +693,19 @@ class MemoryService:
         target.index.record_seen([key])
 
         applied = self._apply_supersedes(target, key, normalize_supersedes(supersedes, key))
-        suggested = suggest_supersedes_for(
+        possible = possible_updates_for(
             target.store,
             self._lexical_index(target),
+            target.index,
             self._scope_meta(target),
-            scope,
+            model_id=embedder.model_id if (vector is not None and embedder is not None) else None,
+            vector=vector,
             self_key=key,
             title=title,
-            new_text=f"{title}\n{summary}\n{body}",
-            similar=similar,
+            summary=summary,
+            body=body,
             already_superseded=set(applied),
+            semantic_threshold=max(0.45, self.duplicate_threshold - 0.17),
         )
 
         return format_put_result(
@@ -722,7 +716,7 @@ class MemoryService:
             is_update=is_update,
             applied_supersedes=applied,
             similar=similar,
-            suggested_supersedes=suggested,
+            possible_updates=possible,
         )
 
     def remove(self, key: str, scope: str | None = None) -> str | None:
