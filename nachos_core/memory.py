@@ -58,6 +58,7 @@ from .ranking import (
     scope_ranked_hits,
     update_threshold_for,
 )
+from .reindex import DEFAULT_BUDGET_S, embed_stale, finish, scope_models
 from .store.base import Entry, EntryMeta, MemoryStore
 from .store.md_store import slugify
 from .validity import (
@@ -152,6 +153,7 @@ class MemoryService:
         calibrate_updates: bool = True,
         rerank_candidates: int = 25,
         rerank_mode: str = DEFAULT_BLEND,
+        reindex_budget_s: float = DEFAULT_BUDGET_S,
     ):
         if PROFILE not in scopes:
             raise ValueError("a 'profile' scope is required")
@@ -173,6 +175,10 @@ class MemoryService:
         self.rerank_candidates = rerank_candidates
         self.rerank_mode = rerank_mode
         self._rerank_error: str | None = None
+        #: Seconds one recall or write may spend advancing a bulk re-embed (see ``reindex``).
+        self.reindex_budget_s = reindex_budget_s
+        #: Stale entries left per scope after the last sync; non-zero = semantic recall is paused.
+        self._reindex_remaining: dict[str, int] = {}
         self.embedder_error: str | None = None
         self.session_id: str = ""
         self._seen_keys: dict[str, frozenset] = {}
@@ -200,12 +206,21 @@ class MemoryService:
     def semantic_enabled(self) -> bool:
         return self.embedder is not None and self.embedder_error is None
 
+    @property
+    def reindexing(self) -> bool:
+        """True while a model switch is still re-embedding entries (recall is lexical meanwhile)."""
+        return any(self._reindex_remaining.values())
+
     def _active_embedder(self) -> Embedder | None:
-        """The embedder when semantic search is usable right now, else None."""
-        return self.embedder if self.semantic_enabled else None
+        """The embedder when semantic search is usable right now, else None.
+
+        None also while a model switch is mid-way: vectors of two models must not be mixed, so
+        recall, duplicate checks and update hints fall back to lexical matching until done.
+        """
+        return self.embedder if self.semantic_enabled and not self.reindexing else None
 
     def _embed(self, texts: list[str], input_type: str = DOCUMENT) -> list[list[float]] | None:
-        embedder = self._active_embedder()
+        embedder = self.embedder if self.semantic_enabled else None
         if embedder is None or not texts:
             return None
         try:
@@ -219,11 +234,16 @@ class MemoryService:
             )
             return None
 
-    def sync_index(self, scope: Scope) -> int:
-        """Embed entries that are new, edited, or embedded with another model."""
+    def sync_index(self, scope: Scope, *, budget_s: float | None = None) -> int:
+        """Embed entries that are new, edited, or embedded with another model.
+
+        A handful of stale entries are embedded inline. More than ``reindex.BULK_ENTRIES``
+        (a model switch, a first run on an existing store) is re-embedded in small batches
+        under ``budget_s`` (default ``reindex_budget_s``) per call: see :mod:`nachos_core.reindex`.
+        """
         entries = scope.store.list()
         scope.index.retain(key for key, *_ in entries)
-        embedder = self._active_embedder()
+        embedder = self.embedder if self.semantic_enabled else None
         if embedder is None:
             return 0
         embedder.warm_up()  # may refine model_id (e.g. CLI pooling/prefix) before it is compared
@@ -233,19 +253,55 @@ class MemoryService:
             for key, title, summary, _category in entries
         }
         stale = scope.index.stale_keys(docs, embedder.model_id)
-        if not stale:
-            return 0
-        flat_texts = [text for key in stale for text in docs[key]]
-        vectors = self._embed(flat_texts, DOCUMENT)
-        if vectors is None:
-            return 0
-        offset = 0
-        for key in stale:
-            chunks = docs[key]
-            key_vecs = vectors[offset : offset + len(chunks)]
-            offset += len(chunks)
-            scope.index.upsert_chunks(key, chunks, embedder.model_id, key_vecs)
-        return len(stale)
+        done = embed_stale(
+            lambda texts: self._embed(texts, DOCUMENT),
+            scope.index,
+            embedder.model_id,
+            docs,
+            stale,
+            budget_s=self.reindex_budget_s if budget_s is None else budget_s,
+            bulk=self._reindex_remaining.get(scope.name, 0) > 0,
+        )
+        remaining = len(stale) - done
+        self._reindex_remaining[scope.name] = remaining
+        if remaining == 0:
+            finish(scope.index, embedder.model_id)
+        return done
+
+    def reindex(self, *, scope: str | None = None) -> dict[str, Any]:
+        """Re-embed every stale entry now (no time budget); returns the model status.
+
+        For the explicit ``python -m nachos_hermes.models reindex`` command; normal recall
+        advances the work in bounded steps instead.
+        """
+        for s in self._scopes_for(scope):
+            self.sync_index(s, budget_s=float("inf"))
+        return self.model_status()
+
+    def model_status(self) -> dict[str, Any]:
+        """Configured embedding model, per-scope coverage, kept old models and calibration."""
+        embedder = self.embedder
+        model_id = embedder.model_id if embedder else None
+        if embedder is None:
+            state = "off"
+        elif self.embedder_error:
+            state = "error"
+        else:
+            state = "reindexing" if self.reindexing else "ready"
+        return {
+            "model": model_id,
+            "state": state,
+            "error": self.embedder_error,
+            "scopes": {
+                s.name: scope_models(
+                    s.index,
+                    model_id,
+                    len(s.store.list()),
+                    self._reindex_remaining.get(s.name, 0),
+                )
+                for s in self.scopes.values()
+            },
+        }
 
     # -- manifest ----------------------------------------------------------
 
@@ -451,6 +507,8 @@ class MemoryService:
             return None
         for s in targets:
             self.sync_index(s)
+        if self.reindexing:
+            return None  # mid-switch: lexical only until every entry has the new model's vectors
         vectors = self._embed([query], QUERY)
         return vectors[0] if vectors else None
 
@@ -747,8 +805,9 @@ class MemoryService:
         if self.semantic_enabled:
             for s in self.scopes.values():
                 self.sync_index(s)
-            chunk_vectors = self._embed(chunks, DOCUMENT)
-            vector = chunk_vectors[0] if chunk_vectors else None
+            if not self.reindexing:  # mid-switch writes are picked up by the re-embed
+                chunk_vectors = self._embed(chunks, DOCUMENT)
+                vector = chunk_vectors[0] if chunk_vectors else None
         similar = self.find_similar(title, summary, exclude=(scope, key), vector=vector)
 
         prev = self._snapshot(target, key)
@@ -852,6 +911,7 @@ class MemoryService:
         return {
             "embeddings": model_id or "off",
             "embeddings_error": self.embedder_error,
+            "model_state": self.model_status()["state"],
             "scopes": {
                 s.name: scope_status(s.store, s.index, self._scope_meta(s), model_id)
                 for s in self.scopes.values()

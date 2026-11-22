@@ -20,6 +20,8 @@ Quality numbers are deterministic for a given backend and model; latency depends
 python -m bench                                   # lexical only (--embeddings off)
 python -m bench --embeddings off,sentence-transformers
 python -m bench --embeddings nachos --dtype q8
+python -m bench --model org/some-model        # any model: runs off + nachos, so the result sits next to lexical
+python -m bench --preset quality --dtype fp16  # a preset, with an explicit override
 python -m bench --embeddings openai --base-url http://localhost:11434/v1 --model nomic-embed-text
 python -m bench --category paraphrase --misses    # one category, list queries missing the top 5
 python -m bench --repeat 5 --json results.json    # full report, per-query ranks included
@@ -31,6 +33,7 @@ Run from the repository root with the dev environment (`uv sync --group dev`). N
 | --- | --- |
 | `--embeddings` | Comma-separated backends: `off`, `nachos`, `sentence-transformers`, `openai`. Each is run with the same options below. |
 | `--model`, `--dtype`, `--base-url`, `--api-key-env`, `--query-prefix`, `--document-prefix` | Passed through like the `embedding_*` keys in `nachos_hermes/config.py`. |
+| `--preset`, `--pooling`, `--max-length`, `--rerank-max-length` | `embedding_preset`, `embedding_pooling`, `embedding_max_length`, `rerank_max_length` for the `nachos` backend. `--model` or `--preset` without `--embeddings` runs `off,nachos`; `--label` then names only the model run. |
 | `--no-types` | `nachos` backend: never send the query/document type (previous behaviour), to measure what the type adds. |
 | `--label` | Name for the run in the report, so several runs of one backend can be told apart. |
 | `--command` | `nachos-embeddings` executable name or path. |
@@ -524,4 +527,41 @@ Readings:
 | Zero-dependency | `embeddings: off` | none | 1.1 s | 0.2 / 0.3 ms | 0.695 / 0.812 / 0.748 | 0.975 / 1.000 |
 
 - **Keep `rerank: off` by default**: with supersedes + redirect active, `gte-modernbert-base` q8 (`rerank: off`) already hits `1.000` on `outdated`, `long-body`, `near-dup`, and every adversarial query at `12–17 ms` p50, while `rerank: on` costs `120–320 ms` per recall and slightly degrades redirected old-wording queries.
+- **Presets**: `embedding_preset: quality` sets the first row's model and dtype and `embedding_preset: small` the second's (`balanced` is arctic-embed-s q8); see [Choosing a model](#choosing-a-model-naterchrdsnmodels).
 - **Defaults in code**: `chunk_penalty = 0.05`, `duplicate_calibration = "auto"`, `calibrate_updates = True` (`p99` floor when calibrated), `similarity_floor = "off"`, `rerank = "off"`.
+
+## Choosing a model (`naterchrdsn/models`)
+
+Measured on `naterchrdsn/models` (on `memory-next` `a0001a8`), CLI from `nachos-embeddings` branch `naterchrdsn/models`, `q8`, typed queries, rerank off, `--repeat 3`, 16-thread CPU (quality numbers are deterministic; latencies are medians of the final idle runs, earlier runs on a busier machine were up to 2x slower). Original fixture: 208 memories, 393 answerable queries; adversarial: 128 memories, 81 queries.
+
+```bash
+python -m bench --command ./shim --embeddings off
+python -m bench --command ./shim --embeddings nachos --preset small --label preset-small    # and balanced, quality
+python -m bench --command ./shim --data-dir bench/data/adversarial ...                       # held-out set
+```
+
+**Before / after the preset work** (the change must not move recall): `--model Xenova/all-MiniLM-L6-v2 --dtype q8` on `memory-next` against `--preset small` on this branch, likewise gte-modernbert against `--preset quality`.
+
+| Backend | Original hit@1 / hit@5 / MRR@10 before | after | Adversarial hit@1 / hit@5 / MRR@10 before | after |
+| --- | --- | --- | --- | --- |
+| lexical | 0.695 / 0.812 / 0.748 | 0.695 / 0.812 / 0.748 | 0.975 / 1.000 / 0.986 | 0.975 / 1.000 / 0.986 |
+| MiniLM q8 (`small`) | 0.758 / 0.924 / 0.832 | 0.758 / 0.924 / 0.832 | 0.988 / 1.000 / 0.994 | 0.988 / 1.000 / 0.994 |
+| gte-modernbert q8 (`quality`) | 0.773 / 0.949 / 0.850 | 0.773 / 0.949 / 0.850 | 1.000 / 1.000 / 1.000 | 1.000 / 1.000 / 1.000 |
+
+Identical to three decimals: the settings pass-through and the per-model index key add no change to ranking.
+
+**The preset candidates** (original / adversarial; p50 and build from the same runs, original fixture):
+
+| Model (q8) | Download | Dims | Original hit@1 / hit@5 / MRR@10 | Adversarial hit@1 / hit@5 | p50 / p95 ms | Build s |
+| --- | --- | --- | --- | --- | --- | --- |
+| `Xenova/all-MiniLM-L6-v2` (`small`) | 23 MB | 384 | 0.758 / 0.924 / 0.832 | 0.988 / 1.000 | 8.2 / 10.2 | 4.8 |
+| `Snowflake/snowflake-arctic-embed-s` (`balanced`) | 34 MB | 384 | 0.753 / 0.911 / 0.824 | 0.988 / 1.000 | 9.3 / 10.8 | 5.6 |
+| `Alibaba-NLP/gte-modernbert-base` (`quality`) | 150 MB | 768 | 0.773 / 0.949 / 0.850 | 1.000 / 1.000 | 20.5 / 27.7 | 19.5 |
+| `Xenova/bge-small-en-v1.5` | 34 MB | 384 | 0.728 / 0.916 / 0.807 | 0.988 / 1.000 | 16.0 / 27.3 | 12.0 |
+| `Xenova/e5-small-v2` | 34 MB | 384 | 0.753 / 0.898 / 0.818 | 0.975 / 1.000 | 15.2 / 30.3 | 47.5 (loaded machine) |
+| `nomic-ai/nomic-embed-text-v1.5` | 137 MB | 768 | 0.748 / 0.924 / 0.825 | 1.000 / 1.000 | 92.4 / 263.4 | 119.0 (loaded machine) |
+
+(The last three rows are from the baseline runs on `memory-next` on a busier machine, so their latencies are not comparable; bge-small is 12.0 s to build there.) Reading: only gte-modernbert is clearly better than MiniLM on this fixture (+0.015 hit@1, +0.025 hit@5, adversarial 1.000). The 384-dim retrieval models (arctic-embed-s, bge-small, e5-small) and nomic do not beat MiniLM here; arctic-embed-s is the best of them on hit@1 and the adversarial set, so it is the `balanced` preset: a retrieval-tuned model with the same index size as `small`, not a measured improvement. The fixture is synthetic with 393 queries, so differences under about 0.01 hit@1 (4 queries) are not significant. Run your own: `python -m bench --model <id>`.
+
+**Switching models** (`small` to `quality` on the 208-entry fixture, `reindex_budget_ms` 250): before this change the first recall after the switch blocked for **17.2 s** while all entries re-embedded. Now recalls during the switch are lexical-only and take a median **314 ms** (max 1.8 s: one long entry of up to 16 chunks; the first includes loading the model) and the switch completes after **43 recalls** (26.7 s of embedding spread across them). The old vectors stay until the last entry is done, then they are dropped and the new model's thresholds are recalibrated (0.16 s).
+

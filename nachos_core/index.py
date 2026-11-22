@@ -214,7 +214,7 @@ class MemoryIndex:
                 content_hash TEXT NOT NULL,
                 model        TEXT NOT NULL,
                 vec          BLOB NOT NULL,
-                PRIMARY KEY (key, chunk_no)
+                PRIMARY KEY (key, chunk_no, model)
             );
             CREATE TABLE IF NOT EXISTS usage (
                 key          TEXT PRIMARY KEY,
@@ -276,7 +276,10 @@ class MemoryIndex:
 
     def _migrate_vectors_table(self) -> None:
         cols = self._table_columns("vectors")
-        if not cols or "chunk_no" in cols:
+        if cols and "chunk_no" in cols:
+            self._migrate_vectors_primary_key()
+            return
+        if not cols:
             return
         # Pre-chunking schema had PRIMARY KEY (key) without chunk_no. Vectors are derived
         # data, so recreating the table lets lazy sync rebuild chunked vectors automatically.
@@ -289,8 +292,36 @@ class MemoryIndex:
                 content_hash TEXT NOT NULL,
                 model        TEXT NOT NULL,
                 vec          BLOB NOT NULL,
-                PRIMARY KEY (key, chunk_no)
+                PRIMARY KEY (key, chunk_no, model)
             );
+            """
+        )
+        self._conn.commit()
+
+    def _migrate_vectors_primary_key(self) -> None:
+        """Add ``model`` to the primary key so a model switch keeps the old vectors until done.
+
+        Existing rows are copied over unchanged; the table is rebuilt only for databases that
+        still have the ``(key, chunk_no)`` key.
+        """
+        pk_columns = {
+            str(row[1]) for row in self._conn.execute("PRAGMA table_info(vectors)") if row[5]
+        }
+        if "model" in pk_columns:
+            return
+        self._conn.executescript(
+            """
+            ALTER TABLE vectors RENAME TO vectors_old;
+            CREATE TABLE vectors (
+                key          TEXT NOT NULL,
+                chunk_no     INTEGER NOT NULL DEFAULT 0,
+                content_hash TEXT NOT NULL,
+                model        TEXT NOT NULL,
+                vec          BLOB NOT NULL,
+                PRIMARY KEY (key, chunk_no, model)
+            );
+            INSERT INTO vectors SELECT key, chunk_no, content_hash, model, vec FROM vectors_old;
+            DROP TABLE vectors_old;
             """
         )
         self._conn.commit()
@@ -298,10 +329,14 @@ class MemoryIndex:
     # -- vectors -----------------------------------------------------------
 
     def stale_keys(self, docs: Mapping[str, str | list[str]], model: str) -> list[str]:
-        """Keys whose chunks changed, shrank/grew, were never embedded, or used another model."""
+        """Keys whose chunks changed, shrank/grew, or have no vectors from ``model`` yet.
+
+        Vectors of other models are ignored (and kept), so after a model switch every entry is
+        stale until it is re-embedded.
+        """
         known: dict[str, dict[int, tuple[str, str]]] = {}
         for key, chunk_no, h, m in self._conn.execute(
-            "SELECT key, chunk_no, content_hash, model FROM vectors"
+            "SELECT key, chunk_no, content_hash, model FROM vectors WHERE model = ?", (model,)
         ):
             known.setdefault(key, {})[int(chunk_no)] = (h, m)
         stale: list[str] = []
@@ -319,15 +354,15 @@ class MemoryIndex:
         if len(texts) != len(vecs):
             raise ValueError(f"expected {len(texts)} vectors for {key!r}, got {len(vecs)}")
         self._conn.execute(
-            "DELETE FROM vectors WHERE key = ? AND chunk_no >= ?",
-            (key, len(texts)),
+            "DELETE FROM vectors WHERE key = ? AND model = ? AND chunk_no >= ?",
+            (key, model, len(texts)),
         )
         for chunk_no, (text, vec) in enumerate(zip(texts, vecs)):
             self._conn.execute(
                 "INSERT INTO vectors (key, chunk_no, content_hash, model, vec) "
                 "VALUES (?, ?, ?, ?, ?) "
-                "ON CONFLICT(key, chunk_no) DO UPDATE SET content_hash=excluded.content_hash, "
-                "model=excluded.model, vec=excluded.vec",
+                "ON CONFLICT(key, chunk_no, model) DO UPDATE SET "
+                "content_hash=excluded.content_hash, vec=excluded.vec",
                 (key, chunk_no, content_hash(text), model, _pack(_normalize(vec))),
             )
         self._conn.commit()
@@ -471,9 +506,27 @@ class MemoryIndex:
             ]
         )
 
+    def model_counts(self) -> dict[str, int]:
+        """Distinct indexed entries per embedding model (the configured one and any kept old ones)."""
+        rows = self._conn.execute("SELECT model, COUNT(DISTINCT key) FROM vectors GROUP BY model")
+        return {str(model): int(count) for model, count in rows}
+
+    def purge_other_models(self, keep: str) -> int:
+        """Drop vectors and calibration of every model except ``keep``; returns rows removed.
+
+        Called once ``keep`` covers every entry, so the old model's vectors stay available (and
+        a switch back is instant) until the re-embed has finished.
+        """
+        cursor = self._conn.execute("DELETE FROM vectors WHERE model != ?", (keep,))
+        removed = max(cursor.rowcount, 0)
+        self._conn.execute("DELETE FROM calibration WHERE model != ?", (keep,))
+        self._conn.commit()
+        self._cache = None
+        return removed
+
     # -- similarity calibration -------------------------------------------
 
-    def similarity_profile(self, model: str) -> dict[str, float] | None:
+    def similarity_profile(self, model: str, *, refresh: bool = False) -> dict[str, float] | None:
         """Random-pair cosine percentiles of ``model``'s head vectors, or None if too few.
 
         Cosine ranges differ a lot between embedding models (random pairs sit near 0.1 for
@@ -491,7 +544,11 @@ class MemoryIndex:
             row = self._conn.execute(
                 "SELECT head_count, profile FROM calibration WHERE model = ?", (model,)
             ).fetchone()
-        if row is not None and abs(count - int(row[0])) <= _CALIBRATION_DRIFT * int(row[0]):
+        if (
+            not refresh
+            and row is not None
+            and abs(count - int(row[0])) <= _CALIBRATION_DRIFT * int(row[0])
+        ):
             profile: dict[str, float] = json.loads(row[1])
             return profile
         profile = _pair_profile(list(heads.values()))

@@ -47,6 +47,8 @@ if os.environ.get("FAKE_TYPED"):
         queryPrefix="",
         documentPrefix=os.environ.get("FAKE_DOCPREFIX", ""),
     )
+if os.environ.get("FAKE_READY_EXTRA"):
+    ready.update(json.loads(os.environ["FAKE_READY_EXTRA"]))
 args = sys.argv[2:]
 if os.environ.get("FAKE_REJECT_RERANK_FLAGS") and "--rerank-model" in args:
     sys.exit(2)  # an older CLI: unknown flag is a usage error before any ready line
@@ -488,3 +490,103 @@ def test_rerank_error_reply_raises_but_keeps_the_worker(fake_serve_cli, monkeypa
         assert embedder.rerank("q", ["a hit"]) == [1.0]
     finally:
         embedder.close()
+
+
+def test_overrides_are_passed_to_serve_and_oneshot(fake_serve_cli, fake_cli, monkeypatch, tmp_path):
+    path, _ = fake_serve_cli
+    args_file = tmp_path / "args.txt"
+    monkeypatch.setenv("FAKE_ARGS", str(args_file))
+    embedder = CliEmbedder(
+        str(path),
+        "org/m",
+        dtype="q4",
+        pooling="cls",
+        max_length=128,
+        normalize=False,
+        query_prefix="Q: ",
+        document_prefix="none",
+    )
+    try:
+        embedder.embed(["ab"])
+        parts = args_file.read_text().split(" --")
+        assert "pooling cls" in parts
+        assert "max-length 128" in parts
+        assert "no-normalize" in parts
+        assert "query-prefix Q: " in parts  # leading/trailing spaces survive
+        assert any(
+            p.startswith("document-prefix") and p.strip() == "document-prefix" for p in parts
+        )
+    finally:
+        embedder.close()
+    # The one-shot fallback sends the same model flags.
+    oneshot = CliEmbedder(str(fake_cli), "org/m", pooling="mean", normalize=True)
+    assert oneshot._model_args() == ["--model", "org/m", "--pooling", "mean", "--normalize"]
+
+
+def test_unset_overrides_send_nothing_extra():
+    embedder = CliEmbedder("x", "m")
+    assert embedder._model_args() == ["--model", "m"]
+    assert CliEmbedder("x")._model_args() == []
+
+
+def test_prefix_none_disables_and_blank_keeps_the_profile():
+    off = CliEmbedder("x", query_prefix="none", document_prefix="  NONE ")
+    assert off._model_args() == ["--query-prefix", "", "--document-prefix", ""]
+    assert CliEmbedder("x", query_prefix="", document_prefix="")._model_args() == []
+
+
+def test_ready_line_overrides_change_the_model_id(fake_serve_cli, monkeypatch):
+    path, _ = fake_serve_cli
+    monkeypatch.setenv("FAKE_TYPED", "1")
+    monkeypatch.setenv("FAKE_READY_EXTRA", json.dumps({"maxLength": 256, "normalize": False}))
+    embedder = CliEmbedder(str(path), "m", dtype="q8", max_length=256, normalize=False)
+    try:
+        embedder.warm_up()
+        assert embedder.model_id == "nachos:m:q8:ml=256:norm=off"
+    finally:
+        embedder.close()
+
+
+def test_preset_resolves_to_model_and_dtype_with_explicit_settings_winning():
+    assert make_embedder("nachos", preset="small").model_id == "nachos:Xenova/all-MiniLM-L6-v2:q8"
+    quality = make_embedder("nachos", preset="quality")
+    assert quality.model_id == "nachos:Alibaba-NLP/gte-modernbert-base:q8"
+    # embedding_dtype overrides the preset's dtype only
+    assert make_embedder("nachos", preset="quality", dtype="fp16").model_id.endswith(":fp16")
+    # embedding_model overrides the preset entirely; the preset's dtype is not applied
+    custom = make_embedder("nachos", preset="quality", model="org/custom")
+    assert custom.model_id == "nachos:org/custom"
+    both = make_embedder("nachos", preset="small", model="org/custom", dtype="q4")
+    assert both.model_id == "nachos:org/custom:q4"
+    assert make_embedder("nachos", preset="").model_id == "nachos:default"
+    assert make_embedder("nachos", preset="bogus").model_id == "nachos:default"
+
+
+def test_rerank_max_length_is_passed_to_serve(fake_serve_cli, monkeypatch, tmp_path):
+    path, _ = fake_serve_cli
+    args_file = tmp_path / "args.txt"
+    monkeypatch.setenv("FAKE_ARGS", str(args_file))
+    monkeypatch.setenv("FAKE_RERANK", "1")
+    embedder = CliEmbedder(
+        str(path), rerank=True, rerank_model="r", rerank_dtype="q8", rerank_max_length=2048
+    )
+    try:
+        embedder.warm_up()
+        assert "--rerank-max-length 2048" in args_file.read_text()
+    finally:
+        embedder.close()
+
+
+def test_preset_is_ignored_by_other_backends():
+    st = make_embedder("sentence-transformers", preset="quality", model="")
+    assert st.model_id == "st:all-MiniLM-L6-v2"
+    openai = make_embedder(
+        "openai",
+        preset="quality",
+        model="nomic-embed-text",
+        base_url="http://h/v1",
+        query_prefix="none",
+        document_prefix="passage: ",
+    )
+    assert openai.query_prefix == ""  # the 'none' sentinel means no prefix here too
+    assert openai.document_prefix == "passage: "

@@ -5,6 +5,7 @@ Lexical only, so it stays fast; the benchmark proper (python -m bench) is never 
 
 import argparse
 import json
+import sys
 from collections import Counter
 
 import pytest
@@ -283,3 +284,54 @@ def test_ranking_flags_are_parsed_into_service_options():
         "rerank_mode": "sum:1",
     }
     assert recall.ranking_options(recall.parse_args([])) == {}
+
+
+class TestModelOptions:
+    def test_model_or_preset_adds_the_nachos_backend_beside_lexical(self):
+        assert recall.parse_args([]).backends == ["off"]
+        assert recall.parse_args(["--model", "org/m"]).backends == ["off", "nachos"]
+        assert recall.parse_args(["--preset", "quality"]).backends == ["off", "nachos"]
+        assert recall.parse_args(["--model", "m", "--embeddings", "nachos"]).backends == ["nachos"]
+
+    def test_unknown_preset_is_rejected(self):
+        with pytest.raises(SystemExit):
+            recall.parse_args(["--preset", "huge"])
+
+    def test_model_flags_reach_the_embedder(self):
+        opts = recall.parse_args(
+            [
+                "--command",
+                sys.executable,
+                "--preset",
+                "small",
+                "--pooling",
+                "cls",
+                "--max-length",
+                "128",
+                "--dtype",
+                "q4",
+                "--rerank-max-length",
+                "2048",
+            ]
+        )
+        embedder, reason = recall.resolve_embedder("nachos", opts)
+        assert reason is None
+        assert embedder.model_id == "nachos:Xenova/all-MiniLM-L6-v2:q4"
+        assert embedder._model_args() == [
+            "--model",
+            "Xenova/all-MiniLM-L6-v2",
+            "--dtype",
+            "q4",
+            "--pooling",
+            "cls",
+            "--max-length",
+            "128",
+        ]
+        assert embedder.rerank_max_length == 2048
+
+    def test_label_names_the_model_run_but_not_the_lexical_baseline(self):
+        opts = recall.parse_args(["--model", "org/m", "--label", "mine"])
+        assert recall._run_name("off", opts) == "off"
+        assert recall._run_name("nachos", opts) == "mine"
+        single = recall.parse_args(["--embeddings", "off", "--label", "base"])
+        assert recall._run_name("off", single) == "base"

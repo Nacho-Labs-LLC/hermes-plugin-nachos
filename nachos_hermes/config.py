@@ -13,7 +13,8 @@ import logging
 from pathlib import Path
 from typing import Any, Callable
 
-from nachos_core.embeddings import EMBEDDING_BACKENDS
+from nachos_core.embeddings import EMBEDDING_BACKENDS, Embedder, make_embedder
+from nachos_core.models import PRESET_CHOICES, PRESETS
 
 logger = logging.getLogger(__name__)
 
@@ -21,8 +22,11 @@ DEFAULTS: dict[str, Any] = {
     "store": "sqlite",
     "manifest_char_budget": 1200,
     "embeddings": "auto",
+    "embedding_preset": "",
     "embedding_model": "",
     "embedding_dtype": "",
+    "embedding_pooling": "",
+    "embedding_max_length": 0,
     "embedding_base_url": "",
     "embedding_api_key_env": "",
     "embedding_query_prefix": "",
@@ -34,7 +38,9 @@ DEFAULTS: dict[str, Any] = {
     "rerank": "off",
     "rerank_model": "",
     "rerank_dtype": "",
+    "rerank_max_length": 0,
     "rerank_candidates": 25,
+    "reindex_budget_ms": 250,
     "shared_store": "off",
     "shared_store_path": "",
     "redact_secrets": "on",
@@ -46,6 +52,8 @@ _VERBATIM_KEYS = frozenset({"embedding_query_prefix", "embedding_document_prefix
 # String settings with a closed set of values; anything else is ignored.
 _CHOICES: dict[str, tuple[str, ...]] = {
     "capture": ("review", "off"),
+    "embedding_preset": PRESET_CHOICES,
+    "embedding_pooling": ("", "mean", "cls"),
     "rerank": ("off", "nachos"),
     "similarity_floor": ("off", "auto"),
     "duplicate_calibration": ("auto", "off"),
@@ -69,12 +77,36 @@ CONFIG_SCHEMA: list[dict[str, Any]] = [
         "sentence-transformers, then an OpenAI-compatible URL if set; off = lexical only.",
     },
     {
+        "key": "embedding_preset",
+        "choices": list(PRESET_CHOICES),
+        "description": "Pick an embedding model by size for the nachos backend: "
+        + "; ".join(
+            f"{p.name} = {p.model} {p.dtype} (~{p.download_mb} MB)" for p in PRESETS.values()
+        )
+        + ". Blank = no preset (backend default). embedding_model / embedding_dtype override "
+        "the preset. Changing the model re-embeds in the background-ish way "
+        "(recall stays lexical until done).",
+    },
+    {
         "key": "embedding_model",
-        "description": "Embedding model id (backend-specific; blank = backend default).",
+        "description": "Embedding model id (backend-specific; blank = preset or backend default). "
+        "For the nachos backend any Hugging Face ONNX encoder or a local directory path works.",
     },
     {
         "key": "embedding_dtype",
-        "description": "Model precision for the nachos backend, e.g. q8 (about 3x faster, cosine ~0.99 vs fp32). Blank = backend default. Changing it re-embeds.",
+        "description": "Model precision for the nachos backend, e.g. q8 (about 3x faster, cosine ~0.99 vs fp32). Blank = preset or backend default. Changing it re-embeds.",
+    },
+    {
+        "key": "embedding_pooling",
+        "choices": ["", "mean", "cls"],
+        "description": "Override the nachos model's pooling (blank = the model's built-in profile; "
+        "bge, arctic and gte-modernbert use cls). Changing it re-embeds.",
+    },
+    {
+        "key": "embedding_max_length",
+        "type": "int",
+        "description": "Truncate inputs to this many tokens for the nachos backend (0 = model default; "
+        "can only lower the tokenizer limit). Changing it re-embeds.",
     },
     {
         "key": "embedding_base_url",
@@ -86,15 +118,15 @@ CONFIG_SCHEMA: list[dict[str, Any]] = [
     },
     {
         "key": "embedding_query_prefix",
-        "description": "Text prepended to search queries before embedding, for the openai and "
-        "sentence-transformers backends (e.g. 'query: ' for E5, 'search_query: ' for nomic). "
-        "Leading/trailing spaces are kept. The nachos backend applies its own per-model prefixes. "
-        "Changing it re-embeds.",
+        "description": "Text prepended to search queries before embedding (e.g. 'query: ' for E5, "
+        "'search_query: ' for nomic). Leading/trailing spaces are kept. For the nachos backend "
+        "blank keeps the model's built-in prefix and the word 'none' disables it; openai and "
+        "sentence-transformers have no built-ins (blank = no prefix).",
     },
     {
         "key": "embedding_document_prefix",
-        "description": "Text prepended to stored entries before embedding, for the openai and "
-        "sentence-transformers backends (e.g. 'passage: ' for E5, 'search_document: ' for nomic). "
+        "description": "Text prepended to stored entries before embedding (e.g. 'passage: ' for E5, "
+        "'search_document: ' for nomic); same blank / 'none' rules as the query prefix. "
         "Changing it re-embeds.",
     },
     {
@@ -132,9 +164,23 @@ CONFIG_SCHEMA: list[dict[str, Any]] = [
         "description": "Cross-encoder precision, e.g. q8 (blank = CLI default).",
     },
     {
+        "key": "rerank_max_length",
+        "type": "int",
+        "description": "Cross-encoder input length in tokens (0 = the model's default: 1024 for "
+        "the jina reranker, 512 otherwise).",
+    },
+    {
         "key": "rerank_candidates",
         "type": "int",
         "description": "How many top fused results the reranker re-scores.",
+    },
+    {
+        "key": "reindex_budget_ms",
+        "type": "int",
+        "description": "After an embedding model change, how long one recall or write may spend "
+        "re-embedding entries (milliseconds; at least one small batch always runs). Recall is "
+        "lexical until every entry is re-embedded; `python -m nachos_hermes.models reindex` "
+        "finishes it at once.",
     },
     {
         "key": "shared_store",
@@ -280,3 +326,55 @@ def backup_paths() -> list[str]:
     except Exception as e:
         logger.debug("Nachos backup_paths failed: %s", e)
         return []
+
+
+#: Hermes ``auxiliary.<task>.model`` LLM settings Nachos reads (Hermes semantics, unchanged).
+AUXILIARY_TASKS: dict[str, str] = {
+    "nachos_capture": "session-end memory suggestions (capture: review)",
+    "nachos_summary": "replacement summaries (tools/correct_summaries.py)",
+}
+
+
+def make_embedder_from_config(cfg: dict[str, Any]) -> Embedder | None:
+    """The embedder a resolved config asks for (``None`` = lexical only); may raise."""
+    return make_embedder(
+        cfg["embeddings"],
+        model=cfg["embedding_model"],
+        dtype=cfg["embedding_dtype"],
+        base_url=cfg["embedding_base_url"],
+        api_key_env=cfg["embedding_api_key_env"],
+        query_prefix=cfg["embedding_query_prefix"],
+        document_prefix=cfg["embedding_document_prefix"],
+        rerank=cfg["rerank"] == "nachos",
+        rerank_model=cfg["rerank_model"],
+        rerank_dtype=cfg["rerank_dtype"],
+        preset=cfg["embedding_preset"],
+        pooling=cfg["embedding_pooling"],
+        max_length=max(0, int(cfg["embedding_max_length"])),
+        rerank_max_length=max(0, int(cfg["rerank_max_length"])),
+    )
+
+
+def profile_config(hermes_home: Path) -> dict[str, Any]:
+    """Defaults overlaid with ``<home>/nachos/config.json`` (what ``hermes memory setup`` wrote)."""
+    cfg: dict[str, Any] = dict(DEFAULTS)
+    with contextlib.suppress(OSError, ValueError):
+        values = json.loads((hermes_home / "nachos" / "config.json").read_text(encoding="utf-8"))
+        if isinstance(values, dict):
+            apply_config(cfg, values)
+    return cfg
+
+
+def auxiliary_models() -> dict[str, str | None]:
+    """Configured auxiliary LLM per Nachos task, when Hermes' config is readable (else ``None``)."""
+    models: dict[str, str | None] = dict.fromkeys(AUXILIARY_TASKS)
+    try:
+        from hermes_cli.config import cfg_get, load_config
+
+        loaded = load_config()
+        for task in AUXILIARY_TASKS:
+            value = cfg_get(loaded, "auxiliary", task, "model")
+            models[task] = value if isinstance(value, str) and value else None
+    except Exception:
+        logger.debug("Hermes config unavailable for auxiliary models", exc_info=True)
+    return models

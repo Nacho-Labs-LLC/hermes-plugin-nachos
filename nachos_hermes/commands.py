@@ -18,6 +18,22 @@ UNAVAILABLE = "Nachos memory store unavailable."
 INBOX_USAGE = "Usage: /nachos-memory-inbox [show <id> | approve <id|all> | reject <id|all>]"
 
 
+def _model_lines(models: dict[str, Any], cfg: dict[str, Any]) -> list[str]:
+    """Model-switch progress, kept old vectors and calibration, only when there is something to say."""
+    lines: list[str] = []
+    if cfg.get("embedding_preset"):
+        lines.append(f"  preset      : {cfg['embedding_preset']}")
+    for name, s in models["scopes"].items():
+        if s["reindexing"]:
+            lines.append(
+                f"  re-embedding: {name} {s['embedded']}/{s['entries']} with the configured model; "
+                "recall is lexical until done (python -m nachos_hermes.models reindex finishes it)"
+            )
+        elif s["other_models"]:
+            lines.append(f"  old vectors : {name} {sorted(s['other_models'])} (dropped once done)")
+    return lines
+
+
 def status_text(
     service: MemoryService | None,
     cfg: dict[str, Any],
@@ -34,6 +50,8 @@ def status_text(
     if status["embeddings_error"]:
         emb += f" (disabled: {status['embeddings_error']})"
     lines.append(f"  embeddings  : {emb}")
+    if service.embedder:
+        lines.extend(_model_lines(service.model_status(), cfg))
     for name, s in status["scopes"].items():
         indexed = f", {s['indexed']} embedded" if service.embedder else ""
         sup = f", {s['superseded']} superseded" if s.get("superseded") else ""

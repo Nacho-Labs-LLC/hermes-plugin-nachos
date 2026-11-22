@@ -43,6 +43,8 @@ import weakref
 from abc import ABC, abstractmethod
 from typing import IO, Any
 
+from .models import prefix_argument, resolve_model
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_RERANK_MODEL = "jinaai/jina-reranker-v1-tiny-en"
@@ -193,10 +195,23 @@ class CliEmbedder(Embedder):
         rerank: bool = False,
         rerank_model: str = "",
         rerank_dtype: str = "",
+        pooling: str = "",
+        max_length: int = 0,
+        normalize: bool | None = None,
+        query_prefix: str = "",
+        document_prefix: str = "",
+        rerank_max_length: int = 0,
     ):
         self.command = command
         self.model = model
         self.dtype = dtype
+        #: Overrides of the CLI's per-model profile; unset (blank/0/None) = profile default.
+        self.pooling = pooling
+        self.max_length = max_length
+        self.normalize = normalize
+        self.cli_query_prefix = query_prefix
+        self.cli_document_prefix = document_prefix
+        self.rerank_max_length = rerank_max_length
         #: Ask the serve worker to load a cross-encoder (needs a CLI with ``--rerank-model``).
         self.rerank_enabled = rerank
         self.rerank_model = rerank_model or DEFAULT_RERANK_MODEL
@@ -219,16 +234,35 @@ class CliEmbedder(Embedder):
         atexit.register(_close_ref, weakref.ref(self))
 
     # -- worker lifecycle -------------------------------------------------
-    def _serve_cmd(self) -> list[str]:
-        cmd = [self.command, "serve"]
+    def _model_args(self) -> list[str]:
+        """Model flags shared by ``serve`` and one-shot ``embed``; only what was configured."""
+        args: list[str] = []
         if self.model:
-            cmd += ["--model", self.model]
+            args += ["--model", self.model]
         if self.dtype:
-            cmd += ["--dtype", self.dtype]
+            args += ["--dtype", self.dtype]
+        if self.pooling:
+            args += ["--pooling", self.pooling]
+        if self.max_length > 0:
+            args += ["--max-length", str(self.max_length)]
+        if self.normalize is not None:
+            args.append("--normalize" if self.normalize else "--no-normalize")
+        for flag, value in (
+            ("--query-prefix", prefix_argument(self.cli_query_prefix)),
+            ("--document-prefix", prefix_argument(self.cli_document_prefix)),
+        ):
+            if value is not None:
+                args += [flag, value]
+        return args
+
+    def _serve_cmd(self) -> list[str]:
+        cmd = [self.command, "serve", *self._model_args()]
         if self.rerank_enabled and not self._rerank_failed:
             cmd += ["--rerank-model", self.rerank_model]
             if self.rerank_dtype:
                 cmd += ["--rerank-dtype", self.rerank_dtype]
+            if self.rerank_max_length > 0:
+                cmd += ["--rerank-max-length", str(self.rerank_max_length)]
         return cmd
 
     def _start_worker(self) -> _Worker:
@@ -279,6 +313,11 @@ class CliEmbedder(Embedder):
         doc_prefix = msg.get("documentPrefix") if isinstance(msg.get("documentPrefix"), str) else ""
         suffix = f":pooling={pooling}" if pooling != "mean" else ""
         suffix += f":dp={doc_prefix!r}" if doc_prefix else ""
+        # Reported only when set / non-default, so unconfigured ids stay as they were.
+        max_length = msg.get("maxLength")
+        if isinstance(max_length, int) and not isinstance(max_length, bool) and max_length > 0:
+            suffix += f":ml={max_length}"
+        suffix += ":norm=off" if msg.get("normalize") is False else ""
         self.model_id = self._base_id + suffix
 
     def _drop_worker(self) -> None:
@@ -385,10 +424,7 @@ class CliEmbedder(Embedder):
         cmd = [self.command, "embed", "--stdin", "--json"]
         if self._type_enabled():
             cmd += ["--type", input_type]
-        if self.model:
-            cmd += ["--model", self.model]
-        if self.dtype:
-            cmd += ["--dtype", self.dtype]
+        cmd += self._model_args()
         proc = subprocess.run(  # noqa: S603 - argv list from operator config, no shell
             cmd,
             input="\n".join(texts) + "\n",
@@ -493,26 +529,40 @@ def make_embedder(
     rerank: bool = False,
     rerank_model: str = "",
     rerank_dtype: str = "",
+    preset: str = "",
+    pooling: str = "",
+    max_length: int = 0,
+    normalize: bool | None = None,
+    rerank_max_length: int = 0,
 ) -> Embedder | None:
     """Resolve a configured backend name to an Embedder, or None for lexical-only.
 
-    ``query_prefix`` / ``document_prefix`` apply to ``openai`` and
-    ``sentence-transformers`` only; the ``nachos`` CLI has its own per-model prefixes.
-    ``rerank*`` apply to the ``nachos`` CLI only (``auto`` resolving to it included).
+    ``preset``, ``dtype``, ``pooling``, ``max_length``, ``normalize`` and ``rerank*`` apply to
+    the ``nachos`` CLI only (``auto`` resolving to it included); an explicit ``model`` or
+    ``dtype`` beats the preset. ``query_prefix`` / ``document_prefix`` are sent to the nachos
+    CLI as overrides of its per-model prefixes (blank = keep the profile's, ``none`` = no
+    prefix) and prepended client-side by ``openai`` and ``sentence-transformers``.
     """
     kind = (backend or "auto").strip().lower()
     if kind == "off":
         return None
-    prefixes = (query_prefix, document_prefix)
+    prefixes = (_client_prefix(query_prefix), _client_prefix(document_prefix))
 
     def cli() -> CliEmbedder:
+        cli_model, cli_dtype = resolve_model(preset, model, dtype)
         return CliEmbedder(
             command,
-            model,
-            dtype=dtype,
+            cli_model,
+            dtype=cli_dtype,
             rerank=rerank,
             rerank_model=rerank_model,
             rerank_dtype=rerank_dtype,
+            pooling=pooling,
+            max_length=max_length,
+            normalize=normalize,
+            query_prefix=query_prefix,
+            document_prefix=document_prefix,
+            rerank_max_length=rerank_max_length,
         )
 
     if kind == "nachos" or (kind == "auto" and shutil.which(command)):
@@ -526,6 +576,12 @@ def make_embedder(
     if kind == "sentence-transformers":
         return SentenceTransformersEmbedder(model, *prefixes)
     raise ValueError(f"Unknown embeddings backend {backend!r}; use one of {EMBEDDING_BACKENDS}")
+
+
+def _client_prefix(value: str) -> str:
+    """Client-side prefix: the ``none`` sentinel means an empty prefix."""
+    argument = prefix_argument(value)
+    return "" if argument is None else argument
 
 
 def _auto_embedder(

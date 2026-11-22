@@ -51,7 +51,6 @@ except ModuleNotFoundError:  # pragma: no cover - exercised outside Hermes
         """Fallback base so the module stays importable outside Hermes."""
 
 
-from nachos_core.embeddings import make_embedder
 from nachos_core.history import prune_checkpoints, search_history
 from nachos_core.index import MemoryIndex, index_path_for
 from nachos_core.memory import PROFILE, SHARED, MemoryService, Scope
@@ -67,6 +66,7 @@ from .config import (
     apply_config,
     backup_paths,
     hermes_redactor,
+    make_embedder_from_config,
     shared_dir,
     store_file,
 )
@@ -157,6 +157,7 @@ class NachosMemoryProvider(MemoryProvider):
                 similarity_floor="p75" if self._cfg["similarity_floor"] == "auto" else None,
                 calibrate_duplicates=self._calibrate_duplicates(),
                 rerank_candidates=max(1, int(self._cfg["rerank_candidates"])),
+                reindex_budget_s=max(0, int(self._cfg["reindex_budget_ms"])) / 1000,
             )
             service.session_id = self._session_id
             return service
@@ -195,18 +196,7 @@ class NachosMemoryProvider(MemoryProvider):
 
     def _make_embedder(self):
         try:
-            return make_embedder(
-                self._cfg["embeddings"],
-                model=self._cfg["embedding_model"],
-                dtype=self._cfg["embedding_dtype"],
-                base_url=self._cfg["embedding_base_url"],
-                api_key_env=self._cfg["embedding_api_key_env"],
-                query_prefix=self._cfg["embedding_query_prefix"],
-                document_prefix=self._cfg["embedding_document_prefix"],
-                rerank=self._cfg["rerank"] == "nachos",
-                rerank_model=self._cfg["rerank_model"],
-                rerank_dtype=self._cfg["rerank_dtype"],
-            )
+            return make_embedder_from_config(self._cfg)
         except Exception as e:
             logger.warning("Nachos embeddings unavailable (%s); using lexical recall.", e)
             return None
