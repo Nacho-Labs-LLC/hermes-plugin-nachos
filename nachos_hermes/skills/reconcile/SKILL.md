@@ -5,6 +5,8 @@ description: Review and clean up Nachos memory (duplicates, outdated or conflict
 
 # Reconciling Nachos memory
 
+Reconciliation reviews the store for duplicates and outdated or low-quality entries and fixes the ones the user approves. Full documentation is in the plugin's `docs/reconciliation.md`.
+
 Use the `nachos_memory_reconcile` tool. It never changes memory until the user has
 approved specific proposals and you call `apply` with `run=true`.
 
@@ -38,5 +40,5 @@ approved specific proposals and you call `apply` with `run=true`.
   quality gate, removal not allowed, non-primary agent).
 - If the tool answers `skipped: non-primary agent context`, stop and hand the review to
   the primary session.
-- Skill and reference file changes are not applied by the tool; the memory flow is
-  memory records only.
+- Skill and reference file changes are not applied by the tool; the flow
+  changes entries only.

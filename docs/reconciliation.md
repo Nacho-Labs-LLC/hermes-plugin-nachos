@@ -1,9 +1,10 @@
 # Memory reconciliation
 
-Reconciliation turns the audit signals (duplicates, outdated entries, suspicious supersede
-links, low-quality entries, conflicting facts) into **reviewable proposals**, lets a human
-accept or reject them, and applies the accepted ones through `MemoryService`. Nothing
-changes memory until a human has approved a specific proposal and `apply` runs with `--run`.
+Reconciliation turns the audit signals from [`nachos-maintain`](memory-maintenance.md)
+(duplicates, outdated entries, suspicious supersede links, low-quality entries, conflicting
+facts) into **reviewable proposals**, lets a human accept or reject them, and applies the
+accepted ones through `MemoryService`. Nothing changes memory until a human has approved a
+specific proposal and `apply` runs with `--run`. Design context: [architecture](architecture.md).
 
 ```
 inventory -> packet (findings + proposals) -> session (review) -> plan (accepted only)
@@ -23,8 +24,8 @@ with no LLM and no network:
 | Finding | Proposal `kind` | Changes | Confidence |
 | --- | --- | --- | --- |
 | Near-duplicate pair | `merge` | `edit` the newer entry with the union of lines only the older has, `disable` (remove) the older | high at similarity >= 0.9 or equal titles, else medium/low |
-| Newer record states an update or changed fact over an older one | `supersede` | `supersede` the older (`superseded_by` newer) | high with a changed fact, else medium |
-| Supersede link whose old/new differ in a facet qualifier (region, team, ...) | `unlink` | `unlink` the old record | medium |
+| Newer entry states an update or changed fact over an older one | `supersede` | `supersede` the older (`superseded_by` newer) | high with a changed fact, else medium |
+| Supersede link whose old/new differ in a facet qualifier (region, team, ...) | `unlink` | `unlink` the old entry | medium |
 | Low-signal summary | `rewrite` | `edit` the summary to the first substantive body line, only if that passes the same checks | medium (low for vocabulary mismatch) |
 | Placeholder-like body | `delete` | `disable` | medium |
 | Same facet, different values, no update cue | `choose-one` | default: newer wins (`supersede` older); the alternative is to reject | always low |
@@ -36,12 +37,12 @@ verifies it. `confidence` is a ranking aid, not evidence; each finding lists its
 
 Optional LLM drafting of the merged text is only possible through the Python API
 (`generate_findings(..., drafter=...)`) with a caller-supplied function; neither the CLI
-nor the tool wires one, and no test uses one.
+nor the tool wires one.
 
 ## Schema additions (v1)
 
 Change `operation` is one of `edit`, `disable` (null `after`), `supersede` or `unlink`
-(memory records only; `after` is exactly `{"superseded_by": "<other key in the
+(entries only; `after` is exactly `{"superseded_by": "<other key in the
 inventory>"}`). A proposal may carry optional `kind` and `confidence`
 (`low|medium|high`). The Python validators and the viewer's JS core agree on all of this
 (`tests/test_reconciliation_extension_parity.py`).
@@ -67,14 +68,14 @@ Exit codes: 0 ok, 2 error, 3 stale or refused, 4 unavailable, 5 partial failure.
 
 * Re-validates the plan against the **current** sources and refuses on any drift
   (`source_status: stale`), then preflights every change; one refusal and nothing is
-  written. Each record is re-checked again right before its write.
+  written. Each entry is re-checked again right before its write.
 * Writes go through `MemoryService`, so Hermes' secret redaction (required unless
   `--allow-unredacted`), the write-time quality gate, the change log and its 1000-record
   window all apply. A text changed by redaction is reported (`redacted: true`).
 * `edit` keeps the entry's key (the title may change without moving the key). `supersede`
   and `unlink` refuse self links, existing links and cycles.
 * Removal (`disable`, from merges and deletes) needs `--allow-remove`.
-* Memory records only. Skill and reference file changes stay with the primary session.
+* Entries only. Skill and reference file changes stay with the primary session.
 * Each action reports a `change_id`; undo with `/nachos-memory-revert` or
   `tools/memory_audit.py revert ID`.
 
@@ -84,7 +85,7 @@ original `.db`, `-wal` and `-shm` files are never created, checkpointed or modif
 ## Agent flow (Hermes)
 
 The provider exposes `nachos_memory_reconcile` with `action` = `review | status | approve |
-apply`, and ships the companion skill `nachos-reconcile` (`nachos-reconcile skill --out`).
+apply`, and ships the companion skill `nachos-reconcile` (`nachos-reconcile skill --out FILE`).
 
 1. `review` audits the store and writes `packet.json`, `session.json` and `viewer.html`
    into `<profile>/nachos/reconcile/<review_id>/` (mode 0600), returning short proposal
