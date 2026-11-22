@@ -9,8 +9,8 @@ from collections.abc import Mapping
 from typing import Any
 
 from .index import MemoryIndex, dot
-from .lexical import jaccard
-from .quality import looks_like_update
+from .lexical import LexicalIndex, jaccard
+from .quality import core_title_tokens, looks_like_update
 from .store.base import EntryMeta, MemoryStore
 
 # Recency tie-break tolerance on RRF scores: covers exact ties and symmetric (0,1)/(1,0)
@@ -101,26 +101,70 @@ def backfill_scope_timestamps(store: MemoryStore, index: MemoryIndex) -> int:
     return store.backfill_timestamps(to_fill)
 
 
+def _title_subject_candidates(
+    lexical_index: LexicalIndex,
+    metas: Mapping[str, EntryMeta],
+    title: str,
+    exclude_keys: set[str],
+) -> list[str]:
+    """Active keys in ``lexical_index`` whose core subject title matches ``title``."""
+    new_core = core_title_tokens(title)
+    if len(new_core) < 2:
+        return []
+    hits: set[str] = set()
+    for term in new_core:
+        bucket = lexical_index.label_postings.get(term)
+        if bucket:
+            hits.update(bucket)
+    matched: list[str] = []
+    for key in sorted(hits):
+        if key in exclude_keys:
+            continue
+        meta = metas.get(key)
+        if meta is not None and meta.superseded_by:
+            continue
+        doc = lexical_index.docs.get(key)
+        if doc is None:
+            continue
+        old_core = core_title_tokens(doc.title)
+        if old_core and old_core == new_core:
+            matched.append(key)
+    return matched
+
+
 def suggest_supersedes_for(
     store: MemoryStore,
+    lexical_index: LexicalIndex,
+    metas: Mapping[str, EntryMeta],
     scope_name: str,
+    *,
+    self_key: str,
+    title: str,
     new_text: str,
     similar: list[dict[str, Any]],
     already_superseded: set[str],
 ) -> list[str]:
-    """Return duplicate keys in ``scope_name`` that read like outdated versions of ``new_text``."""
-    entries_by_key = {k: (t, s) for k, t, s, _c in store.list()}
+    """Return active keys in ``scope_name`` that read like outdated versions of ``new_text``."""
+    excluded = already_superseded | {self_key}
+    candidate_keys = [
+        dup["key"] for dup in similar if dup["scope"] == scope_name and dup["key"] not in excluded
+    ]
+    for key in _title_subject_candidates(lexical_index, metas, title, excluded):
+        if key not in candidate_keys:
+            candidate_keys.append(key)
+    if not candidate_keys:
+        return []
     suggested: list[str] = []
-    for dup in similar:
-        if dup["scope"] != scope_name or dup["key"] in already_superseded:
+    for key in candidate_keys:
+        meta = metas.get(key)
+        if meta is not None and meta.superseded_by:
             continue
-        key = dup["key"]
+        doc = lexical_index.docs.get(key)
         body = store.get(key)
-        label = entries_by_key.get(key)
-        if body is None or label is None:
+        if doc is None or body is None:
             continue
-        old_text = f"{label[0]}\n{label[1]}\n{body}"
-        if looks_like_update(old_text, new_text):
+        old_text = f"{doc.title}\n{body}"
+        if looks_like_update(old_text, new_text, old_title=doc.title, new_title=title):
             suggested.append(key)
     return suggested
 

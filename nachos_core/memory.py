@@ -702,12 +702,16 @@ class MemoryService:
         target.index.record_seen([key])
 
         applied = self._apply_supersedes(target, key, normalize_supersedes(supersedes, key))
-        suggested = (
-            suggest_supersedes_for(
-                target.store, scope, f"{title}\n{summary}\n{body}", similar, set(applied)
-            )
-            if similar
-            else []
+        suggested = suggest_supersedes_for(
+            target.store,
+            self._lexical_index(target),
+            self._scope_meta(target),
+            scope,
+            self_key=key,
+            title=title,
+            new_text=f"{title}\n{summary}\n{body}",
+            similar=similar,
+            already_superseded=set(applied),
         )
 
         return format_put_result(

@@ -373,6 +373,36 @@ class TestSuggestionHeuristic:
     def test_negative_pure_duplicate_cases(self, old_text: str, new_text: str) -> None:
         assert looks_like_update(old_text, new_text) is False
 
+    @pytest.mark.parametrize(
+        ("old_title", "old_body", "new_title", "new_body"),
+        [
+            (
+                "Database connection details: staging",
+                "Staging Postgres runs on port 5432 at stage-pg-01.",
+                "Database connection details: production",
+                "Production Postgres runs on port 5433 at prod-pg-01.",
+            ),
+            (
+                "On-call contacts: EU rotation",
+                "EU on-call rotation starts at 08:00 UTC.",
+                "On-call contacts: US rotation",
+                "US on-call rotation starts at 14:00 UTC.",
+            ),
+            (
+                "Wiki migration notes",
+                "Notes covering 2024 wiki migration steps.",
+                "Annual penetration test preparation",
+                "Preparation checklist updated for 2026 pen test.",
+            ),
+        ],
+    )
+    def test_negative_distinct_siblings_and_unrelated_titles(
+        self, old_title: str, old_body: str, new_title: str, new_body: str
+    ) -> None:
+        assert (
+            looks_like_update(old_body, new_body, old_title=old_title, new_title=new_title) is False
+        )
+
     def test_put_suggests_supersedes_without_auto_applying(self, tmp_path: Path) -> None:
         svc = _make_service(tmp_path)
         try:

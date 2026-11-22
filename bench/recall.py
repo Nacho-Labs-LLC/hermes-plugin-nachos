@@ -389,6 +389,166 @@ def format_report(report: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _score_suggestions(
+    svc: MemoryService,
+    memories: list[dict[str, Any]],
+    gt: dict[str, set[str]],
+    tune_keys: set[str],
+    near_dup_keys: set[str],
+) -> dict[str, Any]:
+    counts = {
+        "tp": 0,
+        "fp": 0,
+        "fn": 0,
+        "tp_tune": 0,
+        "fn_tune": 0,
+        "tp_hold": 0,
+        "fn_hold": 0,
+        "fp_near_dup": 0,
+        "fp_other": 0,
+    }
+    misses: list[dict[str, Any]] = []
+    false_positives: list[dict[str, Any]] = []
+    for mem in memories:
+        key = slugify(mem["title"])
+        res = svc.put(
+            title=mem["title"],
+            summary=mem["summary"],
+            category=mem["category"],
+            body=mem["body"],
+            supersedes=None,
+        )
+        sug = set(res.get("suggested_supersedes") or [])
+        expected = gt.get(key, set())
+        split = "tune" if key in tune_keys else "hold"
+        for s_key in sorted(sug):
+            if s_key in expected:
+                counts["tp"] += 1
+                counts[f"tp_{split}"] += 1
+            else:
+                counts["fp"] += 1
+                bucket = (
+                    "fp_near_dup"
+                    if (key in near_dup_keys or s_key in near_dup_keys)
+                    else "fp_other"
+                )
+                counts[bucket] += 1
+                false_positives.append({"key": key, "suggested": s_key})
+        for e_key in sorted(expected - sug):
+            counts["fn"] += 1
+            counts[f"fn_{split}"] += 1
+            misses.append(
+                {"key": key, "expected": e_key, "split": "held-out" if split == "hold" else "tune"}
+            )
+    tp, fp, fn = counts["tp"], counts["fp"], counts["fn"]
+    precision = tp / (tp + fp) if (tp + fp) else 1.0
+    recall_all = tp / (tp + fn) if (tp + fn) else 1.0
+    recall_tune = (
+        counts["tp_tune"] / (counts["tp_tune"] + counts["fn_tune"])
+        if (counts["tp_tune"] + counts["fn_tune"])
+        else 1.0
+    )
+    recall_hold = (
+        counts["tp_hold"] / (counts["tp_hold"] + counts["fn_hold"])
+        if (counts["tp_hold"] + counts["fn_hold"])
+        else 1.0
+    )
+    f1 = 2 * precision * recall_all / (precision + recall_all) if (precision + recall_all) else 0.0
+    return {
+        "tp": tp,
+        "fp": fp,
+        "fp_near_dup": counts["fp_near_dup"],
+        "fp_other": counts["fp_other"],
+        "fn": fn,
+        "precision": round(precision, 4),
+        "recall": round(recall_all, 4),
+        "f1": round(f1, 4),
+        "tune_recall": round(recall_tune, 4),
+        "heldout_recall": round(recall_hold, 4),
+        "misses": misses,
+        "false_positives": false_positives,
+    }
+
+
+def eval_suggest_backend(
+    backend: str,
+    opts: argparse.Namespace,
+    memories: list[dict[str, Any]],
+    queries: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Replay ``memories`` through put() without supersedes and evaluate suggested_supersedes."""
+    run: dict[str, Any] = {"backend": opts.label or backend, "status": "ok"}
+    embedder, reason = resolve_embedder(backend, opts)
+    if reason:
+        return {**run, "status": "skipped", "reason": reason}
+    if embedder is not None:
+        run["model_id"] = embedder.model_id
+        run["model_load_s"], error = probe(embedder)
+        run["model_load_s"] = round(run["model_load_s"], 3)
+        if error:
+            embedder.close()
+            return {**run, "status": "skipped", "reason": f"embedder unavailable: {error}"}
+    gt = {slugify(m["title"]): set(m["supersedes"]) for m in memories if m.get("supersedes")}
+    gt_keys = list(gt)
+    split_idx = (len(gt_keys) * 2) // 3
+    tune_keys = set(gt_keys[:split_idx])
+    near_dup_keys = {k for q in queries if q["category"] == "near-dup" for k in q["expect"]}
+    with tempfile.TemporaryDirectory(prefix="nachos-suggest-") as tmp:
+        svc = build_service(Path(tmp), embedder)
+        try:
+            scored = _score_suggestions(svc, memories, gt, tune_keys, near_dup_keys)
+        finally:
+            svc.close()
+    run.update(
+        {
+            "pairs": len(gt),
+            "tune_pairs": len(tune_keys),
+            "heldout_pairs": len(gt_keys) - len(tune_keys),
+            **scored,
+        }
+    )
+    return run
+
+
+def format_suggest_report(report: dict[str, Any]) -> str:
+    env = report["environment"]
+    lines = [
+        f"Nachos suggested_supersedes eval: {env['memories']} memories "
+        f"(python {env['python']}, {env['machine']}, {env['cpus']} cpus)",
+        "",
+    ]
+    head = [
+        "backend",
+        "precision",
+        "recall",
+        "F1",
+        "tune rec",
+        "held-out rec",
+        "TP/FP/FN",
+        "FP (near-dup/other)",
+    ]
+    rows: list[list[str]] = []
+    skipped: list[str] = []
+    for run in report["runs"]:
+        if run["status"] != "ok":
+            skipped.append(f"{run['backend']}: skipped, {run['reason']}")
+            continue
+        rows.append(
+            [
+                run["backend"],
+                f"{run['precision']:.3f}",
+                f"{run['recall']:.3f}",
+                f"{run['f1']:.3f}",
+                f"{run['tune_recall']:.3f}",
+                f"{run['heldout_recall']:.3f}",
+                f"{run['tp']}/{run['fp']}/{run['fn']}",
+                f"{run['fp_near_dup']}/{run['fp_other']}",
+            ]
+        )
+    lines += [_table(head, rows), *skipped, ""] if rows else [*skipped, ""]
+    return "\n".join(lines)
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     ap = argparse.ArgumentParser(prog="bench.recall", description=__doc__.split("\n\n")[0])
     ap.add_argument(
@@ -413,6 +573,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="load fixture without applying supersedes links (measure timestamps alone)",
     )
     ap.add_argument(
+        "--suggest-eval",
+        action="store_true",
+        help="evaluate put() suggested_supersedes precision/recall on the fixture",
+    )
+    ap.add_argument(
         "--label", default="", help="name for this run in the report (default: backend)"
     )
     ap.add_argument("--command", default="nachos-embeddings", help="nachos-embeddings executable")
@@ -434,6 +599,21 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return opts
 
 
+def _emit_report(report: dict[str, Any], opts: argparse.Namespace, text: str) -> int:
+    if opts.json == "-":
+        print(json.dumps(report, indent=1))
+        return 0
+    print(text)
+    if opts.misses and not opts.suggest_eval:
+        for run in report["runs"]:
+            for row in run.get("queries", []):
+                if row["rank"] is None or row["rank"] > 5:
+                    print(f"[{run['backend']}] {row['id']} {row['category']}: {row['query']}")
+    if opts.json:
+        Path(opts.json).write_text(json.dumps(report, indent=1), encoding="utf-8")
+    return 0 if any(r["status"] == "ok" for r in report["runs"]) else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     opts = parse_args(argv)
     memories, queries = load_dataset()
@@ -444,20 +624,13 @@ def main(argv: list[str] | None = None) -> int:
     if not queries:
         print("no queries selected", file=sys.stderr)
         return 2
+    if opts.suggest_eval:
+        runs = [eval_suggest_backend(b, opts, memories, queries) for b in opts.backends]
+        report = {"environment": environment(len(memories), len(queries), opts), "runs": runs}
+        return _emit_report(report, opts, format_suggest_report(report))
     runs = [run_backend(b, opts, memories, queries) for b in opts.backends]
     report = {"environment": environment(len(memories), len(queries), opts), "runs": runs}
-    if opts.json == "-":
-        print(json.dumps(report, indent=1))
-        return 0
-    print(format_report(report))
-    if opts.misses:
-        for run in runs:
-            for row in run.get("queries", []):
-                if row["rank"] is None or row["rank"] > 5:
-                    print(f"[{run['backend']}] {row['id']} {row['category']}: {row['query']}")
-    if opts.json:
-        Path(opts.json).write_text(json.dumps(report, indent=1), encoding="utf-8")
-    return 0 if any(r["status"] == "ok" for r in runs) else 1
+    return _emit_report(report, opts, format_report(report))
 
 
 if __name__ == "__main__":
