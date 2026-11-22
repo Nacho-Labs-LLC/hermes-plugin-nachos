@@ -34,7 +34,6 @@ import contextlib
 import logging
 from collections import OrderedDict
 from collections.abc import Sequence
-from dataclasses import dataclass
 from typing import Any, Callable
 
 from .chunking import (
@@ -55,7 +54,6 @@ from .linked import (
     merged_link_counts,
 )
 from .provenance import MANUAL, MAX_QUOTE_CHARS, source_view
-from .quality import low_signal_reason
 from .ranking import (
     DEFAULT_BLEND,
     update_threshold_for,
@@ -64,8 +62,6 @@ from .recall import CHUNK_PENALTY, Recall, RecallTuning
 from .reindex import DEFAULT_BUDGET_S, SemanticRuntime
 from .scope import PROFILE, SHARED, Scope, ScopeCaches, select_scopes
 from .store.base import Entry, EntryMeta
-from .store.md_store import slugify
-from .support import same_content, snapshot
 from .validity import (
     backfill_scope_timestamps,
     entry_payload,
@@ -80,6 +76,7 @@ from .validity import (
     suspicious_supersedes,
     unused_entries,
 )
+from .writes import Draft, prepare_draft, same_content, snapshot
 
 __all__ = [
     "CHUNK_OVERLAP",
@@ -96,19 +93,6 @@ __all__ = [
 ]
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class Draft:
-    """A normalised, gated prospective write (see ``MemoryService.prepare``)."""
-
-    title: str
-    summary: str
-    category: str
-    body: str
-    key: str
-    scope: str
-    error: str | None = None
 
 
 class MemoryService:
@@ -440,51 +424,17 @@ class MemoryService:
         scope: str = PROFILE,
         key: str | None = None,
     ) -> Draft:
-        """Normalise and gate a prospective write without touching any store.
-
-        The single source of truth for what ``put`` accepts: redaction, summary
-        defaulting, key derivation and the low-signal gates all live here, so
-        dry-runs (``tools/import_memories.py``) cannot drift from real writes.
-        ``Draft.error`` is set when the write would be rejected.
-        """
-        if scope not in self.scopes:
-            return Draft(
-                "",
-                "",
-                "",
-                "",
-                "",
-                scope,
-                f"Unknown or disabled scope {scope!r}; available: {list(self.scopes)}",
-            )
-        title = self.redact((title or "").strip())
-        body = self.redact((body or "").strip())
-        summary = self.redact((summary or "").strip())
-        if not summary:
-            summary = next((ln.strip() for ln in body.splitlines() if ln.strip()), "")
-        category = (category or "general").strip() or "general"
-        draft = Draft(
-            title, summary, category, body, key or (slugify(title) if title else ""), scope
+        """Normalise and gate a prospective write without touching any store (see ``writes``)."""
+        return prepare_draft(
+            self.scopes,
+            self.redact,
+            title=title,
+            body=body,
+            summary=summary,
+            category=category,
+            scope=scope,
+            key=key,
         )
-        draft.error = self._gate(draft)
-        return draft
-
-    @staticmethod
-    def _gate(draft: Draft) -> str | None:
-        if not draft.title:
-            return "title is required"
-        reason = low_signal_reason(draft.body)
-        if reason:
-            return f"body is low-signal ({reason}); write real content, not a placeholder."
-        reason = low_signal_reason(draft.summary)
-        if reason:
-            return (
-                f"summary is low-signal ({reason}); this is the ONLY "
-                "text the agent sees in the manifest for this entry "
-                "without recalling it — write a real, keyword-dense "
-                "summary."
-            )
-        return None
 
     def _apply_supersedes(self, scope: Scope, new_key: str, targets: list[str]) -> list[str]:
         applied: list[str] = []
