@@ -58,7 +58,8 @@ jobs:
           .wheel-venv/bin/python -c "import importlib.metadata as m; memory = next(x for x in m.entry_points(group='hermes_agent.memory_providers') if x.name == 'nachos'); assert callable(memory.load())"
 
   browser-gate:
-    runs-on: ubuntu-latest
+    # Playwright 1.58 cannot install Chromium on ubuntu-latest (26.04); pin until the lock moves.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
