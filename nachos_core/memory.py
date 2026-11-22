@@ -38,12 +38,34 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from .chunking import (
+    CHUNK_OVERLAP,
+    CHUNK_SIZE,
+    MAX_CHUNKS_PER_ENTRY,
+    chunk_body,
+    embed_chunks,
+    embed_text,
+)
 from .embeddings import DOCUMENT, QUERY, Embedder
 from .index import MemoryIndex, dot
 from .lexical import LexicalIndex, jaccard
 from .quality import low_signal_reason
 from .store.base import Entry, MemoryStore
 from .store.md_store import slugify
+
+__all__ = [
+    "CHUNK_OVERLAP",
+    "CHUNK_SIZE",
+    "MAX_CHUNKS_PER_ENTRY",
+    "PROFILE",
+    "SHARED",
+    "Draft",
+    "MemoryService",
+    "Scope",
+    "chunk_body",
+    "embed_chunks",
+    "embed_text",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -58,11 +80,6 @@ _RRF_K = 60
 # 0.35-0.45 is a plateau on bench/ (see docs/benchmark.md).
 _MIN_LEXICAL_COVERAGE = 0.4
 _LEXICAL_DUP_THRESHOLD = 0.6
-
-
-def embed_text(title: str, summary: str, body: str) -> str:
-    """What gets embedded for an entry: label, summary, then the body head."""
-    return f"{title}\n{summary}\n{body}"
 
 
 @dataclass
@@ -159,17 +176,22 @@ class MemoryService:
         embedder.warm_up()  # may refine model_id (e.g. CLI pooling/prefix) before it is compared
         bodies = scope.store.bodies()
         docs = {
-            key: embed_text(title, summary, bodies.get(key, ""))
+            key: embed_chunks(title, summary, bodies.get(key, ""))
             for key, title, summary, _category in entries
         }
         stale = scope.index.stale_keys(docs, embedder.model_id)
         if not stale:
             return 0
-        vectors = self._embed([docs[k] for k in stale])
+        flat_texts = [text for key in stale for text in docs[key]]
+        vectors = self._embed(flat_texts, DOCUMENT)
         if vectors is None:
             return 0
-        for key, vec in zip(stale, vectors):
-            scope.index.upsert(key, docs[key], embedder.model_id, vec)
+        offset = 0
+        for key in stale:
+            chunks = docs[key]
+            key_vecs = vectors[offset : offset + len(chunks)]
+            offset += len(chunks)
+            scope.index.upsert_chunks(key, chunks, embedder.model_id, key_vecs)
         return len(stale)
 
     # -- manifest ----------------------------------------------------------
@@ -347,7 +369,9 @@ class MemoryService:
                 }
             embedder = self._active_embedder()
             if vector is not None and embedder is not None:
-                for key, sim in s.index.search(vector, embedder.model_id, top_k=limit + 1):
+                for key, sim in s.index.search(
+                    vector, embedder.model_id, top_k=limit + 1, head_only=True
+                ):
                     if (s.name, key) == exclude or sim < self.duplicate_threshold:
                         continue
                     prev = found.get((s.name, key))
@@ -579,13 +603,14 @@ class MemoryService:
         target = self.scopes[scope]
         is_update = target.store.get(key) is not None
 
-        text = embed_text(title, summary, body)
-        vector = None
+        chunks = embed_chunks(title, summary, body)
+        chunk_vectors: list[list[float]] | None = None
+        vector: list[float] | None = None
         if self.semantic_enabled:
             for s in self.scopes.values():
                 self.sync_index(s)
-            vectors = self._embed([text])
-            vector = vectors[0] if vectors else None
+            chunk_vectors = self._embed(chunks, DOCUMENT)
+            vector = chunk_vectors[0] if chunk_vectors else None
         similar = self.find_similar(title, summary, exclude=(scope, key), vector=vector)
 
         prev = self._snapshot(target, key)
@@ -597,8 +622,8 @@ class MemoryService:
             target, fp_before, key, title=title, summary=summary, category=category
         )
         embedder = self._active_embedder()
-        if vector is not None and embedder is not None:
-            target.index.upsert(key, text, embedder.model_id, vector)
+        if chunk_vectors is not None and embedder is not None:
+            target.index.upsert_chunks(key, chunks, embedder.model_id, chunk_vectors)
         target.index.record_seen([key])
 
         result: dict[str, Any] = {

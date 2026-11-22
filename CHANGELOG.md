@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- Chunked body vectors (`chunk_body`, `embed_chunks`): long entries (>1200-char bodies) store a head vector (`chunk_no = 0`) plus overlapping title-prefixed ~1200-char / ~200-char-overlap body chunks (capped at 16 vectors per entry) under `(key, chunk_no)` with automatic in-place schema migration, max-over-chunks recall scoring, and head-only duplicate detection.
 - `nachos-maintain` CLI (`python -m nachos_hermes.maintenance`): offline, report-only memory audit (`inbox`, `summaries`, `duplicates`, `unused`, `all`) with required absolute `--profile-home`, `--json` output, and no writes to store or index files.
 - Read-only SQLite mode (`read_only=True`) for `SqliteStore` and `MemoryIndex` using `mode=ro` + `PRAGMA query_only = ON`, with private temporary snapshot support for WAL-mode databases so original `.db`, `-wal`, and `-shm` files are never created, checkpointed, or modified.
 - `MemoryService.duplicate_pairs(sync=False)` for offline lexical duplicate audits without mutating index vectors or usage telemetry.

@@ -231,6 +231,25 @@ Change from before the fix (overall hit@1 / hit@5 / MRR@10): MiniLM 0.684 / 0.89
 
 The earlier recommendation was based on a measurement artefact. With fusion fixed, the ranking changes: `Alibaba-NLP/gte-modernbert-base` (q8) is best overall (hit@1 0.713, hit@5 0.939, MRR 0.818) and clearly best on paraphrase (0.267 hit@1, 0.683 hit@5), natural questions and multi-hop; the cost is a roughly 2x slower build (13 to 19 s against 6 to 9 s for 208 entries), 768-dimensional vectors (about twice the index size and search work) and a 150 MB q8 download, and it is weakest on long-body (0.533 hit@1). The small 384-dimensional models are within about 0.02 of each other and of MiniLM on overall hit@1; MiniLM is still the best on paraphrase among them at hit@5 (0.600) but bge-small is much better on long-body (0.867 against 0.600). Suggested default: keep MiniLM q8 where build time or footprint matter (it is the smallest download and the fastest), and recommend gte-modernbert q8 as the quality choice; on this fixture the gap to the small models is about 0.02 hit@1 and 0.02 to 0.03 hit@5, which is within what a 393-query synthetic set can resolve, so confirm on real memories before changing the default. The default in code is unchanged. Whatever the model, long-body (chunked body vectors) and outdated (recency) remain the weakest categories.
 
+## Chunked body vectors
+
+On `naterchrdsn/memory-next` (integrating lexical cache, WAL telemetry, query/document types and fusion coverage gating), long entries (>1200-char bodies) now store extra overlapping `~1200`-char / `~200`-char-overlap body chunks prefixed with the title (`(key, chunk_no)`, capped at 16 vectors per entry). Recall scores an entry by the max cosine across its vectors; duplicate detection continues to compare head vectors (`chunk_no = 0`) only.
+
+Before vs after chunking on the 208-entry / 393-query fixture (`nachos` backend, `q8`, typed, `--repeat 1`; 15 entries exceed 1200 chars, adding 30 body chunks = 238 total vectors):
+
+| Model | Stage | overall hit@1 / hit@5 / MRR@10 | long-body hit@1 / hit@5 / MRR@10 | p50 / p95 ms | build s | vectors | index KB |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| MiniLM-L6 q8 | before | 0.692 / 0.919 / 0.795 | 0.600 / 0.967 / 0.772 | 7.0 / 17.7 | 3.45 | 208 | 500.0 |
+| MiniLM-L6 q8 | after | 0.713 / 0.919 / 0.805 | 0.967 / 1.000 / 0.983 | 9.1 / 19.7 | 6.27 | 238 | 560.0 |
+| gte-modernbert q8 | before | 0.713 / 0.939 / 0.818 | 0.533 / 0.967 / 0.734 | 26.2 / 63.2 | 15.67 | 208 | 916.0 |
+| gte-modernbert q8 | after | 0.735 / 0.936 / 0.828 | 1.000 / 1.000 / 1.000 | 28.0 / 78.8 | 28.88 | 238 | 1036.0 |
+
+Readings:
+
+- **Long-body recall jumps sharply**: MiniLM-L6 q8 rises from `0.600` to `0.967` hit@1 (`+0.367`, MRR `0.772 -> 0.983`) and gte-modernbert q8 reaches `1.000 / 1.000 / 1.000` (`+0.467` hit@1, MRR `0.734 -> 1.000`), lifting overall hit@1 by `+0.021` to `+0.022` and overall MRR@10 by `+0.010` on both models.
+- **Small index footprint**: +30 chunks adds +60 KB (+12%) for MiniLM-L6 and +120 KB (+13%) for gte-modernbert. Build time rises when long entries embed multiple chunks synchronously on `put()`, while search latency increases modestly (`+2 ms` p50).
+- **Slight paraphrase dip**: Taking the max cosine over 3 vectors for long entries gives them slightly more chances to outrank 1-vector entries on word-free paraphrases (MiniLM paraphrase hit@1 `0.183 -> 0.150`, gte-modernbert `0.267 -> 0.200`), a minor multiple-testing trade-off offset by the large long-body gain.
+
 ### Not measured
 
 No OpenAI-compatible server (Ollama etc.) was reachable, so the `openai` backend has no numbers; the `sentence-transformers` row above predates the query type and used no prefixes.

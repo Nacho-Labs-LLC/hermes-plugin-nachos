@@ -23,7 +23,7 @@ import sqlite3
 import tempfile
 import time
 from array import array
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -167,10 +167,11 @@ class MemoryIndex:
     def __init__(self, path: str | os.PathLike[str], *, read_only: bool = False) -> None:
         self._path = str(path)
         self._read_only = read_only
-        self._cache: tuple[str, dict[str, list[float]]] | None = None
+        self._cache: tuple[str, dict[str, list[float]], dict[str, list[list[float]]]] | None = None
         self._temp_dir: tempfile.TemporaryDirectory[str] | None = None
         if read_only:
             self._conn, self._temp_dir = open_read_only_sqlite(path)
+            self._chunked = "chunk_no" in self._table_columns("vectors")
             return
         if self._path != ":memory:":
             Path(self._path).parent.mkdir(parents=True, exist_ok=True)
@@ -181,10 +182,12 @@ class MemoryIndex:
         self._conn.executescript(
             """
             CREATE TABLE IF NOT EXISTS vectors (
-                key          TEXT PRIMARY KEY,
+                key          TEXT NOT NULL,
+                chunk_no     INTEGER NOT NULL DEFAULT 0,
                 content_hash TEXT NOT NULL,
                 model        TEXT NOT NULL,
-                vec          BLOB NOT NULL
+                vec          BLOB NOT NULL,
+                PRIMARY KEY (key, chunk_no)
             );
             CREATE TABLE IF NOT EXISTS usage (
                 key          TEXT PRIMARY KEY,
@@ -220,26 +223,73 @@ class MemoryIndex:
             """
         )
         self._conn.commit()
+        self._migrate_vectors_table()
+        self._chunked = True
+
+    def _table_columns(self, table: str) -> set[str]:
+        return {str(row[1]) for row in self._conn.execute(f"PRAGMA table_info({table})").fetchall()}
+
+    def _migrate_vectors_table(self) -> None:
+        cols = self._table_columns("vectors")
+        if not cols or "chunk_no" in cols:
+            return
+        # Pre-chunking schema had PRIMARY KEY (key) without chunk_no. Vectors are derived
+        # data, so recreating the table lets lazy sync rebuild chunked vectors automatically.
+        self._conn.executescript(
+            """
+            DROP TABLE vectors;
+            CREATE TABLE vectors (
+                key          TEXT NOT NULL,
+                chunk_no     INTEGER NOT NULL DEFAULT 0,
+                content_hash TEXT NOT NULL,
+                model        TEXT NOT NULL,
+                vec          BLOB NOT NULL,
+                PRIMARY KEY (key, chunk_no)
+            );
+            """
+        )
+        self._conn.commit()
 
     # -- vectors -----------------------------------------------------------
 
-    def stale_keys(self, docs: dict[str, str], model: str) -> list[str]:
-        """Keys whose text changed, were never embedded, or used another model."""
-        known = {
-            key: (h, m)
-            for key, h, m in self._conn.execute("SELECT key, content_hash, model FROM vectors")
-        }
-        return [key for key, text in docs.items() if known.get(key) != (content_hash(text), model)]
+    def stale_keys(self, docs: Mapping[str, str | list[str]], model: str) -> list[str]:
+        """Keys whose chunks changed, shrank/grew, were never embedded, or used another model."""
+        known: dict[str, dict[int, tuple[str, str]]] = {}
+        for key, chunk_no, h, m in self._conn.execute(
+            "SELECT key, chunk_no, content_hash, model FROM vectors"
+        ):
+            known.setdefault(key, {})[int(chunk_no)] = (h, m)
+        stale: list[str] = []
+        for key, value in docs.items():
+            chunks = [value] if isinstance(value, str) else value
+            expected = {i: (content_hash(text), model) for i, text in enumerate(chunks)}
+            if known.get(key) != expected:
+                stale.append(key)
+        return stale
 
-    def upsert(self, key: str, text: str, model: str, vec: list[float]) -> None:
+    def upsert_chunks(
+        self, key: str, texts: list[str], model: str, vecs: list[list[float]]
+    ) -> None:
+        """Store all chunk vectors (``chunk_no = 0..n-1``) for ``key``, pruning extra chunks."""
+        if len(texts) != len(vecs):
+            raise ValueError(f"expected {len(texts)} vectors for {key!r}, got {len(vecs)}")
         self._conn.execute(
-            "INSERT INTO vectors (key, content_hash, model, vec) VALUES (?, ?, ?, ?) "
-            "ON CONFLICT(key) DO UPDATE SET content_hash=excluded.content_hash, "
-            "model=excluded.model, vec=excluded.vec",
-            (key, content_hash(text), model, _pack(_normalize(vec))),
+            "DELETE FROM vectors WHERE key = ? AND chunk_no >= ?",
+            (key, len(texts)),
         )
+        for chunk_no, (text, vec) in enumerate(zip(texts, vecs)):
+            self._conn.execute(
+                "INSERT INTO vectors (key, chunk_no, content_hash, model, vec) "
+                "VALUES (?, ?, ?, ?, ?) "
+                "ON CONFLICT(key, chunk_no) DO UPDATE SET content_hash=excluded.content_hash, "
+                "model=excluded.model, vec=excluded.vec",
+                (key, chunk_no, content_hash(text), model, _pack(_normalize(vec))),
+            )
         self._conn.commit()
         self._cache = None
+
+    def upsert(self, key: str, text: str, model: str, vec: list[float]) -> None:
+        self.upsert_chunks(key, [text], model, [vec])
 
     def delete(self, key: str) -> None:
         self._conn.execute("DELETE FROM vectors WHERE key = ?", (key,))
@@ -248,7 +298,7 @@ class MemoryIndex:
         self._cache = None
 
     def delete_vector(self, key: str) -> None:
-        """Drop only the entry's vector so lazy sync re-embeds it."""
+        """Drop all of an entry's vectors so lazy sync re-embeds it."""
         self._conn.execute("DELETE FROM vectors WHERE key = ?", (key,))
         self._conn.commit()
         self._cache = None
@@ -259,7 +309,7 @@ class MemoryIndex:
         The ``changes`` log is left alone so removed entries stay revertible.
         """
         live = set(keys)
-        indexed = {k for (k,) in self._conn.execute("SELECT key FROM vectors")}
+        indexed = {k for (k,) in self._conn.execute("SELECT DISTINCT key FROM vectors")}
         tracked = {k for (k,) in self._conn.execute("SELECT key FROM usage")}
         gone = (indexed | tracked) - live
         for key in gone:
@@ -270,21 +320,71 @@ class MemoryIndex:
             self._cache = None
         return len(gone)
 
-    def vectors(self, model: str) -> dict[str, list[float]]:
-        if self._cache is None or self._cache[0] != model:
+    def _load_vectors(
+        self, model: str
+    ) -> tuple[dict[str, list[float]], dict[str, list[list[float]]]]:
+        if self._cache is not None and self._cache[0] == model:
+            return self._cache[1], self._cache[2]
+        heads: dict[str, list[float]] = {}
+        all_vecs: dict[str, list[list[float]]] = {}
+        if self._chunked:
+            rows = self._conn.execute(
+                "SELECT key, chunk_no, vec FROM vectors WHERE model = ? ORDER BY key, chunk_no",
+                (model,),
+            )
+            for key, chunk_no, blob in rows:
+                vec = _unpack(blob)
+                if int(chunk_no) == 0:
+                    heads[key] = vec
+                all_vecs.setdefault(key, []).append(vec)
+        else:
             rows = self._conn.execute("SELECT key, vec FROM vectors WHERE model = ?", (model,))
-            self._cache = (model, {key: _unpack(blob) for key, blob in rows})
-        return self._cache[1]
+            for key, blob in rows:
+                vec = _unpack(blob)
+                heads[key] = vec
+                all_vecs[key] = [vec]
+        self._cache = (model, heads, all_vecs)
+        return heads, all_vecs
+
+    def vectors(self, model: str) -> dict[str, list[float]]:
+        """Head vectors (``chunk_no = 0``) for ``model`` (used for duplicate detection)."""
+        return self._load_vectors(model)[0]
 
     def search(
-        self, query_vec: list[float], model: str, top_k: int = 10, exclude: str | None = None
+        self,
+        query_vec: list[float],
+        model: str,
+        top_k: int = 10,
+        exclude: str | None = None,
+        *,
+        head_only: bool = False,
     ) -> list[tuple[str, float]]:
         q = _normalize(query_vec)
-        scored = [(key, dot(q, vec)) for key, vec in self.vectors(model).items() if key != exclude]
+        if head_only:
+            heads = self._load_vectors(model)[0]
+            scored = [(key, dot(q, vec)) for key, vec in heads.items() if key != exclude]
+        else:
+            all_vecs = self._load_vectors(model)[1]
+            scored = [
+                (key, max(dot(q, vec) for vec in vecs))
+                for key, vecs in all_vecs.items()
+                if key != exclude and vecs
+            ]
         scored.sort(key=lambda item: -item[1])
         return scored[:top_k]
 
     def count(self, model: str | None = None) -> int:
+        """Number of distinct indexed entries (for ``model`` if given)."""
+        if model is None:
+            return int(self._conn.execute("SELECT COUNT(DISTINCT key) FROM vectors").fetchone()[0])
+        return int(
+            self._conn.execute(
+                "SELECT COUNT(DISTINCT key) FROM vectors WHERE model = ?", (model,)
+            ).fetchone()[0]
+        )
+
+    def vector_count(self, model: str | None = None) -> int:
+        """Total stored chunk vectors (for ``model`` if given)."""
         if model is None:
             return int(self._conn.execute("SELECT COUNT(*) FROM vectors").fetchone()[0])
         return int(
