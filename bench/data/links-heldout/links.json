@@ -1,0 +1,472 @@
+{
+ "description": "Held-out hand-labelled entry pairs (undirected) a reader would want linked, written before the semantic link path was built and not tuned against. Negatives are same-topic pairs that should not be linked; they are documentation and are reported separately by --link-eval.",
+ "positives": [
+  {
+   "a": "kestrel-storefront",
+   "b": "checkout-flow",
+   "reason": "storefront and its checkout"
+  },
+  {
+   "a": "checkout-flow",
+   "b": "payments-service",
+   "reason": "checkout calls the payments service"
+  },
+  {
+   "a": "payments-service",
+   "b": "refund-policy",
+   "reason": "refunds are issued via the payment provider"
+  },
+  {
+   "a": "payments-service",
+   "b": "mollie-payouts",
+   "reason": "payments provider settlement"
+  },
+  {
+   "a": "mollie-payouts",
+   "b": "moneybird-integration",
+   "reason": "payouts synced to invoicing"
+  },
+  {
+   "a": "payments-service",
+   "b": "postgres-hosts",
+   "reason": "pay_prod lives on the main server"
+  },
+  {
+   "a": "postgres-hosts",
+   "b": "shop-database",
+   "reason": "same database servers"
+  },
+  {
+   "a": "postgres-hosts",
+   "b": "database-backups",
+   "reason": "what gets backed up"
+  },
+  {
+   "a": "database-backups",
+   "b": "restore-drill",
+   "reason": "restore test of the backups"
+  },
+  {
+   "a": "deploying-pay-svc",
+   "b": "payments-service",
+   "reason": "deploys the payments service"
+  },
+  {
+   "a": "deploying-pay-svc",
+   "b": "fly-io-apps",
+   "reason": "deploys to Fly"
+  },
+  {
+   "a": "fly-io-apps",
+   "b": "recommendation-api",
+   "reason": "kestrel-rec app"
+  },
+  {
+   "a": "kestrel-storefront",
+   "b": "storefront-hosting",
+   "reason": "how the storefront ships"
+  },
+  {
+   "a": "inventory-sync",
+   "b": "supplier-velotrade",
+   "reason": "stock file comes from the supplier"
+  },
+  {
+   "a": "inventory-sync",
+   "b": "stock-alert-thresholds",
+   "reason": "stock levels feed the alerts"
+  },
+  {
+   "a": "supplier-velotrade",
+   "b": "restock-report",
+   "reason": "supplier orders"
+  },
+  {
+   "a": "stock-alert-thresholds",
+   "b": "restock-report",
+   "reason": "low stock drives reorders"
+  },
+  {
+   "a": "recommendation-model-v2",
+   "b": "feature-store",
+   "reason": "model features"
+  },
+  {
+   "a": "recommendation-model-v2",
+   "b": "training-schedule",
+   "reason": "retraining schedule"
+  },
+  {
+   "a": "training-schedule",
+   "b": "gpu-box",
+   "reason": "training machine"
+  },
+  {
+   "a": "gpu-box",
+   "b": "jump-host",
+   "reason": "only reachable via the jump host"
+  },
+  {
+   "a": "feature-store",
+   "b": "data-warehouse",
+   "reason": "offline store dataset"
+  },
+  {
+   "a": "data-warehouse",
+   "b": "event-tracking-plan",
+   "reason": "where tracked events land"
+  },
+  {
+   "a": "event-tracking-plan",
+   "b": "recommendation-model-v2",
+   "reason": "events are the training data"
+  },
+  {
+   "a": "data-warehouse",
+   "b": "analytics-dashboards",
+   "reason": "dashboards read the warehouse"
+  },
+  {
+   "a": "analytics-dashboards",
+   "b": "weekly-sales-review",
+   "reason": "the review uses the dashboards"
+  },
+  {
+   "a": "recommendation-api",
+   "b": "recommendation-model-v2",
+   "reason": "serves the trained model"
+  },
+  {
+   "a": "recommendation-api",
+   "b": "experiment-log-recommender-v2",
+   "reason": "experiment on the served model"
+  },
+  {
+   "a": "a-b-testing",
+   "b": "experiment-log-recommender-v2",
+   "reason": "platform of the experiment"
+  },
+  {
+   "a": "returns-process",
+   "b": "sendcloud-setup",
+   "reason": "return labels"
+  },
+  {
+   "a": "returns-process",
+   "b": "refund-policy",
+   "reason": "refund follows inspection"
+  },
+  {
+   "a": "returns-process",
+   "b": "customer-support-tooling",
+   "reason": "support handles return requests"
+  },
+  {
+   "a": "warehouse-layout",
+   "b": "pick-list-generator",
+   "reason": "pick lists follow the layout"
+  },
+  {
+   "a": "pick-list-generator",
+   "b": "warehouse-printers",
+   "reason": "printed on the label printer"
+  },
+  {
+   "a": "pick-list-generator",
+   "b": "ops-scripts-repo",
+   "reason": "script lives in the ops repo"
+  },
+  {
+   "a": "ops-scripts-repo",
+   "b": "ops-box",
+   "reason": "repo runs on the cron host"
+  },
+  {
+   "a": "ops-scripts-repo",
+   "b": "restock-report",
+   "reason": "script in the repo"
+  },
+  {
+   "a": "ops-scripts-repo",
+   "b": "gdpr-requests",
+   "reason": "deletion script in the repo"
+  },
+  {
+   "a": "ops-scripts-repo",
+   "b": "marketplace-listings",
+   "reason": "sync script in the repo"
+  },
+  {
+   "a": "marketplace-listings",
+   "b": "product-listing-template",
+   "reason": "listings mirrored to marketplaces"
+  },
+  {
+   "a": "bike-grading",
+   "b": "photo-workflow",
+   "reason": "each graded bike is photographed"
+  },
+  {
+   "a": "photo-workflow",
+   "b": "cloudinary",
+   "reason": "images stored on Cloudinary"
+  },
+  {
+   "a": "product-listing-template",
+   "b": "cloudinary",
+   "reason": "listing photos come from Cloudinary"
+  },
+  {
+   "a": "product-listing-template",
+   "b": "bike-grading",
+   "reason": "grade is part of the listing"
+  },
+  {
+   "a": "pricing-rules",
+   "b": "supplier-velotrade",
+   "reason": "price derives from the supplier's price"
+  },
+  {
+   "a": "incident-2024-03-checkout-outage",
+   "b": "payments-service",
+   "reason": "the outage was in the payments service"
+  },
+  {
+   "a": "incident-2024-03-checkout-outage",
+   "b": "deploying-pay-svc",
+   "reason": "caused by a deploy"
+  },
+  {
+   "a": "incident-2024-03-checkout-outage",
+   "b": "alert-rules",
+   "reason": "alerting after the incident"
+  },
+  {
+   "a": "incident-2024-03-checkout-outage",
+   "b": "postmortem-template",
+   "reason": "postmortem format"
+  },
+  {
+   "a": "alert-rules",
+   "b": "monitoring",
+   "reason": "alerts come from monitoring"
+  },
+  {
+   "a": "alert-rules",
+   "b": "on-call-arrangement",
+   "reason": "alerts page the on-call"
+  },
+  {
+   "a": "monitoring",
+   "b": "status-page",
+   "reason": "uptime and public status"
+  },
+  {
+   "a": "secrets-handling",
+   "b": "vault",
+   "reason": "secrets live in Vault"
+  },
+  {
+   "a": "vault",
+   "b": "sendcloud-setup",
+   "reason": "key read from Vault"
+  },
+  {
+   "a": "vault",
+   "b": "moneybird-integration",
+   "reason": "token stored in Vault"
+  },
+  {
+   "a": "domains-and-dns",
+   "b": "tls-certificates",
+   "reason": "domain and certificate setup"
+  },
+  {
+   "a": "domains-and-dns",
+   "b": "kestrel-storefront",
+   "reason": "the shop's domain"
+  },
+  {
+   "a": "brand-guidelines",
+   "b": "design-tokens",
+   "reason": "brand colours as tokens"
+  },
+  {
+   "a": "design-tokens",
+   "b": "typescript-conventions",
+   "reason": "frontend code conventions"
+  },
+  {
+   "a": "git-workflow",
+   "b": "ci-pipelines",
+   "reason": "pull request checks"
+  },
+  {
+   "a": "ci-pipelines",
+   "b": "deploying-pay-svc",
+   "reason": "pipeline continues into deploy"
+  },
+  {
+   "a": "python-conventions",
+   "b": "ops-scripts-repo",
+   "reason": "scripts follow the Python rules"
+  },
+  {
+   "a": "test-data",
+   "b": "shop-database",
+   "reason": "dump of the shop database"
+  },
+  {
+   "a": "test-data",
+   "b": "dev-environment",
+   "reason": "seeding local environments"
+  },
+  {
+   "a": "dev-environment",
+   "b": "onboarding",
+   "reason": "setup in week one"
+  },
+  {
+   "a": "onboarding",
+   "b": "git-workflow",
+   "reason": "first pull request"
+  },
+  {
+   "a": "expense-policy",
+   "b": "company-cards",
+   "reason": "spending via Pleo"
+  },
+  {
+   "a": "accountant",
+   "b": "vat-handling",
+   "reason": "the accountant files VAT"
+  },
+  {
+   "a": "accountant",
+   "b": "moneybird-integration",
+   "reason": "invoicing"
+  },
+  {
+   "a": "promo-codes",
+   "b": "admin-panel",
+   "reason": "codes managed in the back office"
+  },
+  {
+   "a": "admin-panel",
+   "b": "shop-database",
+   "reason": "back office edits the shop database"
+  },
+  {
+   "a": "typesense-search",
+   "b": "search-sync",
+   "reason": "search index sync"
+  },
+  {
+   "a": "search-sync",
+   "b": "shop-database",
+   "reason": "reads from the shop database"
+  },
+  {
+   "a": "kestrel-storefront",
+   "b": "typesense-search",
+   "reason": "storefront search"
+  },
+  {
+   "a": "newsletter",
+   "b": "promo-codes",
+   "reason": "newsletter carries the code"
+  },
+  {
+   "a": "gdpr-requests",
+   "b": "shop-database",
+   "reason": "deletes customer rows"
+  },
+  {
+   "a": "shipping-rates",
+   "b": "sendcloud-setup",
+   "reason": "carrier rates"
+  },
+  {
+   "a": "typesense-search",
+   "b": "dev-environment",
+   "reason": "local search container"
+  }
+ ],
+ "negatives": [
+  {
+   "a": "holiday-policy",
+   "b": "expense-policy",
+   "reason": "both HR policies, unrelated"
+  },
+  {
+   "a": "warehouse-printers",
+   "b": "utrecht-coworking",
+   "reason": "both office devices, unrelated"
+  },
+  {
+   "a": "storefront-hosting",
+   "b": "fly-io-apps",
+   "reason": "both hosting, different systems"
+  },
+  {
+   "a": "restore-drill",
+   "b": "weekly-sales-review",
+   "reason": "both recurring, unrelated"
+  },
+  {
+   "a": "weekly-sales-review",
+   "b": "restock-report",
+   "reason": "both weekly routines"
+  },
+  {
+   "a": "database-backups",
+   "b": "cloudinary",
+   "reason": "both storage, unrelated"
+  },
+  {
+   "a": "jump-host",
+   "b": "vault",
+   "reason": "both security infrastructure, independent"
+  },
+  {
+   "a": "gpu-box",
+   "b": "ops-box",
+   "reason": "both servers, unrelated"
+  },
+  {
+   "a": "ad-budget",
+   "b": "newsletter",
+   "reason": "both marketing, unrelated"
+  },
+  {
+   "a": "onboarding",
+   "b": "holiday-policy",
+   "reason": "both people topics"
+  },
+  {
+   "a": "warehouse-layout",
+   "b": "utrecht-coworking",
+   "reason": "both physical spaces"
+  },
+  {
+   "a": "customer-support-tooling",
+   "b": "gdpr-requests",
+   "reason": "both customer-facing, unrelated"
+  },
+  {
+   "a": "typescript-conventions",
+   "b": "python-conventions",
+   "reason": "two style guides for different codebases"
+  },
+  {
+   "a": "on-call-arrangement",
+   "b": "holiday-policy",
+   "reason": "scheduling topics"
+  },
+  {
+   "a": "status-page",
+   "b": "analytics-dashboards",
+   "reason": "both web dashboards"
+  }
+ ]
+}
