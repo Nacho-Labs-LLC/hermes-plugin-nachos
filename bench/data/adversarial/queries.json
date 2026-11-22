@@ -736,5 +736,110 @@
   "category": "no-answer",
   "query": "how do we handle GDPR deletion requests",
   "expect": []
+ },
+ {
+  "id": "a097",
+  "category": "no-answer",
+  "kind": "near-miss",
+  "query": "Postgres statement_timeout and idle transaction timeout",
+  "expect": []
+ },
+ {
+  "id": "a098",
+  "category": "no-answer",
+  "kind": "near-miss",
+  "query": "Redis TLS certificate expiry and cipher suite",
+  "expect": []
+ },
+ {
+  "id": "a099",
+  "category": "no-answer",
+  "kind": "near-miss",
+  "query": "Adyen 3DS2 challenge flow webhook retry schedule",
+  "expect": []
+ },
+ {
+  "id": "a100",
+  "category": "no-answer",
+  "kind": "near-miss",
+  "query": "Keycloak LDAP user federation sync interval",
+  "expect": []
+ },
+ {
+  "id": "a101",
+  "category": "no-answer",
+  "kind": "near-miss",
+  "query": "Grafana Prometheus remote write retention limit",
+  "expect": []
+ },
+ {
+  "id": "a102",
+  "category": "no-answer",
+  "kind": "near-miss",
+  "query": "Kubernetes prod HPA target CPU utilization percentage",
+  "expect": []
+ },
+ {
+  "id": "a103",
+  "category": "no-answer",
+  "kind": "near-miss",
+  "query": "Berlin office bicycle storage locker combination",
+  "expect": []
+ },
+ {
+  "id": "a104",
+  "category": "no-answer",
+  "kind": "near-miss",
+  "query": "Airflow Celery worker concurrency and task soft time limit",
+  "expect": []
+ },
+ {
+  "id": "a105",
+  "category": "no-answer",
+  "kind": "near-miss",
+  "query": "Marrow Elasticsearch primary shard count per index",
+  "expect": []
+ },
+ {
+  "id": "a106",
+  "category": "no-answer",
+  "kind": "near-miss",
+  "query": "Orchard Android Play Store upload keystore alias",
+  "expect": []
+ },
+ {
+  "id": "a107",
+  "category": "no-answer",
+  "kind": "near-miss",
+  "query": "Gantry deploy canary traffic split percentages",
+  "expect": []
+ },
+ {
+  "id": "a108",
+  "category": "no-answer",
+  "kind": "near-miss",
+  "query": "Sundial backup S3 SSE-KMS encryption key alias",
+  "expect": []
+ },
+ {
+  "id": "a109",
+  "category": "no-answer",
+  "kind": "near-miss",
+  "query": "Tidewater Kafka consumer group lag alert threshold",
+  "expect": []
+ },
+ {
+  "id": "a110",
+  "category": "no-answer",
+  "kind": "near-miss",
+  "query": "PagerDuty planned maintenance window schedule",
+  "expect": []
+ },
+ {
+  "id": "a111",
+  "category": "no-answer",
+  "kind": "near-miss",
+  "query": "Business tier SSO SAML certificate rotation runbook",
+  "expect": []
  }
 ]

@@ -33,6 +33,7 @@ DEFAULTS: dict[str, Any] = {
     "duplicate_threshold": 0.65,
     "duplicate_calibration": "auto",
     "similarity_floor": "off",
+    "abstention": "hint",
     "rerank": "off",
     "rerank_model": "",
     "rerank_dtype": "",
@@ -54,9 +55,10 @@ _VERBATIM_KEYS = frozenset({"embedding_query_prefix", "embedding_document_prefix
 _CHOICES: dict[str, tuple[str, ...]] = {
     "capture": ("review", "off"),
     "embedding_pooling": ("", "mean", "cls"),
-    "rerank": ("off", "nachos"),
+    "rerank": ("off", "nachos", "borderline"),
     "similarity_floor": ("off", "auto"),
     "duplicate_calibration": ("auto", "off"),
+    "abstention": ("hint", "on", "off"),
 }
 
 CONFIG_SCHEMA: list[dict[str, Any]] = [
@@ -138,11 +140,19 @@ CONFIG_SCHEMA: list[dict[str, Any]] = [
         "random-pair similarity (calibrated from the stored vectors).",
     },
     {
+        "key": "abstention",
+        "choices": ["hint", "on", "off"],
+        "description": "hint (default) attaches confidence and no_confident_match fields as an "
+        "informational signal without instructing automatic retries; on adds retry-with-rephrasings "
+        "guidance to the recall tool; off omits confidence fields.",
+    },
+    {
         "key": "rerank",
-        "choices": ["off", "nachos"],
-        "description": "nachos = re-score the top fused results with a cross-encoder served by "
-        "the nachos-embeddings CLI (needs the nachos embeddings backend and a CLI with "
-        "--rerank-model; otherwise ignored). Adds roughly 0.3 s per recall.",
+        "choices": ["off", "nachos", "borderline"],
+        "description": "nachos = re-score the top fused results on every recall with a "
+        "cross-encoder served by nachos-embeddings; borderline = re-score only borderline "
+        "confidence queries (top 5 candidates) to verify abstention at low average latency; "
+        "off = disabled.",
     },
     {
         "key": "rerank_model",
@@ -349,7 +359,7 @@ def make_embedder_from_config(cfg: dict[str, Any]) -> Embedder | None:
         api_key_env=cfg["embedding_api_key_env"],
         query_prefix=cfg["embedding_query_prefix"],
         document_prefix=cfg["embedding_document_prefix"],
-        rerank=cfg["rerank"] == "nachos",
+        rerank=cfg["rerank"] in ("nachos", "borderline"),
         rerank_model=cfg["rerank_model"],
         rerank_dtype=cfg["rerank_dtype"],
         pooling=cfg["embedding_pooling"],

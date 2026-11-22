@@ -33,7 +33,7 @@ from __future__ import annotations
 import contextlib
 import logging
 from collections import OrderedDict
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -52,9 +52,13 @@ from .provenance import MANUAL, MAX_QUOTE_CHARS, source_view
 from .quality import low_signal_reason
 from .ranking import (
     DEFAULT_BLEND,
+    build_confidence_response,
     duplicate_threshold_for,
     find_duplicate_pairs,
     find_similar_entries,
+    fuse_multi_query,
+    hydrate_ranked,
+    normalize_queries,
     rerank_rows,
     scope_ranked_hits,
     update_threshold_for,
@@ -155,6 +159,7 @@ class MemoryService:
         rerank_candidates: int = 25,
         rerank_mode: str = DEFAULT_BLEND,
         reindex_budget_s: float = DEFAULT_BUDGET_S,
+        rerank_borderline: bool = False,
     ):
         if PROFILE not in scopes:
             raise ValueError("a 'profile' scope is required")
@@ -175,6 +180,8 @@ class MemoryService:
         #: Fused results sent to the cross-encoder, when the embedder offers one.
         self.rerank_candidates = rerank_candidates
         self.rerank_mode = rerank_mode
+        #: When True (rerank="borderline"), skip full reranking and only verify borderline queries.
+        self.rerank_borderline = rerank_borderline
         self._rerank_error: str | None = None
         #: Seconds one recall or write may spend advancing a bulk re-embed (see ``reindex``).
         self.reindex_budget_s = reindex_budget_s
@@ -456,35 +463,92 @@ class MemoryService:
 
     def search(
         self,
-        query: str,
+        query: str = "",
         *,
+        queries: Sequence[str] | None = None,
         limit: int = 10,
         scope: str | None = None,
         include_superseded: bool = False,
     ) -> list[dict[str, Any]]:
-        query = (query or "").strip()
-        if not query:
-            return []
-        targets = self._scopes_for(scope)
-        qvec = self._query_vector(targets, query)
-        fused: dict[tuple[str, str], dict[str, Any]] = {}
-        for s in targets:
-            for key, rank, how, similarity, chunk in self._ranked_hits(
-                s, query, qvec, limit, include_superseded=include_superseded
-            ):
-                row = fused.setdefault((s.name, key), {"score": 0.0, "match": []})
-                row["score"] += 1.0 / (_RRF_K + rank)
-                row["match"].append(how)
-                if similarity is not None:
-                    row["similarity"] = round(similarity, 3)
-                    row["chunk"] = chunk
+        results, _query_list, _stats, _chunks = self._run_search(
+            query, queries=queries, limit=limit, scope=scope, include_superseded=include_superseded
+        )
+        return results
 
-        reranking = self._reranking()
+    def search_with_confidence(
+        self,
+        query: str = "",
+        *,
+        queries: Sequence[str] | None = None,
+        limit: int = 10,
+        scope: str | None = None,
+        include_superseded: bool = False,
+        mode: str = "on",
+    ) -> dict[str, Any]:
+        """Search and attach a per-query confidence assessment + explicit abstention signal."""
+        results, query_list, stats, chunks = self._run_search(
+            query,
+            queries=queries,
+            limit=limit,
+            scope=scope,
+            include_superseded=include_superseded,
+            collect_stats=True,
+        )
+        payload, error = build_confidence_response(
+            query_list,
+            results,
+            stats,
+            self.scopes,
+            chunks=chunks,
+            lexical_fn=self._lexical_index,
+            meta_fn=self._scope_meta,
+            embedder=self._active_embedder(),
+            rerank_borderline=self.rerank_borderline and self._reranking(),
+            mode=mode,
+        )
+        if error is not None:
+            self._rerank_error = error
+        return payload
+
+    def _run_search(
+        self,
+        query: str = "",
+        *,
+        queries: Sequence[str] | None = None,
+        limit: int = 10,
+        scope: str | None = None,
+        include_superseded: bool = False,
+        collect_stats: bool = False,
+    ) -> tuple[
+        list[dict[str, Any]],
+        list[str],
+        list[dict[str, list[float]]],
+        dict[tuple[str, str], int],
+    ]:
+        query_list = normalize_queries(query, queries)
+        if not query_list:
+            return [], [], [], {}
+        targets = self._scopes_for(scope)
+        qvecs = self._query_vectors(targets, query_list)
+        fused, stats_list = fuse_multi_query(
+            query_list,
+            qvecs,
+            targets,
+            self._ranked_hits,
+            limit=limit,
+            include_superseded=include_superseded,
+            collect_stats=collect_stats,
+            rrf_k=_RRF_K,
+        )
+
+        reranking = self._reranking() and not self.rerank_borderline
         pool_limit = max(limit, self.rerank_candidates) if reranking else limit
         ranked = self._select_ranked(fused, limit=pool_limit, include_superseded=include_superseded)
         if reranking:
-            ranked = self._rerank(query, ranked, limit)
-        return self._hydrate(ranked)
+            ranked = self._rerank(query_list, ranked, limit)
+        chunks = {pair: int(row.get("chunk", 0)) for pair, row in ranked}
+        results = hydrate_ranked(ranked, self.scopes, self._scope_meta, self._provenance)
+        return results, query_list, stats_list, chunks
 
     def _reranking(self) -> bool:
         embedder = self._active_embedder()
@@ -492,7 +556,7 @@ class MemoryService:
 
     def _rerank(
         self,
-        query: str,
+        queries: Sequence[str],
         ranked: list[tuple[tuple[str, str], dict[str, Any]]],
         limit: int,
     ) -> list[tuple[tuple[str, str], dict[str, Any]]]:
@@ -502,7 +566,7 @@ class MemoryService:
             return ranked[:limit]
         out, error = rerank_rows(
             embedder,
-            query,
+            queries,
             ranked,
             self.scopes,
             limit=limit,
@@ -514,16 +578,18 @@ class MemoryService:
             logger.warning("Nachos reranking disabled for this session (%s).", self._rerank_error)
         return out
 
-    def _query_vector(self, targets: list[Scope], query: str) -> list[float] | None:
-        """Embedding of ``query`` (after syncing the target indexes), or None if lexical-only."""
-        if not self.semantic_enabled:
+    def _query_vectors(
+        self, targets: list[Scope], query_list: list[str]
+    ) -> list[list[float]] | None:
+        """Batched query embeddings (after syncing target indexes), or None if lexical-only."""
+        if not self.semantic_enabled or not query_list:
             return None
         for s in targets:
             self.sync_index(s)
         if self.reindexing:
             return None  # mid-switch: lexical only until every entry has the new model's vectors
-        vectors = self._embed([query], QUERY)
-        return vectors[0] if vectors else None
+        vectors = self._embed(query_list, QUERY)
+        return vectors if vectors and len(vectors) == len(query_list) else None
 
     def _ranked_hits(
         self,
@@ -533,6 +599,7 @@ class MemoryService:
         limit: int,
         *,
         include_superseded: bool = False,
+        stats: dict[str, list[float]] | None = None,
     ) -> Iterator[tuple[str, int, str, float | None, int]]:
         """(key, rank, how, similarity, best chunk_no) hits for one scope, lexical then semantic."""
         embedder = self._active_embedder()
@@ -547,47 +614,13 @@ class MemoryService:
             min_lexical_coverage=_MIN_LEXICAL_COVERAGE,
             chunk_penalty=self.chunk_penalty,
             similarity_floor=self.similarity_floor,
+            stats=stats,
         )
 
     def _duplicate_threshold_for(self, s: Scope, model_id: str) -> float:
         return duplicate_threshold_for(
             s.index, model_id, self.duplicate_threshold, calibrate=self.calibrate_duplicates
         )
-
-    def _hydrate(
-        self, ranked: list[tuple[tuple[str, str], dict[str, Any]]]
-    ) -> list[dict[str, Any]]:
-        """Turn fused ranking rows into result dicts, recording a hit per returned entry."""
-        results: list[dict[str, Any]] = []
-        hits_by_scope: dict[str, list[str]] = {}
-        for (scope_name, key), row in ranked:
-            s = self.scopes[scope_name]
-            body = s.store.get(key)
-            if body is None:
-                continue
-            hits_by_scope.setdefault(scope_name, []).append(key)
-            result: dict[str, Any] = {
-                "key": key,
-                "scope": scope_name,
-                "body": body,
-                "match": "+".join(row["match"]),
-            }
-            if "similarity" in row:
-                result["similarity"] = row["similarity"]
-            if "rerank" in row:
-                result["rerank"] = row["rerank"]
-            meta = self._scope_meta(s).get(key)
-            if meta is not None and meta.superseded_by:
-                result["superseded_by"] = meta.superseded_by
-            results.append(result)
-        for scope_name, keys in hits_by_scope.items():
-            self.scopes[scope_name].index.record_hits(keys)
-        sources = {n: self._provenance(self.scopes[n], ks) for n, ks in hits_by_scope.items()}
-        for result in results:
-            source = source_view(sources.get(result["scope"], {}).get(result["key"]))
-            if source:
-                result["source"] = source
-        return results
 
     # -- duplicates --------------------------------------------------------
 

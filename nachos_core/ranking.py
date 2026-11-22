@@ -5,13 +5,15 @@ No store, index or embedder access; ``MemoryService`` supplies the data.
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, TypeVar
 
+from .calibration import assess_confidence, format_search_response, is_borderline
 from .chunking import embed_chunks
 from .index import dot
 from .lexical import jaccard
-from .validity import redirect_hits
+from .provenance import source_view
+from .validity import redirect_hits, resolve_successor
 
 if TYPE_CHECKING:
     from .embeddings import Embedder
@@ -26,6 +28,40 @@ PASSAGE_CHARS = 1500
 #: Random-pair cosine percentile used to calibrate ``duplicate_threshold`` and ``possible_updates``.
 DUP_PERCENTILE = "p99"
 UPDATE_PERCENTILE = "p99"
+#: Max query variants fused in one multi-query search call.
+MAX_SEARCH_QUERIES = 4
+#: Top fused candidates re-scored per variant during multi-query reranking (keeps total pairs small).
+MULTI_QUERY_RERANK_CANDIDATES = 5
+#: Top results re-scored when optional borderline cross-encoder verification triggers.
+BORDERLINE_VERIFY_CANDIDATES = 5
+
+
+def normalize_queries(
+    query: str = "",
+    queries: Sequence[str] | None = None,
+    *,
+    max_queries: int = MAX_SEARCH_QUERIES,
+) -> list[str]:
+    """Combine ``query`` and optional ``queries`` into up to ``max_queries`` unique non-blank strings."""
+    raw: list[str] = []
+    if query:
+        raw.append(query)
+    if queries:
+        raw.extend(queries)
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in raw:
+        cleaned = str(item or "").strip()
+        if not cleaned:
+            continue
+        low = cleaned.lower()
+        if low in seen:
+            continue
+        seen.add(low)
+        out.append(cleaned)
+        if len(out) >= max_queries:
+            break
+    return out
 
 
 def rerank_passage(title: str, summary: str, body: str, chunk_no: int = 0) -> str:
@@ -115,9 +151,37 @@ def update_threshold_for(
     )
 
 
+def _build_passages(items: Sequence[tuple[str, str, int]], scopes: Mapping[str, Any]) -> list[str]:
+    labels = {
+        name: {k: (t, sm) for k, t, sm, _c in scopes[name].store.list()}
+        for name in {scope_name for scope_name, _key, _ch in items}
+    }
+    passages: list[str] = []
+    for scope_name, key, chunk_no in items:
+        title, summary = labels[scope_name].get(key, (key, ""))
+        body = scopes[scope_name].store.get(key) or ""
+        passages.append(rerank_passage(title, summary, body, chunk_no))
+    return passages
+
+
+def _max_rerank_scores(
+    embedder: Embedder, queries: Sequence[str], passages: list[str]
+) -> tuple[list[float] | None, str | None]:
+    best: list[float] | None = None
+    for q_text in queries:
+        try:
+            scores = embedder.rerank(q_text, passages)
+        except Exception as e:  # a reranker failure never costs the fused result
+            return None, f"{type(e).__name__}: {e}"[:300]
+        if scores is None:
+            return None, None
+        best = list(scores) if best is None else [max(a, b) for a, b in zip(best, scores)]
+    return best, None
+
+
 def rerank_rows(
     embedder: Embedder,
-    query: str,
+    query: str | Sequence[str],
     ranked: list[tuple[tuple[str, str], dict[str, Any]]],
     scopes: Mapping[str, Any],
     *,
@@ -125,31 +189,31 @@ def rerank_rows(
     rerank_candidates: int,
     rerank_mode: str,
 ) -> tuple[list[tuple[tuple[str, str], dict[str, Any]]], str | None]:
-    """Reorder the top fused candidates with ``embedder``'s cross-encoder; returns ``(rows, error)``."""
-    candidates = ranked[: max(limit, rerank_candidates)]
+    """Reorder the top fused candidates with ``embedder``'s cross-encoder; returns ``(rows, error)``.
+
+    For multi-query searches (``len(queries) > 1``), re-scores only the top
+    ``MULTI_QUERY_RERANK_CANDIDATES`` fused entries across each variant and takes the max
+    cross-encoder score per candidate so total pairs stay bounded (<= 20 for 4 variants).
+    """
+    queries = [query] if isinstance(query, str) else [q for q in query if q]
+    if not queries:
+        return ranked[:limit], None
+    is_multi = len(queries) > 1
+    cap = MULTI_QUERY_RERANK_CANDIDATES if is_multi else max(limit, rerank_candidates)
+    candidates = ranked[:cap]
     if len(candidates) < 2:
         return ranked[:limit], None
-    labels = {
-        name: {k: (t, sm) for k, t, sm, _c in scopes[name].store.list()}
-        for name in {scope_name for (scope_name, _key), _row in candidates}
-    }
-    passages: list[str] = []
-    for (scope_name, key), row in candidates:
-        title, summary = labels[scope_name].get(key, (key, ""))
-        body = scopes[scope_name].store.get(key) or ""
-        passages.append(rerank_passage(title, summary, body, int(row.get("chunk", 0))))
-    try:
-        scores = embedder.rerank(query, passages)
-    except Exception as e:  # a reranker failure never costs the fused result
-        return ranked[:limit], f"{type(e).__name__}: {e}"[:300]
-    if scores is None:
-        return ranked[:limit], None
+    items = [(sc, k, int(row.get("chunk", 0))) for (sc, k), row in candidates]
+    scores, error = _max_rerank_scores(embedder, queries, _build_passages(items, scopes))
+    if error is not None or scores is None:
+        return ranked[:limit], error
     order = blend_order(list(range(len(candidates))), scores, rerank_mode)
-    out = [
-        (candidates[i][0], {**candidates[i][1], "rerank": round(scores[i], 3)})
-        for i in order[:limit]
+    reranked = [
+        (candidates[i][0], {**candidates[i][1], "rerank": round(scores[i], 3)}) for i in order
     ]
-    return out, None
+    if is_multi and len(reranked) < limit:
+        reranked.extend(ranked[len(candidates) : limit])
+    return reranked[:limit], None
 
 
 def scope_ranked_hits(
@@ -164,15 +228,15 @@ def scope_ranked_hits(
     min_lexical_coverage: float,
     chunk_penalty: float,
     similarity_floor: float | str | None,
+    stats: dict[str, list[float]] | None = None,
 ) -> Iterator[tuple[str, int, str, float | None, int]]:
     """Yield ``(key, rank, how, similarity, chunk)`` for one scope, redirecting superseded hits."""
     offset = 1 if qvec is not None else 0
     coverage = min_lexical_coverage if qvec is not None else 0.0
-    lex_hits = redirect_hits(
-        ((k, None, 0) for k in lexical_index.search(query, min_coverage=coverage)),
-        metas,
-        limit=limit * 3,
-    )
+    lex_scored = lexical_index.search_scored(query, min_coverage=coverage)
+    lex_hits = redirect_hits(((k, sc, 0) for k, sc in lex_scored), metas, limit=limit * 3)
+    if stats is not None:
+        stats["lex"].extend(sc for _k, sc, _ch in lex_hits[:5] if sc is not None)
     for rank, (key, _sim, _chunk) in enumerate(lex_hits):
         yield key, rank + offset, "lexical", None, 0
     if qvec is not None and model_id is not None:
@@ -182,8 +246,282 @@ def scope_ranked_hits(
         )
         floor = floor_for(index, model_id, similarity_floor)
         above = ((k, sim, ch) for k, sim, ch in raw_sem if sim >= floor)
-        for rank, (key, sim, chunk) in enumerate(redirect_hits(above, metas, limit=limit * 3)):
+        sem_hits = redirect_hits(above, metas, limit=limit * 3)
+        if stats is not None:
+            stats["sem"].extend(sim for _k, sim, _ch in sem_hits[:5] if sim is not None)
+        for rank, (key, sim, chunk) in enumerate(sem_hits):
             yield key, rank, "semantic", sim, chunk
+
+
+def _top_coverage(
+    lexical_index: LexicalIndex,
+    metas: Mapping[str, EntryMeta],
+    query: str,
+    key: str,
+) -> float:
+    best = lexical_index.oov_coverage(query, key)
+    for cand_key, meta in metas.items():
+        if meta.superseded_by and resolve_successor(cand_key, metas) == key:
+            best = max(best, lexical_index.oov_coverage(query, cand_key))
+    return best
+
+
+def _assess_one_query(
+    query: str,
+    top: Mapping[str, Any],
+    stats: Mapping[str, list[float]],
+    *,
+    top_lexical: LexicalIndex,
+    top_metas: Mapping[str, EntryMeta],
+    profile: Mapping[str, float] | None,
+) -> dict[str, Any]:
+    lex_cov = _top_coverage(top_lexical, top_metas, query, top["key"])
+    lex_scores = sorted(stats.get("lex") or (), reverse=True)
+    if len(lex_scores) >= 2 and lex_scores[0] > 0:
+        lex_margin = (lex_scores[0] - lex_scores[min(4, len(lex_scores) - 1)]) / lex_scores[0]
+    else:
+        lex_margin = 1.0 if lex_scores else 0.0
+    sem_scores = sorted(stats.get("sem") or (), reverse=True)
+    sem_top1 = sem_scores[0] if sem_scores else None
+    sem_topk = sem_scores[min(4, len(sem_scores) - 1)] if len(sem_scores) >= 2 else None
+    return assess_confidence(
+        has_results=True,
+        lexical_coverage=lex_cov,
+        lexical_margin=lex_margin,
+        semantic_top1=sem_top1,
+        semantic_topk=sem_topk,
+        profile=profile if sem_top1 is not None else None,
+        agreement="lexical+semantic" in str(top.get("match", "")),
+        rerank_score=top.get("rerank"),
+    )
+
+
+def evaluate_search_confidence(
+    queries: Sequence[str],
+    results: list[dict[str, Any]],
+    stats_per_query: Sequence[Mapping[str, list[float]]],
+    *,
+    top_lexical: LexicalIndex | None,
+    top_index: MemoryIndex | None,
+    top_metas: Mapping[str, EntryMeta] | None,
+    model_id: str | None,
+    mode: str = "on",
+) -> dict[str, Any]:
+    """Compute per-query confidence (best across query variants) and build the response."""
+    primary = queries[0] if queries else ""
+    if not results or not queries or top_lexical is None or top_index is None:
+        payload = format_search_response(
+            primary,
+            results,
+            assess_confidence(has_results=False, lexical_coverage=0.0),
+            mode=mode,
+        )
+    else:
+        top = results[0]
+        has_sem = any(st.get("sem") for st in stats_per_query)
+        profile = top_index.similarity_profile(model_id) if (model_id and has_sem) else None
+        assessments = [
+            _assess_one_query(
+                q_text,
+                top,
+                q_stats,
+                top_lexical=top_lexical,
+                top_metas=top_metas or {},
+                profile=profile,
+            )
+            for q_text, q_stats in zip(queries, stats_per_query)
+        ]
+        best = max(assessments, key=lambda a: float(a["confidence_score"]))
+        payload = format_search_response(primary, results, best, mode=mode)
+    if len(queries) > 1:
+        payload["queries"] = list(queries)
+    return payload
+
+
+def verify_borderline_confidence(
+    embedder: Embedder,
+    queries: Sequence[str],
+    results: list[dict[str, Any]],
+    stats_per_query: Sequence[Mapping[str, list[float]]],
+    payload: dict[str, Any],
+    scopes: Mapping[str, Any],
+    *,
+    chunks: Mapping[tuple[str, str], int] | None = None,
+    top_lexical: LexicalIndex | None,
+    top_index: MemoryIndex | None,
+    top_metas: Mapping[str, EntryMeta] | None,
+    model_id: str | None,
+    mode: str = "on",
+) -> tuple[dict[str, Any], str | None]:
+    """Re-score only borderline queries with the cross-encoder on the top few results."""
+    has_sem = any(st.get("sem") for st in stats_per_query)
+    if not results or not is_borderline(payload, semantic=has_sem):
+        return payload, None
+    top_n = results[:BORDERLINE_VERIFY_CANDIDATES]
+    chunk_map = chunks or {}
+    items = [
+        (str(r["scope"]), str(r["key"]), int(chunk_map.get((str(r["scope"]), str(r["key"])), 0)))
+        for r in top_n
+    ]
+    scores, error = _max_rerank_scores(embedder, queries, _build_passages(items, scopes))
+    if error is not None or scores is None:
+        return payload, error
+    for row, sc in zip(top_n, scores):
+        row["rerank"] = round(sc, 3)
+    updated = evaluate_search_confidence(
+        queries,
+        results,
+        stats_per_query,
+        top_lexical=top_lexical,
+        top_index=top_index,
+        top_metas=top_metas,
+        model_id=model_id,
+        mode=mode,
+    )
+    updated["signals"]["verified"] = True
+    return updated, None
+
+
+def build_confidence_response(
+    queries: Sequence[str],
+    results: list[dict[str, Any]],
+    stats_per_query: Sequence[Mapping[str, list[float]]],
+    scopes: Mapping[str, Any],
+    *,
+    chunks: Mapping[tuple[str, str], int],
+    lexical_fn: Any,
+    meta_fn: Any,
+    embedder: Embedder | None,
+    rerank_borderline: bool,
+    mode: str = "on",
+) -> tuple[dict[str, Any], str | None]:
+    """Assemble search confidence and optionally verify borderline hits with the cross-encoder."""
+    top_scope = scopes[results[0]["scope"]] if results else None
+    top_lex = lexical_fn(top_scope) if top_scope is not None else None
+    top_idx = top_scope.index if top_scope is not None else None
+    top_metas = meta_fn(top_scope) if top_scope is not None else None
+    model_id = embedder.model_id if embedder is not None else None
+    payload = evaluate_search_confidence(
+        queries,
+        results,
+        stats_per_query,
+        top_lexical=top_lex,
+        top_index=top_idx,
+        top_metas=top_metas,
+        model_id=model_id,
+        mode=mode,
+    )
+    if rerank_borderline and embedder is not None and results:
+        return verify_borderline_confidence(
+            embedder,
+            queries,
+            results,
+            stats_per_query,
+            payload,
+            scopes,
+            chunks=chunks,
+            top_lexical=top_lex,
+            top_index=top_idx,
+            top_metas=top_metas,
+            model_id=model_id,
+            mode=mode,
+        )
+    return payload, None
+
+
+def fuse_scope_hits(
+    fused: dict[tuple[str, str], dict[str, Any]],
+    scope_name: str,
+    hits: Iterator[tuple[str, int, str, float | None, int]],
+    *,
+    rrf_k: int,
+) -> None:
+    """Accumulate one scope's ranked hits into the RRF ``fused`` map (keeping best similarity)."""
+    for key, rank, how, similarity, chunk in hits:
+        row = fused.setdefault((scope_name, key), {"score": 0.0, "match": []})
+        row["score"] += 1.0 / (rrf_k + rank)
+        if how not in row["match"]:
+            row["match"].append(how)
+        if similarity is not None:
+            rounded = round(similarity, 3)
+            if "similarity" not in row or rounded > row["similarity"]:
+                row["similarity"] = rounded
+                row["chunk"] = chunk
+
+
+def fuse_multi_query(
+    query_list: Sequence[str],
+    qvecs: Sequence[list[float]] | None,
+    targets: Sequence[Any],
+    ranked_hits_fn: Any,
+    *,
+    limit: int,
+    include_superseded: bool,
+    collect_stats: bool,
+    rrf_k: int,
+) -> tuple[dict[tuple[str, str], dict[str, Any]], list[dict[str, list[float]]]]:
+    """Run ``ranked_hits_fn`` across all queries and scopes, fusing into one RRF map."""
+    fused: dict[tuple[str, str], dict[str, Any]] = {}
+    stats_list: list[dict[str, list[float]]] = []
+    for idx, q_text in enumerate(query_list):
+        qvec = qvecs[idx] if qvecs is not None else None
+        q_stats: dict[str, list[float]] = {"lex": [], "sem": []}
+        for s in targets:
+            fuse_scope_hits(
+                fused,
+                s.name,
+                ranked_hits_fn(
+                    s,
+                    q_text,
+                    qvec,
+                    limit,
+                    include_superseded=include_superseded,
+                    stats=q_stats if collect_stats else None,
+                ),
+                rrf_k=rrf_k,
+            )
+        stats_list.append(q_stats)
+    return fused, stats_list
+
+
+def hydrate_ranked(
+    ranked: list[tuple[tuple[str, str], dict[str, Any]]],
+    scopes: Mapping[str, Any],
+    scope_meta: Any,
+    provenance_fn: Any = None,
+) -> list[dict[str, Any]]:
+    """Turn fused ranking rows into result dicts, recording a hit per returned entry."""
+    results: list[dict[str, Any]] = []
+    hits_by_scope: dict[str, list[str]] = {}
+    for (scope_name, key), row in ranked:
+        s = scopes[scope_name]
+        body = s.store.get(key)
+        if body is None:
+            continue
+        hits_by_scope.setdefault(scope_name, []).append(key)
+        result: dict[str, Any] = {
+            "key": key,
+            "scope": scope_name,
+            "body": body,
+            "match": "+".join(sorted(row["match"])),
+        }
+        if "similarity" in row:
+            result["similarity"] = row["similarity"]
+        if "rerank" in row:
+            result["rerank"] = row["rerank"]
+        meta = scope_meta(s).get(key)
+        if meta is not None and meta.superseded_by:
+            result["superseded_by"] = meta.superseded_by
+        results.append(result)
+    for scope_name, keys in hits_by_scope.items():
+        scopes[scope_name].index.record_hits(keys)
+    if provenance_fn is not None:
+        sources = {n: provenance_fn(scopes[n], ks) for n, ks in hits_by_scope.items()}
+        for result in results:
+            source = source_view(sources.get(result["scope"], {}).get(result["key"]))
+            if source:
+                result["source"] = source
+    return results
 
 
 def find_similar_entries(

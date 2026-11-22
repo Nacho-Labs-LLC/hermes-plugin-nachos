@@ -48,6 +48,7 @@ def test_setup_schema_describes_all_non_secret_provider_settings():
         "duplicate_threshold",
         "duplicate_calibration",
         "similarity_floor",
+        "abstention",
         "rerank",
         "rerank_model",
         "rerank_dtype",

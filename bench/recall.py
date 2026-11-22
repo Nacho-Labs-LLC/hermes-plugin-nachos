@@ -172,6 +172,61 @@ def summarize_negative(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def summarize_abstention(
+    answerable: list[dict[str, Any]], unanswerable: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Abstention precision/recall on unanswerable queries plus answerable false-abstention rate."""
+    tp = sum(1 for r in unanswerable if not r.get("confident", True))
+    fn = len(unanswerable) - tp
+    fp = sum(1 for r in answerable if not r.get("confident", True))
+    non_para = [r for r in answerable if r["category"] != "paraphrase"]
+    fp_non_para = sum(1 for r in non_para if not r.get("confident", True))
+    prec = tp / (tp + fp) if (tp + fp) else 1.0
+    rec = tp / len(unanswerable) if unanswerable else 0.0
+    f1 = 2 * prec * rec / (prec + rec) if (prec + rec) else 0.0
+    near_miss = [r for r in unanswerable if r.get("kind") == "near-miss"]
+    standard = [r for r in unanswerable if r.get("kind") != "near-miss"]
+    fp_by_cat: dict[str, int] = {}
+    for r in answerable:
+        if not r.get("confident", True):
+            fp_by_cat[r["category"]] = fp_by_cat.get(r["category"], 0) + 1
+    verified = sum(1 for r in (*answerable, *unanswerable) if r.get("verified"))
+    total_q = len(answerable) + len(unanswerable)
+    out: dict[str, Any] = {
+        "n_unanswerable": len(unanswerable),
+        "abstained_unanswerable": tp,
+        "missed_unanswerable": fn,
+        "n_answerable": len(answerable),
+        "abstained_answerable": fp,
+        "abstained_non_paraphrase": fp_non_para,
+        "n_non_paraphrase": len(non_para),
+        "false_abstentions_by_category": dict(sorted(fp_by_cat.items())),
+        "precision": round(prec, 4),
+        "recall": round(rec, 4),
+        "f1": round(f1, 4),
+        "confident_hit@1": round(
+            sum(1 for r in answerable if r.get("confident", True) and r["rank"] == 1)
+            / len(answerable),
+            4,
+        )
+        if answerable
+        else 0.0,
+    }
+    if verified:
+        out["verified_queries"] = verified
+        out["verified_rate"] = round(verified / total_q, 4) if total_q else 0.0
+    if near_miss:
+        nm_tp = sum(1 for r in near_miss if not r.get("confident", True))
+        std_tp = sum(1 for r in standard if not r.get("confident", True))
+        out["standard_n"] = len(standard)
+        out["standard_abstained"] = std_tp
+        out["standard_recall"] = round(std_tp / len(standard), 4) if standard else 0.0
+        out["near_miss_n"] = len(near_miss)
+        out["near_miss_abstained"] = nm_tp
+        out["near_miss_recall"] = round(nm_tp / len(near_miss), 4)
+    return out
+
+
 def aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
     """Overall and per-category summaries of per-query ``rows`` (rank, ms, category).
 
@@ -190,6 +245,9 @@ def aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "n": len(blank),
             "returned_results": sum(1 for r in blank if r.get("n_results")),
         }
+    unanswerable = negatives + blank
+    if unanswerable and any("confident" in r for r in rows):
+        out["abstention"] = summarize_abstention(answerable, unanswerable)
     present = {r["category"] for r in answerable}
     if negatives:
         present.add("negative")
@@ -262,20 +320,30 @@ def run_queries(
     rows = []
     for q in queries:
         timings, keys = [], []
+        confident, confidence, conf_score, verified = True, "high", 1.0, False
         for i in range(max(1, repeat)):
             start = time.perf_counter()
-            results = svc.search(q["query"], limit=SEARCH_LIMIT)
+            payload = svc.search_with_confidence(q["query"], limit=SEARCH_LIMIT)
             timings.append((time.perf_counter() - start) * 1000.0)
             if i == 0:
-                keys = [r["key"] for r in results]
+                keys = [r["key"] for r in payload["results"]]
+                confident = bool(payload["confident"])
+                confidence = str(payload["confidence"])
+                conf_score = float(payload["confidence_score"])
+                verified = bool(payload.get("signals", {}).get("verified", False))
         rows.append(
             {
                 "id": q["id"],
                 "category": q["category"],
+                "kind": q.get("kind", ""),
                 "query": q["query"],
                 "expect": q["expect"],
                 "rank": rank_of(q["expect"], keys, q.get("match", "any")),
                 "n_results": len(keys),
+                "confident": confident,
+                "confidence": confidence,
+                "confidence_score": conf_score,
+                "verified": verified,
                 "ms": percentile(timings, 50),
                 "top": keys[:3],
             }
@@ -304,7 +372,7 @@ def resolve_embedder(backend: str, opts: argparse.Namespace) -> tuple[Embedder |
         dtype=opts.dtype,
         query_prefix=opts.query_prefix,
         document_prefix=opts.document_prefix,
-        rerank=getattr(opts, "rerank", False),
+        rerank=bool(getattr(opts, "rerank", False) or getattr(opts, "rerank_borderline", False)),
         rerank_model=getattr(opts, "rerank_model", ""),
         rerank_dtype=getattr(opts, "rerank_dtype", ""),
         pooling=getattr(opts, "pooling", ""),
@@ -338,6 +406,8 @@ def ranking_options(opts: argparse.Namespace) -> dict[str, Any]:
     if getattr(opts, "rerank", False):
         out["rerank_candidates"] = opts.rerank_candidates
         out["rerank_mode"] = opts.rerank_mode
+    if getattr(opts, "rerank_borderline", False):
+        out["rerank_borderline"] = True
     if getattr(opts, "calibrate_duplicates", False):
         out["calibrate_duplicates"] = True
     if getattr(opts, "no_update_calibration", False):
@@ -484,6 +554,31 @@ def format_report(report: dict[str, Any]) -> str:
             na = run["no_answer"]
             lines += [
                 f"no-answer queries: {na['returned_results']}/{na['n']} still returned results",
+                "",
+            ]
+        if "abstention" in run:
+            ab = run["abstention"]
+            detail = (
+                f" [std {ab['standard_abstained']}/{ab['standard_n']}, "
+                f"near-miss {ab['near_miss_abstained']}/{ab['near_miss_n']}]"
+                if "near_miss_n" in ab
+                else ""
+            )
+            ver_note = (
+                f"; verified {ab['verified_queries']} ({ab['verified_rate']:.1%})"
+                if "verified_queries" in ab
+                else ""
+            )
+            fp_cats = ab.get("false_abstentions_by_category") or {}
+            fp_note = (
+                " [" + ", ".join(f"{c}={n}" for c, n in fp_cats.items()) + "]" if fp_cats else ""
+            )
+            lines += [
+                f"abstention: P={ab['precision']:.3f} R={ab['recall']:.3f} F1={ab['f1']:.3f} "
+                f"(unanswerable {ab['abstained_unanswerable']}/{ab['n_unanswerable']}{detail}; "
+                f"answerable abstained {ab['abstained_answerable']}/{ab['n_answerable']}{fp_note}, "
+                f"non-para {ab['abstained_non_paraphrase']}/{ab['n_non_paraphrase']}; "
+                f"confident hit@1={ab['confident_hit@1']:.3f}{ver_note})",
                 "",
             ]
     return "\n".join(lines)
@@ -657,6 +752,221 @@ def format_suggest_report(report: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+_MULTI_QUERY_PRIORITY = {
+    "paraphrase": 0,
+    "outdated": 1,
+    "long-body": 2,
+    "natural": 3,
+    "keyword": 4,
+    "current": 5,
+}
+
+
+def build_multi_query_groups(queries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Group answerable fixture queries sharing an expected key (hardest phrasing first)."""
+    grouped: dict[tuple[tuple[str, ...], str], list[dict[str, Any]]] = {}
+    for q in queries:
+        expect = q.get("expect") or []
+        if q["category"] == "negative" or not expect:
+            continue
+        key = (tuple(sorted(expect)), str(q.get("match", "any")))
+        grouped.setdefault(key, []).append(q)
+    out: list[dict[str, Any]] = []
+    for (expect_tuple, match), items in grouped.items():
+        ordered = sorted(
+            items,
+            key=lambda q: (_MULTI_QUERY_PRIORITY.get(q["category"], 6), q["id"]),
+        )
+        variants: list[str] = []
+        cats: list[str] = []
+        seen: set[str] = set()
+        for item in ordered:
+            text = item["query"].strip()
+            low = text.lower()
+            if text and low not in seen:
+                seen.add(low)
+                variants.append(text)
+                cats.append(item["category"])
+            if len(variants) == 3:
+                break
+        if len(variants) >= 2:
+            out.append(
+                {
+                    "expect": list(expect_tuple),
+                    "match": match,
+                    "primary_category": cats[0],
+                    "categories": cats,
+                    "queries": variants,
+                }
+            )
+    return out
+
+
+def _timed_multi_search(
+    svc: MemoryService,
+    query_list: list[str],
+    expect: list[str],
+    match: str,
+    repeat: int,
+) -> tuple[int | None, bool, float]:
+    timings: list[float] = []
+    rank: int | None = None
+    confident = True
+    for i in range(max(1, repeat)):
+        start = time.perf_counter()
+        payload = svc.search_with_confidence(queries=query_list, limit=SEARCH_LIMIT)
+        timings.append((time.perf_counter() - start) * 1000.0)
+        if i == 0:
+            keys = [r["key"] for r in payload["results"]]
+            rank = rank_of(expect, keys, match)
+            confident = bool(payload["confident"])
+    return rank, confident, percentile(timings, 50)
+
+
+def run_multi_query_groups(
+    svc: MemoryService, groups: list[dict[str, Any]], repeat: int = 1
+) -> dict[str, Any]:
+    """Compare 1-query, 2-query, 3-query, and retry-on-low-confidence recall."""
+    all_single: list[tuple[int | None, float]] = []
+    all_multi: list[tuple[int | None, float]] = []
+    all_retry: list[tuple[int | None, float]] = []
+    all_retries = 0
+    tri_single: list[tuple[int | None, float]] = []
+    tri_two: list[tuple[int | None, float]] = []
+    tri_three: list[tuple[int | None, float]] = []
+    tri_retry: list[tuple[int | None, float]] = []
+    tri_retries = 0
+
+    for g in groups:
+        qs, exp, match = g["queries"], g["expect"], g["match"]
+        r1, conf1, ms1 = _timed_multi_search(svc, [qs[0]], exp, match, repeat)
+        rm, _confm, msm = _timed_multi_search(svc, qs, exp, match, repeat)
+        retried = not conf1
+        rr = rm if retried else r1
+        msr = (ms1 + msm) if retried else ms1
+        all_single.append((r1, ms1))
+        all_multi.append((rm, msm))
+        all_retry.append((rr, msr))
+        all_retries += int(retried)
+        if len(qs) >= 3:
+            r2, _conf2, ms2 = _timed_multi_search(svc, qs[:2], exp, match, repeat)
+            tri_single.append((r1, ms1))
+            tri_two.append((r2, ms2))
+            tri_three.append((rm, msm))
+            tri_retry.append((rr, msr))
+            tri_retries += int(retried)
+
+    def _pack(pairs: list[tuple[int | None, float]]) -> dict[str, Any]:
+        return summarize([r for r, _ in pairs], [ms for _, ms in pairs])
+
+    out: dict[str, Any] = {
+        "all_groups": {
+            "n": len(groups),
+            "mean_queries": round(sum(len(g["queries"]) for g in groups) / len(groups), 2)
+            if groups
+            else 0.0,
+            "1-query": _pack(all_single),
+            "multi-query": _pack(all_multi),
+            "retry-on-low-conf": {
+                **_pack(all_retry),
+                "retried": all_retries,
+                "retry_rate": round(all_retries / len(groups), 4) if groups else 0.0,
+            },
+        }
+    }
+    if tri_single:
+        out["triples"] = {
+            "n": len(tri_single),
+            "1-query": _pack(tri_single),
+            "2-query": _pack(tri_two),
+            "3-query": _pack(tri_three),
+            "retry-on-low-conf": {
+                **_pack(tri_retry),
+                "retried": tri_retries,
+                "retry_rate": round(tri_retries / len(tri_single), 4),
+            },
+        }
+    return out
+
+
+def eval_multi_query_backend(
+    backend: str,
+    opts: argparse.Namespace,
+    memories: list[dict[str, Any]],
+    queries: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Build one backend and benchmark 1 vs multi-query recall on grouped phrasings."""
+    run: dict[str, Any] = {"backend": opts.label or backend, "status": "ok"}
+    embedder, reason = resolve_embedder(backend, opts)
+    if reason:
+        return {**run, "status": "skipped", "reason": reason}
+    if embedder is not None:
+        run["model_id"] = embedder.model_id
+        run["model_load_s"], error = probe(embedder)
+        run["model_load_s"] = round(run["model_load_s"], 3)
+        if error:
+            embedder.close()
+            return {**run, "status": "skipped", "reason": f"embedder unavailable: {error}"}
+    groups = build_multi_query_groups(queries)
+    with tempfile.TemporaryDirectory(prefix="nachos-mq-") as tmp:
+        svc = build_service(Path(tmp), embedder, **ranking_options(opts))
+        try:
+            load_memories(
+                svc,
+                memories,
+                direct=bool(getattr(opts, "synthetic", 0)),
+                apply_supersedes=not bool(getattr(opts, "no_supersedes", False)),
+            )
+            svc.sync_index(svc.profile)
+            if groups:
+                svc.search(groups[0]["queries"][0], limit=SEARCH_LIMIT)
+            run.update(run_multi_query_groups(svc, groups, opts.repeat))
+        finally:
+            svc.close()
+    return run
+
+
+def format_multi_query_report(report: dict[str, Any]) -> str:
+    env = report["environment"]
+    lines = [
+        f"Nachos multi-query recall benchmark: {env['memories']} memories "
+        f"(python {env['python']}, {env['machine']}, {env['cpus']} cpus)",
+        "",
+    ]
+    head = ["backend", "mode", "n", "hit@1", "hit@5", "MRR@10", "p50 ms", "p95 ms", "notes"]
+    for section, title, modes in (
+        (
+            "triples",
+            "Exact 3-query groups (paraphrase + natural + keyword)",
+            ("1-query", "2-query", "3-query", "retry-on-low-conf"),
+        ),
+        (
+            "all_groups",
+            "All multi-variant groups (2-3 phrasings per target)",
+            ("1-query", "multi-query", "retry-on-low-conf"),
+        ),
+    ):
+        rows: list[list[str]] = []
+        for run in report["runs"]:
+            if run["status"] != "ok" or section not in run:
+                continue
+            sec = run[section]
+            for mode in modes:
+                m = sec[mode]
+                note = (
+                    f"retried {m['retried']}/{m['n']} ({m['retry_rate']:.0%})"
+                    if "retried" in m
+                    else (f"avg {sec['mean_queries']} q" if mode == "multi-query" else "")
+                )
+                rows.append([run["backend"], mode, str(m["n"]), *_metric_cells(m), note])
+        if rows:
+            lines += [title, _table(head, rows), ""]
+    for run in report["runs"]:
+        if run["status"] != "ok":
+            lines.append(f"{run['backend']}: skipped, {run['reason']}")
+    return "\n".join(lines)
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     ap = argparse.ArgumentParser(prog="bench.recall", description=__doc__.split("\n\n")[0])
     ap.add_argument(
@@ -694,6 +1004,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="evaluate put() possible_updates recall@1/@3 and distinct fp@1 on the fixture",
     )
     ap.add_argument(
+        "--multi-query",
+        action="store_true",
+        help="benchmark 1 vs multi-query recall (and retry-on-low-confidence) on grouped queries",
+    )
+    ap.add_argument(
         "--data-dir",
         type=Path,
         default=DATA_DIR,
@@ -724,6 +1039,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="disable calibrated floor for possible_updates (measure uncalibrated baseline)",
     )
     ap.add_argument("--rerank", action="store_true", help="enable the nachos cross-encoder rerank")
+    ap.add_argument(
+        "--rerank-borderline",
+        action="store_true",
+        help="enable borderline-only cross-encoder verification (rerank: borderline)",
+    )
     ap.add_argument("--rerank-model", default="", help="rerank_model passthrough")
     ap.add_argument("--rerank-dtype", default="", help="rerank_dtype passthrough")
     ap.add_argument(
@@ -772,6 +1092,10 @@ def main(argv: list[str] | None = None) -> int:
         runs = [eval_suggest_backend(b, opts, memories, queries) for b in opts.backends]
         report = {"environment": environment(len(memories), len(queries), opts), "runs": runs}
         return _emit_report(report, opts, format_suggest_report(report))
+    if opts.multi_query:
+        runs = [eval_multi_query_backend(b, opts, memories, queries) for b in opts.backends]
+        report = {"environment": environment(len(memories), len(queries), opts), "runs": runs}
+        return _emit_report(report, opts, format_multi_query_report(report))
     runs = [run_backend(b, opts, memories, queries) for b in opts.backends]
     report = {"environment": environment(len(memories), len(queries), opts), "runs": runs}
     return _emit_report(report, opts, format_report(report))
