@@ -47,14 +47,25 @@ if os.environ.get("FAKE_TYPED"):
         queryPrefix="",
         documentPrefix=os.environ.get("FAKE_DOCPREFIX", ""),
     )
-print(json.dumps(ready), flush=True)
 args = sys.argv[2:]
+if os.environ.get("FAKE_REJECT_RERANK_FLAGS") and "--rerank-model" in args:
+    sys.exit(2)  # an older CLI: unknown flag is a usage error before any ready line
+if os.environ.get("FAKE_RERANK"):
+    ready["rerank"] = {{"model": "fake-reranker"}}
+print(json.dumps(ready), flush=True)
 if os.environ.get("FAKE_ARGS"):
     with open(os.environ["FAKE_ARGS"], "w") as fh:
         fh.write(" ".join(args))
 served = 0
 for line in sys.stdin:
     req = json.loads(line)
+    if req.get("op") == "rerank":
+        if req["query"] == "boom":
+            print(json.dumps({{"id": req["id"], "error": "rerank failed"}}), flush=True)
+            continue
+        scores = [float(p.count("hit")) for p in req["passages"]]
+        print(json.dumps({{"id": req["id"], "scores": scores}}), flush=True)
+        continue
     if os.environ.get("FAKE_REQS"):
         with open(os.environ["FAKE_REQS"], "a") as fh:
             fh.write(str(req.get("type")) + "\\n")
@@ -390,3 +401,90 @@ def test_warm_up_without_a_working_cli_does_not_raise(tmp_path):
     embedder = CliEmbedder(str(tmp_path / "missing-cli"))
     embedder.warm_up()
     assert embedder.model_id == "nachos:default"
+
+
+# -- reranking over the serve protocol ---------------------------------------------
+
+
+def test_rerank_flags_are_passed_and_scores_returned(fake_serve_cli, monkeypatch, tmp_path):
+    path, _ = fake_serve_cli
+    args_file = tmp_path / "args.txt"
+    monkeypatch.setenv("FAKE_ARGS", str(args_file))
+    monkeypatch.setenv("FAKE_RERANK", "1")
+    embedder = make_embedder(
+        "nachos", command=str(path), rerank=True, rerank_model="r-model", rerank_dtype="q8"
+    )
+    try:
+        assert embedder.rerank("q", ["a hit hit", "none", "one hit"]) == [2.0, 0.0, 1.0]
+        assert embedder.supports_rerank is True
+        assert embedder.embed(["abc"]) == [[3.0, 2.0]]  # embedding still works on the same worker
+    finally:
+        embedder.close()
+    assert args_file.read_text() == "--rerank-model r-model --rerank-dtype q8"
+
+
+def test_rerank_uses_the_default_model_when_none_is_configured(
+    fake_serve_cli, monkeypatch, tmp_path
+):
+    path, _ = fake_serve_cli
+    args_file = tmp_path / "args.txt"
+    monkeypatch.setenv("FAKE_ARGS", str(args_file))
+    monkeypatch.setenv("FAKE_RERANK", "1")
+    embedder = CliEmbedder(str(path), rerank=True)
+    embedder.embed(["x"])  # a round trip guarantees the fake has written its args file
+    embedder.close()
+    assert args_file.read_text() == "--rerank-model jinaai/jina-reranker-v1-tiny-en"
+
+
+def test_rerank_is_off_and_flagless_when_not_requested(fake_serve_cli, monkeypatch, tmp_path):
+    path, _ = fake_serve_cli
+    args_file = tmp_path / "args.txt"
+    monkeypatch.setenv("FAKE_ARGS", str(args_file))
+    embedder = CliEmbedder(str(path))
+    assert embedder.rerank("q", ["a hit"]) is None
+    embedder.embed(["x"])
+    embedder.close()
+    assert args_file.read_text() == ""
+
+
+def test_ready_line_without_rerank_falls_back_silently_and_logs_once(fake_serve_cli, caplog):
+    path, _ = fake_serve_cli  # worker accepts the flags but announces no "rerank"
+    embedder = CliEmbedder(str(path), rerank=True)
+    try:
+        with caplog.at_level("WARNING", logger="nachos_core.embeddings"):
+            assert embedder.rerank("q", ["a hit"]) is None
+            assert embedder.rerank("q", ["a hit"]) is None
+        assert embedder.supports_rerank is False
+        assert embedder.embed(["ab"]) == [[2.0, 2.0]]
+    finally:
+        embedder.close()
+    assert sum("reranking disabled" in r.message for r in caplog.records) == 1
+
+
+def test_old_cli_that_rejects_the_flags_still_embeds_in_serve_mode(
+    fake_serve_cli, monkeypatch, caplog
+):
+    path, counter = fake_serve_cli
+    monkeypatch.setenv("FAKE_REJECT_RERANK_FLAGS", "1")
+    embedder = CliEmbedder(str(path), rerank=True)
+    try:
+        with caplog.at_level("WARNING", logger="nachos_core.embeddings"):
+            assert embedder.embed(["abc"]) == [[3.0, 2.0]]
+        assert embedder.rerank("q", ["x"]) is None
+        assert embedder._serve_disabled is False
+    finally:
+        embedder.close()
+    assert counter.read_text().count("start") == 2  # rejected launch, then the plain one
+    assert sum("reranking disabled" in r.message for r in caplog.records) == 1
+
+
+def test_rerank_error_reply_raises_but_keeps_the_worker(fake_serve_cli, monkeypatch):
+    path, _ = fake_serve_cli
+    monkeypatch.setenv("FAKE_RERANK", "1")
+    embedder = CliEmbedder(str(path), rerank=True)
+    try:
+        with pytest.raises(RuntimeError, match="rerank failed"):
+            embedder.rerank("boom", ["a"])
+        assert embedder.rerank("q", ["a hit"]) == [1.0]
+    finally:
+        embedder.close()

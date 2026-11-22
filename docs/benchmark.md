@@ -45,7 +45,7 @@ A backend that is not available is skipped with a reason, not an error: a missin
 
 ## Fixture
 
-`bench/data/memories.json` holds 208 synthetic entries (fictional projects, hosts and people; no real data) shaped like real agent memory: projects, environment, decisions, procedures and history. `bench/data/queries.json` holds 393 queries, each with an `expect` list of memory keys (the slug of the title), a `category`, and `match` (`any` by default; `all` for multi-hop). Edit the JSON directly; `pytest tests/test_bench_recall.py` checks that every expected key exists, keys are unique, every entry passes the write gates, and the paraphrase and long-body rules below hold.
+`bench/data/memories.json` holds 208 synthetic entries (fictional projects, hosts and people; no real data) shaped like real agent memory: projects, environment, decisions, procedures and history. `bench/data/queries.json` holds 423 queries (393 answerable plus 30 `negative`), each with an `expect` list of memory keys (the slug of the title), a `category`, and `match` (`any` by default; `all` for multi-hop). Edit the JSON directly; `pytest tests/test_bench_recall.py` checks that every expected key exists, keys are unique, every entry passes the write gates, and the paraphrase and long-body rules below hold.
 
 | Category | n | What it tests |
 | --- | --- | --- |
@@ -55,6 +55,7 @@ A backend that is not available is skipped with a reason, not an error: a missin
 | `long-body` | 30 | The answer sits only in the body after about 2000 characters, past the text the embedder sees (`embed_text` is cut at 2000). Tests chunked or full-body vectors. |
 | `outdated` | 30 | One entry of a superseded/current pair; the expected key is the **current** entry. Current code has no notion of recency, so failures here are expected and are the point. |
 | `near-dup` | 24 | A sibling entry differs by one detail (staging vs production, EU vs US); the right one must rank above its twin. |
+| `negative` | 30 | No correct answer exists (off-domain topics and topics adjacent to real ones). Reported apart as false-positive rates: `fp@1` = share of queries returning anything, `fp@5` = mean filled share of the top five slots; lower is better. |
 | `multi-hop` | 20 | Needs two entries (`match: all`): the rank is that of the last expected key to appear, so hit@1 is 0 by construction and hit@5 / MRR are the meaningful numbers. |
 
 ## Baseline
@@ -249,6 +250,135 @@ Readings:
 - **Long-body recall jumps sharply**: MiniLM-L6 q8 rises from `0.600` to `0.967` hit@1 (`+0.367`, MRR `0.772 -> 0.983`) and gte-modernbert q8 reaches `1.000 / 1.000 / 1.000` (`+0.467` hit@1, MRR `0.734 -> 1.000`), lifting overall hit@1 by `+0.021` to `+0.022` and overall MRR@10 by `+0.010` on both models.
 - **Small index footprint**: +30 chunks adds +60 KB (+12%) for MiniLM-L6 and +120 KB (+13%) for gte-modernbert. Build time rises when long entries embed multiple chunks synchronously on `put()`, while search latency increases modestly (`+2 ms` p50).
 - **Slight paraphrase dip**: Taking the max cosine over 3 vectors for long entries gives them slightly more chances to outrank 1-vector entries on word-free paraphrases (MiniLM paraphrase hit@1 `0.183 -> 0.150`, gte-modernbert `0.267 -> 0.200`), a minor multiple-testing trade-off offset by the large long-body gain.
+
+## Ranking round: calibration, chunk penalty, reranker
+
+Measured on `naterchrdsn/ranking` (on top of chunked body vectors), `nachos` backend, q8, typed queries, `--repeat 3`. The fixture now also has 30 `negative` queries (no correct answer; listed apart from the hit metrics, which still cover the 393 answerable queries). "Before" below is the branch without this round (chunk penalty 0, no floor, no rerank). Machine load average was 20 to 26 on 16 logical CPUs throughout, so latencies are rough and p95s especially. The CLI for reranking was built from nachos-embeddings commit `f29d2e1` (branch `naterchrdsn/rerank`) in a temp copy; embeddings and rerank models were cached outside both repos.
+
+```bash
+export NACHOS_EMBEDDINGS_CACHE=/path/outside/both/repos
+python -m bench --command ./shim --embeddings nachos --model Xenova/all-MiniLM-L6-v2 --dtype q8 --chunk-penalty 0   # before
+python -m bench ... --dtype q8                                  # chunk penalty 0.05 (the new default)
+python -m bench ... --dtype q8 --floor auto                     # + calibrated floor (p75)
+python -m bench ... --dtype q8 --rerank --rerank-dtype q8       # + reranker (jina-reranker-v1-tiny-en)
+python -m bench.diagnose --command ./shim --model <id> --dtype q8   # duplicate-threshold behaviour
+```
+
+### Chunk penalty
+
+`MemoryService.chunk_penalty` is subtracted from a body chunk's cosine: an entry scores `max(head, best chunk - penalty)`. Sweep (overall hit@1 / hit@5 / MRR@10, paraphrase hit@1 / hit@5, long-body hit@1):
+
+| Penalty | MiniLM q8 overall | MiniLM paraphrase | MiniLM long-body | gte q8 overall | gte paraphrase | gte long-body |
+| --- | --- | --- | --- | --- | --- | --- |
+| 0 (before) | 0.713 / 0.919 / 0.805 | 0.150 / 0.583 | 0.967 | 0.735 / 0.936 / 0.828 | 0.200 / 0.650 | 1.000 |
+| 0.02 | 0.713 / 0.921 / 0.807 | 0.150 / 0.600 | 0.967 | 0.735 / 0.944 / 0.830 | 0.200 / 0.700 | 1.000 |
+| **0.05** | **0.718 / 0.921 / 0.810** | **0.183 / 0.600** | **0.967** | **0.738 / 0.944 / 0.832** | **0.217 / 0.700** | **1.000** |
+| 0.08 | 0.710 / 0.921 / 0.806 | 0.167 / 0.600 | 0.900 | 0.730 / 0.944 / 0.828 | 0.217 / 0.700 | 0.900 |
+| 0.12 | 0.713 / 0.921 / 0.807 | 0.167 / 0.600 | 0.900 | 0.723 / 0.942 / 0.823 | 0.233 / 0.700 | 0.767 |
+
+0.05 is the default: it recovers part of the paraphrase hit@1 that chunking cost (MiniLM 0.150 to 0.183, gte 0.200 to 0.217) and lifts hit@5 on both, while long-body stays at 0.967 / 1.000. From 0.08 the penalty starts to hurt long-body (the answer lives in a chunk). It did not get back to the pre-chunking 0.183 / 0.267 paraphrase hit@1 in full. A multiplicative penalty was not tried.
+
+### Calibrated similarity floor (`similarity_floor: auto`, default off)
+
+The index measures a model's own random-pair cosine spread from the stored head vectors (fixed-seed sample of 4000 pairs; `calibration` table in the sidecar index keyed by `model_id`; resampled when the head count drifts by more than 20%; not computed below 30 entries) and drops semantic hits below a percentile of it. Profile of the two models (p50 / p75 / p90 / p95 / p99 of random head pairs): MiniLM 0.12 / 0.18 / 0.25 / 0.29 / 0.43, gte-modernbert 0.53 / 0.56 / 0.59 / 0.62 / 0.69, which is why no absolute cutoff is shared.
+
+Floor percentile sweep with the 0.05 chunk penalty (overall hit@1 / hit@5; negative fp@1 / fp@5; fp@1 is the share of the 30 negative queries that return anything, fp@5 the mean filled share of the top five slots):
+
+| Floor | MiniLM q8 | MiniLM negative | gte q8 | gte negative |
+| --- | --- | --- | --- | --- |
+| off | 0.718 / 0.921 | 1.00 / 1.00 | 0.738 / 0.944 | 1.00 / 1.00 |
+| p75 | 0.723 / 0.921 | 0.90 / 0.83 | 0.753 / 0.942 | 0.80 / 0.73 |
+| p80 | 0.720 / 0.921 | 0.83 / 0.77 | 0.753 / 0.942 | 0.80 / 0.65 |
+| p85 | 0.725 / 0.921 | 0.80 / 0.73 | 0.753 / 0.942 | 0.80 / 0.64 |
+| p90 | 0.733 / 0.921 | 0.80 / 0.62 | 0.756 / 0.934 | 0.80 / 0.60 |
+| p95* | 0.735 / 0.908 | 0.77 / 0.51 | 0.761 / 0.916 | 0.73 / 0.51 |
+| p99* | 0.720 / 0.827 | 0.73 / 0.36 | 0.728 / 0.830 | 0.67 / 0.35 |
+
+(*measured without the chunk penalty.) The floor raises hit@1 (it removes weak semantic hits that double-count against lexical noise) but cannot make irrelevant queries return nothing: even at p95, 70 to 77% of negative queries still return an entry, because the negatives are deliberately adjacent to real topics (and a lexical hit covering 40% of the terms still passes). Percentiles above p90 cost hit@5 quickly. At the mildest useful setting (p75) MiniLM loses nothing but gte loses one paraphrase query at hit@5 (0.944 to 0.942), so, by the rule that the floor may only ship if it costs no hit@5 anywhere, **it stays off by default**; `similarity_floor: auto` (p75) is available and is a small net win on hit@1 and negatives.
+
+### Duplicate threshold (`duplicate_calibration: auto`)
+
+With `duplicate_calibration: auto` the effective threshold is `max(duplicate_threshold, model p99 of random head-pair cosine)`; it only ever raises the threshold, and a `duplicate_threshold` other than the 0.65 default is used exactly as given (so anyone who set a value keeps it; `duplicate_calibration: off` pins 0.65 for everyone). Measured by `python -m bench.diagnose` on the 12 near-duplicate sibling pairs of the fixture and every other entry pair (siblings flagged = recall; others flagged = false-flag rate):
+
+| Model | Threshold before to after | Sibling recall before to after | Other pairs flagged before to after |
+| --- | --- | --- | --- |
+| MiniLM-L6 q8 | 0.650 to 0.650 | 58% to 58% | 0.6% to 0.6% |
+| bge-small q8 | 0.650 to 0.709 | 92% to 83% | 4.3% to 1.1% |
+| arctic-embed-s q8 | 0.650 to 0.774 | 100% to 92% | 48% to 1.1% |
+| gte-modernbert q8 | 0.650 to 0.691 | 100% to 92% | 2.3% to 1.1% |
+
+The calibration removes the arctic-embed-s failure (half of all pairs flagged) and roughly equalises the false-flag rate at about 1% for the models whose spread is wide, at the price of one sibling pair out of twelve. It cannot lower the threshold, so MiniLM, which misses 42% of these siblings at 0.65, is unchanged. Twelve sibling pairs is a small sample.
+
+### Reranker
+
+`rerank: nachos` (config keys `rerank_model`, `rerank_dtype`, `rerank_candidates` = 25) re-scores the top fused results with `jinaai/jina-reranker-v1-tiny-en` (q8, 33.4 MB model + 2.0 MB tokenizer) served by the same `nachos-embeddings serve` worker; passages are title, summary and the best-matching chunk. Final order options, on the cached reranker scores of the 423 queries (0.05 penalty; overall hit@1 / hit@5 / MRR@10):
+
+| Final order | MiniLM q8 | gte-modernbert q8 |
+| --- | --- | --- |
+| no rerank | 0.718 / 0.921 / 0.810 | 0.738 / 0.944 / 0.832 |
+| pure rerank order | 0.761 / 0.870 / 0.810 | 0.746 / 0.875 / 0.800 |
+| RRF blend of rerank rank and fused rank (k = 10) | 0.725 / 0.921 / 0.812 | 0.738 / 0.929 / 0.825 |
+| pure rerank only if the top rerank score is at least 0.5 | 0.768 / 0.926 / 0.836 | 0.771 / 0.942 / 0.845 |
+| fused rank term + 0.5 x rerank score | 0.761 / 0.926 / 0.833 | 0.776 / 0.944 / 0.850 |
+| **fused rank term + 1.0 x rerank score (`sum:1`)** | **0.763 / 0.926 / 0.833** | **0.773 / 0.942 / 0.848** |
+| fused rank term + 2.0 x rerank score | 0.763 / 0.921 / 0.831 | 0.758 / 0.939 / 0.835 |
+
+Pure rerank order gains hit@1 but loses about 0.05 hit@5, because this small English cross-encoder scores word-free paraphrases poorly (paraphrase hit@5 0.60 to 0.25 for MiniLM). Rank-only RRF blending is too timid to help. The default is the score blend `sum:1`: the fused rank contributes `1 / (1 + rank / 60)` and the cross-encoder its 0 to 1 score, so a confident reranker overturns the fused order and a lukewarm one only breaks near-ties. The threshold-gated variant is about as good but has a cliff; `sum:0.5` to `sum:1` are within noise. (`rerank_mode` is a `MemoryService` argument, not a config key.)
+
+Final results, rerank off vs on (floor off), hit@1 / hit@5 / MRR@10 per category; the last row of each overall table adds the floor:
+
+**MiniLM-L6 q8**
+
+| Run | hit@1 | hit@5 | MRR@10 | negative fp@1 / fp@5 | p50 ms | p95 ms | build s |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| rerank off | 0.718 | 0.921 | 0.810 | 1.00 / 1.00 | 7.1 | 9.0 | 3.6 |
+| rerank on | 0.763 | 0.926 | 0.833 | 1.00 / 1.00 | 184.1 | 506.9 | 3.3 |
+| floor, rerank off | 0.723 | 0.921 | 0.813 | 0.90 / 0.83 | 7.2 | 9.3 | 3.1 |
+| floor + rerank | 0.766 | 0.924 | 0.835 | 0.90 / 0.83 | 157.3 | 482.4 | 3.4 |
+
+| Category | n | rerank off | rerank on | floor, rerank off | floor + rerank |
+|---|---|---|---|---|---|
+| keyword | 139 | 0.978 / 1.000 / 0.989 | 0.993 / 1.000 / 0.996 | 0.978 / 1.000 / 0.989 | 0.993 / 1.000 / 0.996 |
+| natural | 90 | 0.756 / 0.978 / 0.857 | 0.844 / 0.989 / 0.902 | 0.756 / 0.978 / 0.857 | 0.844 / 0.989 / 0.902 |
+| paraphrase | 60 | 0.183 / 0.600 / 0.364 | 0.167 / 0.600 / 0.348 | 0.217 / 0.600 / 0.382 | 0.183 / 0.583 / 0.358 |
+| long-body | 30 | 0.967 / 1.000 / 0.983 | 1.000 / 1.000 / 1.000 | 0.967 / 1.000 / 0.983 | 1.000 / 1.000 / 1.000 |
+| outdated | 30 | 0.467 / 1.000 / 0.722 | 0.733 / 1.000 / 0.861 | 0.467 / 1.000 / 0.722 | 0.733 / 1.000 / 0.861 |
+| near-dup | 24 | 1.000 / 1.000 / 1.000 | 1.000 / 1.000 / 1.000 | 1.000 / 1.000 / 1.000 | 1.000 / 1.000 / 1.000 |
+| multi-hop | 20 | 0.000 / 0.750 / 0.332 | 0.000 / 0.800 / 0.350 | 0.000 / 0.750 / 0.332 | 0.000 / 0.800 / 0.350 |
+
+**gte-modernbert q8**
+
+| Run | hit@1 | hit@5 | MRR@10 | negative fp@1 / fp@5 | p50 ms | p95 ms | build s |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| rerank off | 0.738 | 0.944 | 0.832 | 1.00 / 1.00 | 16.6 | 20.8 | 12.3 |
+| rerank on | 0.773 | 0.942 | 0.848 | 1.00 / 1.00 | 327.3 | 568.7 | 12.9 |
+| floor, rerank off | 0.753 | 0.942 | 0.839 | 0.80 / 0.73 | 16.9 | 22.6 | 12.8 |
+| floor + rerank | 0.779 | 0.939 | 0.849 | 0.80 / 0.73 | 180.2 | 500.3 | 12.4 |
+
+| Category | n | rerank off | rerank on | floor, rerank off | floor + rerank |
+|---|---|---|---|---|---|
+| keyword | 139 | 0.971 / 1.000 / 0.984 | 0.993 / 1.000 / 0.996 | 0.971 / 1.000 / 0.984 | 0.993 / 1.000 / 0.996 |
+| natural | 90 | 0.800 / 0.978 / 0.886 | 0.867 / 0.978 / 0.918 | 0.833 / 0.978 / 0.906 | 0.878 / 0.978 / 0.924 |
+| paraphrase | 60 | 0.217 / 0.700 / 0.429 | 0.217 / 0.700 / 0.416 | 0.283 / 0.683 / 0.456 | 0.233 / 0.683 / 0.419 |
+| long-body | 30 | 1.000 / 1.000 / 1.000 | 0.967 / 1.000 / 0.983 | 0.967 / 1.000 / 0.983 | 0.967 / 1.000 / 0.983 |
+| outdated | 30 | 0.533 / 1.000 / 0.761 | 0.767 / 1.000 / 0.878 | 0.533 / 1.000 / 0.761 | 0.767 / 1.000 / 0.878 |
+| near-dup | 24 | 1.000 / 1.000 / 1.000 | 0.958 / 1.000 / 0.979 | 1.000 / 1.000 / 1.000 | 0.958 / 1.000 / 0.979 |
+| multi-hop | 20 | 0.000 / 0.900 / 0.382 | 0.000 / 0.850 / 0.383 | 0.000 / 0.900 / 0.382 | 0.000 / 0.850 / 0.382 |
+
+Reading the tables: the reranker's gains are concentrated where the question shares words with the answer's wording: `outdated` hit@1 jumps (MiniLM 0.467 to 0.733, gte 0.533 to 0.767) because the current entry's text matches a "current X" question better than the superseded one, `natural` hit@1 +0.09 and +0.07, `keyword` to 0.993. It does nothing for paraphrase (0.183 to 0.167 MiniLM, flat for gte), multi-hop hit@5 moves by at most 0.05 either way, and gte near-dup slips from 1.000 to 0.958 hit@1 (one query). It does not reduce false positives on negative queries (still 1.00): the reranker's top score for a negative query (median 0.29) overlaps the scores of true paraphrase hits (median 0.24). Cost: one more model (35 MB) held in the serve worker and 0.2 to 0.3 s per recall (p50 184 ms MiniLM, 327 ms gte at this machine load; p95 about 0.5 to 0.6 s; the CLI README quotes about 0.3 s for 25 passages).
+
+### Final recommended configuration
+
+| | Config | Download | Build (208 entries) | Search p50 / p95 | hit@1 / hit@5 / MRR@10 |
+| --- | --- | --- | --- | --- | --- |
+| **Recommended** | `gte-modernbert-base`, `q8`, rerank off | 150 MB + 3.6 MB tokenizer | 12.3 s | 17 / 21 ms | 0.738 / 0.944 / 0.832 |
+| Quality, if 0.3 s per recall is acceptable | same + `rerank: nachos` (jina tiny, q8) | + 35 MB | 12.9 s | 327 / 569 ms | 0.773 / 0.942 / 0.848 |
+| Lightweight | `all-MiniLM-L6-v2`, `q8`, rerank off | 23 MB + 0.7 MB | 3.6 s | 7 / 9 ms | 0.718 / 0.921 / 0.810 |
+| Lightweight + rerank | same + `rerank: nachos` | + 35 MB | 3.3 s | 184 / 507 ms | 0.763 / 0.926 / 0.833 |
+| Lexical only | `embeddings: off` | none | 0.8 s | 0.1 / 0.2 ms | 0.674 / 0.812 / 0.737 |
+
+The model recommendation from the previous section stands with the new numbers: gte-modernbert q8 is the quality choice (best hit@5 and MRR with rerank off, and cheaper per recall than MiniLM plus reranker), MiniLM q8 the lightweight one. Rerank stays **off by default**: it buys +0.035 to +0.045 hit@1 (mostly natural-language and "current X" questions) for 0.2 to 0.3 s on every recall and a second model, and gives no hit@5 gain on gte. Turn it on when hit@1 matters more than latency. Defaults in code: chunk penalty 0.05 (on), duplicate calibration auto, similarity floor off, rerank off. Caveats: the fixture is synthetic, builds and latencies were measured under heavy machine load (build seconds scale with entries and machine, p95s are noisy), and no real-memory run was done.
+
 
 ### Not measured
 

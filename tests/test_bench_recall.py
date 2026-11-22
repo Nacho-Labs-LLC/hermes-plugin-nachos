@@ -30,6 +30,9 @@ def _opts(**kw):
         "query_prefix": "",
         "document_prefix": "",
         "no_types": False,
+        "chunk_penalty": None,
+        "floor": "off",
+        "rerank": False,
         "label": "",
         "repeat": 1,
     }
@@ -99,6 +102,9 @@ class TestDatasetIntegrity:
     def test_every_expected_key_exists(self, dataset):
         keys = {slugify(m["title"]) for m in dataset[0]}
         for q in dataset[1]:
+            if q["category"] == "negative":
+                assert q["expect"] == [], q["id"]  # no correct answer exists
+                continue
             assert q["expect"], q["id"]
             assert set(q["expect"]) <= keys, q["id"]
 
@@ -208,3 +214,42 @@ class TestRunner:
     def test_cli_rejects_unknown_backend(self):
         with pytest.raises(SystemExit):
             recall.parse_args(["--embeddings", "bogus"])
+
+
+class TestNegativeQueries:
+    def test_negative_rows_are_reported_apart_from_the_overall_hit_metrics(self):
+        rows = [
+            {"rank": 1, "ms": 1.0, "category": "keyword", "n_results": 3},
+            {"rank": None, "ms": 2.0, "category": "negative", "n_results": 0},
+            {"rank": None, "ms": 3.0, "category": "negative", "n_results": 7},
+            {"rank": None, "ms": 4.0, "category": "negative", "n_results": 2},
+        ]
+        agg = recall.aggregate(rows)
+        assert agg["overall"]["n"] == 1  # negatives never count as misses
+        assert agg["overall"]["hit@1"] == 1.0
+        neg = agg["by_category"]["negative"]
+        assert neg["n"] == 3
+        assert neg["fp@1"] == pytest.approx(
+            2 / 3, abs=1e-3
+        )  # two of three queries returned something
+        assert neg["fp@5"] == pytest.approx(
+            (0 + 1.0 + 0.4) / 3, abs=1e-3
+        )  # mean filled share of top 5
+
+    def test_negative_queries_exist_and_have_no_expected_key(self, dataset):
+        negatives = [q for q in dataset[1] if q["category"] == "negative"]
+        assert len(negatives) >= 25
+        assert all(q["expect"] == [] for q in negatives)
+
+
+def test_ranking_flags_are_parsed_into_service_options():
+    opts = recall.parse_args(
+        ["--chunk-penalty", "0", "--floor", "auto", "--rerank", "--rerank-candidates", "12"]
+    )
+    assert recall.ranking_options(opts) == {
+        "chunk_penalty": 0.0,
+        "similarity_floor": "p75",
+        "rerank_candidates": 12,
+        "rerank_mode": "sum:1",
+    }
+    assert recall.ranking_options(recall.parse_args([])) == {}

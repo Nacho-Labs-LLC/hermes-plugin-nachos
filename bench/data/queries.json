@@ -3182,5 +3182,185 @@
    "notifier-service",
    "history-notification-queue-backlog"
   ]
+ },
+ {
+  "category": "negative",
+  "query": "sourdough starter feeding schedule",
+  "expect": [],
+  "id": "q394"
+ },
+ {
+  "category": "negative",
+  "query": "who won the 2018 football world cup",
+  "expect": [],
+  "id": "q395"
+ },
+ {
+  "category": "negative",
+  "query": "best hiking trails near Lisbon",
+  "expect": [],
+  "id": "q396"
+ },
+ {
+  "category": "negative",
+  "query": "how to knit a cable pattern scarf",
+  "expect": [],
+  "id": "q397"
+ },
+ {
+  "category": "negative",
+  "query": "capital city of Australia",
+  "expect": [],
+  "id": "q398"
+ },
+ {
+  "category": "negative",
+  "query": "recipe for vegetarian lasagna",
+  "expect": [],
+  "id": "q399"
+ },
+ {
+  "category": "negative",
+  "query": "symptoms of seasonal flu",
+  "expect": [],
+  "id": "q400"
+ },
+ {
+  "category": "negative",
+  "query": "how do ocean tides work",
+  "expect": [],
+  "id": "q401"
+ },
+ {
+  "category": "negative",
+  "query": "piano chord progressions for jazz",
+  "expect": [],
+  "id": "q402"
+ },
+ {
+  "category": "negative",
+  "query": "when does the next solar eclipse happen",
+  "expect": [],
+  "id": "q403"
+ },
+ {
+  "category": "negative",
+  "query": "Kafka topic partition count for orders",
+  "expect": [],
+  "id": "q404"
+ },
+ {
+  "category": "negative",
+  "query": "MongoDB sharding key choice",
+  "expect": [],
+  "id": "q405"
+ },
+ {
+  "category": "negative",
+  "query": "Jenkins pipeline shared library location",
+  "expect": [],
+  "id": "q406"
+ },
+ {
+  "category": "negative",
+  "query": "Ansible playbook for patching hosts",
+  "expect": [],
+  "id": "q407"
+ },
+ {
+  "category": "negative",
+  "query": "Datadog monitor for p99 latency",
+  "expect": [],
+  "id": "q408"
+ },
+ {
+  "category": "negative",
+  "query": "Elasticsearch index lifecycle rollover policy",
+  "expect": [],
+  "id": "q409"
+ },
+ {
+  "category": "negative",
+  "query": "SAML attribute mapping for Okta",
+  "expect": [],
+  "id": "q410"
+ },
+ {
+  "category": "negative",
+  "query": "Windows laptop setup instructions",
+  "expect": [],
+  "id": "q411"
+ },
+ {
+  "category": "negative",
+  "query": "Docker Compose file for local development",
+  "expect": [],
+  "id": "q412"
+ },
+ {
+  "category": "negative",
+  "query": "Cypress end-to-end test suite location",
+  "expect": [],
+  "id": "q413"
+ },
+ {
+  "category": "negative",
+  "query": "RabbitMQ dead letter exchange configuration",
+  "expect": [],
+  "id": "q414"
+ },
+ {
+  "category": "negative",
+  "query": "Swift package manager dependency pinning",
+  "expect": [],
+  "id": "q415"
+ },
+ {
+  "category": "negative",
+  "query": "payroll system for contractors",
+  "expect": [],
+  "id": "q416"
+ },
+ {
+  "category": "negative",
+  "query": "office parking permit process",
+  "expect": [],
+  "id": "q417"
+ },
+ {
+  "category": "negative",
+  "query": "Slack channel for design reviews",
+  "expect": [],
+  "id": "q418"
+ },
+ {
+  "category": "negative",
+  "query": "quarterly OKR template spreadsheet",
+  "expect": [],
+  "id": "q419"
+ },
+ {
+  "category": "negative",
+  "query": "VPN profile for contractors on Windows",
+  "expect": [],
+  "id": "q420"
+ },
+ {
+  "category": "negative",
+  "query": "GraphQL federation gateway configuration",
+  "expect": [],
+  "id": "q421"
+ },
+ {
+  "category": "negative",
+  "query": "Azure subscription naming convention",
+  "expect": [],
+  "id": "q422"
+ },
+ {
+  "category": "negative",
+  "query": "password rotation policy for shared mailbox",
+  "expect": [],
+  "id": "q423"
  }
 ]

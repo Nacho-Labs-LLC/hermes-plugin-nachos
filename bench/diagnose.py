@@ -7,7 +7,8 @@ For one embedding setup it reports, on a query category (default ``paraphrase``)
 * vector-only ranking quality: pure cosine search over all entries, no lexical
   list, no fusion, no similarity floor,
 * duplicate-threshold behaviour: entry/entry cosine for near-duplicate sibling
-  pairs versus random pairs, and how many of each reach ``--threshold``.
+  pairs versus all other pairs, with sibling recall and the false-flag rate at
+  ``--threshold`` (before) and at ``max(--threshold, model p99)`` (after calibration).
 
     python -m bench.diagnose --command ./nachos-embeddings --model Xenova/bge-small-en-v1.5 --dtype q8
 """
@@ -29,7 +30,7 @@ from bench.recall import (
     rank_of,
     resolve_embedder,
 )
-from nachos_core.index import _normalize, dot
+from nachos_core.index import _normalize, _pair_profile, dot
 from nachos_core.lexical import jaccard
 from nachos_core.memory import embed_text
 from nachos_core.store.md_store import slugify
@@ -84,17 +85,22 @@ def duplicate_pairs(
         for b in range(a + 1, len(keys))
         if (a, b) not in siblings
     ]
+    profile = _pair_profile(vectors)
+    calibrated = max(threshold, profile["p99"])
+
+    def rates(limit: float) -> dict[str, float]:
+        return {
+            "threshold": round(limit, 3),
+            "sibling_recall": round(sum(s >= limit for s in sib) / len(sib), 3),
+            "other_false_flag_rate": round(sum(s >= limit for s in rest) / len(rest), 4),
+        }
+
     return {
         "sibling_pairs": len(sib),
         "sibling_p10_p50_p90": _spread(sib),
-        "sibling_share_at_or_above_threshold": round(
-            sum(s >= threshold for s in sib) / len(sib), 3
-        ),
         "other_pairs_p50_p90_p99": [round(percentile(rest, p), 3) for p in (50, 90, 99)],
-        "other_share_at_or_above_threshold": round(
-            sum(s >= threshold for s in rest) / len(rest), 4
-        ),
-        "threshold": threshold,
+        "before": rates(threshold),
+        "after_calibration": rates(calibrated),
     }
 
 

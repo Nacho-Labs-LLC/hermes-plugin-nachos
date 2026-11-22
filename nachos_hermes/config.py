@@ -29,6 +29,12 @@ DEFAULTS: dict[str, Any] = {
     "embedding_document_prefix": "",
     # MiniLM: paraphrases score 0.68-0.73, distinct entries <=0.22; flagging is non-blocking, so false positives are cheap.
     "duplicate_threshold": 0.65,
+    "duplicate_calibration": "auto",
+    "similarity_floor": "off",
+    "rerank": "off",
+    "rerank_model": "",
+    "rerank_dtype": "",
+    "rerank_candidates": 25,
     "shared_store": "off",
     "shared_store_path": "",
     "redact_secrets": "on",
@@ -37,6 +43,13 @@ DEFAULTS: dict[str, Any] = {
 }
 
 _VERBATIM_KEYS = frozenset({"embedding_query_prefix", "embedding_document_prefix"})
+# String settings with a closed set of values; anything else is ignored.
+_CHOICES: dict[str, tuple[str, ...]] = {
+    "capture": ("review", "off"),
+    "rerank": ("off", "nachos"),
+    "similarity_floor": ("off", "auto"),
+    "duplicate_calibration": ("auto", "off"),
+}
 
 CONFIG_SCHEMA: list[dict[str, Any]] = [
     {
@@ -88,6 +101,40 @@ CONFIG_SCHEMA: list[dict[str, Any]] = [
         "key": "duplicate_threshold",
         "type": "float",
         "description": "Embedding similarity (0-1) at which a new entry is flagged as a likely duplicate.",
+    },
+    {
+        "key": "duplicate_calibration",
+        "choices": ["auto", "off"],
+        "description": "auto raises duplicate_threshold to the embedding model's own 99th "
+        "percentile of random-pair similarity when that is higher (cosine ranges differ a lot "
+        "between models). A duplicate_threshold other than the default 0.65 is always used "
+        "as given; off uses duplicate_threshold exactly for every model.",
+    },
+    {
+        "key": "similarity_floor",
+        "choices": ["off", "auto"],
+        "description": "auto drops semantic hits below the model's own 75th percentile of "
+        "random-pair similarity (calibrated from the stored vectors).",
+    },
+    {
+        "key": "rerank",
+        "choices": ["off", "nachos"],
+        "description": "nachos = re-score the top fused results with a cross-encoder served by "
+        "the nachos-embeddings CLI (needs the nachos embeddings backend and a CLI with "
+        "--rerank-model; otherwise ignored). Adds roughly 0.3 s per recall.",
+    },
+    {
+        "key": "rerank_model",
+        "description": "Cross-encoder model id (blank = jinaai/jina-reranker-v1-tiny-en).",
+    },
+    {
+        "key": "rerank_dtype",
+        "description": "Cross-encoder precision, e.g. q8 (blank = CLI default).",
+    },
+    {
+        "key": "rerank_candidates",
+        "type": "int",
+        "description": "How many top fused results the reranker re-scores.",
     },
     {
         "key": "shared_store",
@@ -178,7 +225,7 @@ def apply_config(cfg: dict[str, Any], values: dict[str, Any]) -> None:
         elif isinstance(default, str) and isinstance(value, str):
             if key not in _VERBATIM_KEYS:  # prefixes keep their meaningful spaces
                 value = value.strip()
-            if key == "capture" and value not in ("review", "off"):
+            if key in _CHOICES and value not in _CHOICES[key]:
                 continue
             cfg[key] = value
 

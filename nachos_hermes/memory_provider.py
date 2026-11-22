@@ -154,6 +154,9 @@ class NachosMemoryProvider(MemoryProvider):
                 embedder=self._make_embedder(),
                 duplicate_threshold=float(self._cfg["duplicate_threshold"]),
                 redact=self._redact,
+                similarity_floor="p75" if self._cfg["similarity_floor"] == "auto" else None,
+                calibrate_duplicates=self._calibrate_duplicates(),
+                rerank_candidates=max(1, int(self._cfg["rerank_candidates"])),
             )
             service.session_id = self._session_id
             return service
@@ -200,10 +203,18 @@ class NachosMemoryProvider(MemoryProvider):
                 api_key_env=self._cfg["embedding_api_key_env"],
                 query_prefix=self._cfg["embedding_query_prefix"],
                 document_prefix=self._cfg["embedding_document_prefix"],
+                rerank=self._cfg["rerank"] == "nachos",
+                rerank_model=self._cfg["rerank_model"],
+                rerank_dtype=self._cfg["rerank_dtype"],
             )
         except Exception as e:
             logger.warning("Nachos embeddings unavailable (%s); using lexical recall.", e)
             return None
+
+    def _calibrate_duplicates(self) -> bool:
+        """Calibrate unless disabled or the user pinned a threshold other than the default."""
+        pinned = float(self._cfg["duplicate_threshold"]) != float(DEFAULTS["duplicate_threshold"])
+        return self._cfg["duplicate_calibration"] == "auto" and not pinned
 
     def _apply_config(self, values: dict[str, Any]) -> None:
         apply_config(self._cfg, values)

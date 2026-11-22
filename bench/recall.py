@@ -51,6 +51,7 @@ CATEGORIES = (
     "outdated",
     "near-dup",
     "multi-hop",
+    "negative",  # no correct answer exists: any returned entry is a false positive
 )
 
 
@@ -141,31 +142,59 @@ def summarize(ranks: list[int | None], latencies_ms: list[float]) -> dict[str, A
     }
 
 
+def summarize_negative(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """False-positive rates for queries with no correct answer.
+
+    ``fp@1`` is the share of queries that return anything at all (so a wrong top-1 shows);
+    ``fp@5`` is the mean share of the five top slots that are filled with a wrong entry.
+    """
+    n = len(rows)
+    fill = [min(r["n_results"], 5) / 5 for r in rows]
+    latencies = [r["ms"] for r in rows]
+    return {
+        "n": n,
+        "fp@1": round(sum(1 for r in rows if r["n_results"] > 0) / n, 4) if n else 0.0,
+        "fp@5": round(sum(fill) / n, 4) if n else 0.0,
+        "p50_ms": round(percentile(latencies, 50), 2),
+        "p95_ms": round(percentile(latencies, 95), 2),
+    }
+
+
 def aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    """Overall and per-category summaries of per-query ``rows`` (rank, ms, category)."""
+    """Overall and per-category summaries of per-query ``rows`` (rank, ms, category).
+
+    ``overall`` covers answerable queries only; ``negative`` queries are reported by themselves.
+    """
+    answerable = [r for r in rows if r["category"] != "negative"]
     out: dict[str, Any] = {
-        "overall": summarize([r["rank"] for r in rows], [r["ms"] for r in rows]),
+        "overall": summarize([r["rank"] for r in answerable], [r["ms"] for r in answerable]),
         "by_category": {},
     }
     present = {r["category"] for r in rows}
     for cat in [c for c in CATEGORIES if c in present] + sorted(present - set(CATEGORIES)):
         sel = [r for r in rows if r["category"] == cat]
-        out["by_category"][cat] = summarize([r["rank"] for r in sel], [r["ms"] for r in sel])
+        if cat == "negative":
+            out["by_category"][cat] = summarize_negative(sel)
+        else:
+            out["by_category"][cat] = summarize([r["rank"] for r in sel], [r["ms"] for r in sel])
     return out
 
 
 # -- running ---------------------------------------------------------------
 
 
-def build_service(directory: Path, embedder: Embedder | None) -> MemoryService:
-    """A profile-only MemoryService over a sqlite store inside ``directory``."""
+def build_service(directory: Path, embedder: Embedder | None, **ranking: Any) -> MemoryService:
+    """A profile-only MemoryService over a sqlite store inside ``directory``.
+
+    ``ranking`` passes MemoryService options through (chunk_penalty, similarity_floor, ...).
+    """
     directory.mkdir(parents=True, exist_ok=True)
     scope = Scope(
         PROFILE,
         get_store("sqlite", directory / "memory.db"),
         MemoryIndex(directory / "memory.index.db"),
     )
-    return MemoryService(OrderedDict([(PROFILE, scope)]), embedder=embedder)
+    return MemoryService(OrderedDict([(PROFILE, scope)]), embedder=embedder, **ranking)
 
 
 def load_memories(
@@ -217,6 +246,7 @@ def run_queries(
                 "rank": rank_of(q["expect"], keys, q.get("match", "any")),
                 "ms": percentile(timings, 50),
                 "top": keys[:3],
+                "n_results": len(keys),
             }
         )
     return rows
@@ -243,6 +273,9 @@ def resolve_embedder(backend: str, opts: argparse.Namespace) -> tuple[Embedder |
         dtype=opts.dtype,
         query_prefix=opts.query_prefix,
         document_prefix=opts.document_prefix,
+        rerank=getattr(opts, "rerank", False),
+        rerank_model=getattr(opts, "rerank_model", ""),
+        rerank_dtype=getattr(opts, "rerank_dtype", ""),
     )
     if embedder is not None and opts.no_types and hasattr(embedder, "send_type"):
         embedder.send_type = False  # legacy behaviour: queries embedded like documents
@@ -257,6 +290,23 @@ def probe(embedder: Embedder) -> tuple[float, str | None]:
     except Exception as exc:  # any backend failure means "skip this backend"
         return time.perf_counter() - start, f"{type(exc).__name__}: {exc}"[:300]
     return time.perf_counter() - start, None
+
+
+def ranking_options(opts: argparse.Namespace) -> dict[str, Any]:
+    """MemoryService ranking options from the CLI flags (unset flags keep the service defaults)."""
+    out: dict[str, Any] = {}
+    penalty = getattr(opts, "chunk_penalty", None)
+    if penalty is not None:
+        out["chunk_penalty"] = penalty
+    floor = getattr(opts, "floor", "off")
+    if floor != "off":
+        out["similarity_floor"] = "p75" if floor == "auto" else floor
+    if getattr(opts, "rerank", False):
+        out["rerank_candidates"] = opts.rerank_candidates
+        out["rerank_mode"] = opts.rerank_mode
+    if getattr(opts, "calibrate_duplicates", False):
+        out["calibrate_duplicates"] = True
+    return out
 
 
 def run_backend(
@@ -278,7 +328,9 @@ def run_backend(
             return {**run, "status": "skipped", "reason": f"embedder unavailable: {error}"}
         run["dimension"] = embedder.dimension
     with tempfile.TemporaryDirectory(prefix="nachos-bench-") as tmp:
-        svc = build_service(Path(tmp), embedder)
+        ranking = ranking_options(opts)
+        run["ranking"] = {**ranking, "rerank": bool(getattr(opts, "rerank", False))}
+        svc = build_service(Path(tmp), embedder, **ranking)
         try:
             start = time.perf_counter()
             load_memories(svc, memories, direct=bool(getattr(opts, "synthetic", 0)))
@@ -336,6 +388,14 @@ def _table(headers: list[str], rows: list[list[str]]) -> str:
 
 
 def _metric_cells(m: dict[str, Any]) -> list[str]:
+    if "fp@1" in m:  # negative queries: false-positive rates take the hit columns
+        return [
+            f"fp {m['fp@1']:.3f}",
+            f"fp {m['fp@5']:.3f}",
+            "-",
+            f"{m['p50_ms']:.1f}",
+            f"{m['p95_ms']:.1f}",
+        ]
     return [
         f"{m['hit@1']:.3f}",
         f"{m['hit@5']:.3f}",
@@ -407,6 +467,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     ap.add_argument("--json", metavar="PATH", help="write the full report as JSON ('-' = stdout)")
     ap.add_argument("--misses", action="store_true", help="list queries whose answer missed top 5")
+    ap.add_argument("--chunk-penalty", type=float, default=None, help="body-chunk score penalty")
+    ap.add_argument(
+        "--floor", default="off", help="similarity floor: off, auto (p75) or a profile key (p90)"
+    )
+    ap.add_argument("--rerank", action="store_true", help="enable the nachos cross-encoder rerank")
+    ap.add_argument("--rerank-model", default="", help="rerank_model passthrough")
+    ap.add_argument("--rerank-dtype", default="", help="rerank_dtype passthrough")
+    ap.add_argument("--rerank-candidates", type=int, default=25)
+    ap.add_argument(
+        "--rerank-mode", default="sum:1", help="final order: sum:<w>, blend:<k>, rerank"
+    )
     opts = ap.parse_args(argv)
     opts.backends = [b.strip() for b in opts.embeddings.split(",") if b.strip()]
     unknown = [b for b in opts.backends if b not in BACKENDS]

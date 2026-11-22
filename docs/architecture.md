@@ -38,6 +38,15 @@ The agent calls `nachos_memory_recall` when the manifest shows something relevan
 
 Each entry gets a head vector (`chunk_no = 0`: title, summary and body head). Entries whose body exceeds one chunk (`CHUNK_SIZE = 1200` chars) also get overlapping body-chunk vectors (`~1200`-char chunks with `~200`-char overlap snapped to paragraph/line/sentence boundaries, each prefixed with the title), capped at `MAX_CHUNKS_PER_ENTRY = 16` vectors per entry (1 head + up to 15 body chunks). Vectors are stored under `(key, chunk_no)` with their model id and content hash and reconciled lazily on the next query (existing pre-chunking `vectors` tables migrate in place automatically and rebuild on sync), so hand edits and model changes need no rebuild step or background process. Recall scores each entry by the maximum cosine similarity across its vectors, while duplicate detection (`find_similar`, `duplicate_pairs`) compares head vectors (`chunk_no = 0`) only.
 
+Ranking, in order, on every recall:
+
+1. **Chunk penalty.** An entry's vector score is its head score, or its best body-chunk score minus `0.05` when that is higher (`MemoryService.chunk_penalty`). Chunks are narrower evidence than the head, and without the penalty a chunk matching on one sentence outranks a head that matches the whole topic (paraphrase queries lost hit@1 to this).
+2. **Calibrated floor (optional, `similarity_floor: auto`).** Cosine ranges differ between models (random pairs sit near 0.1 for MiniLM and 0.5 for bge), so no absolute cutoff is portable. The index measures each model's own spread, a fixed-seed sample of random head-vector pairs, caches it in the sidecar `calibration` table keyed by `model_id`, and resamples when the head count drifts by more than 20%. Semantic hits below the 75th percentile of that spread are dropped. Stores with fewer than 30 entries are not calibrated and get no floor.
+3. **Fusion.** Lexical hits (only those covering at least 40% of the IDF-weighted query terms when embeddings are on) and semantic hits are merged with reciprocal-rank fusion.
+4. **Rerank (optional, `rerank: nachos`).** The top `rerank_candidates` fused results go to a cross-encoder served by the same `nachos-embeddings serve` worker (`{"op": "rerank"}`; the ready line announces `"rerank": {"model": ...}`). Each candidate is read as title, summary and its best-matching body chunk (the head's body start for lexical-only hits). The final order blends the rerank rank with the fused rank. If the CLI predates reranking, the worker is started without the flags and the setting is ignored with one logged warning; a rerank error disables it for the session and keeps the fused order.
+
+`duplicate_threshold` is calibrated the same way: with `duplicate_calibration: auto` the effective threshold is `max(duplicate_threshold, model p99 of random-pair head similarity)`, so a model whose unrelated entries already score 0.7 does not flag half of the store. A threshold other than the 0.65 default is never overridden.
+
 There is no speculative prefetch: it adds a fixed per-turn cost for a weak title-only signal, and a better summary fixes a missed recall.
 
 ## Writes
