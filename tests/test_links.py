@@ -11,7 +11,7 @@ from typing import ClassVar
 
 import pytest
 
-from bench import recall
+from bench import link_eval, recall
 from nachos_core.index import MemoryIndex
 from nachos_core.lexical import LexicalIndex
 from nachos_core.links import (
@@ -607,7 +607,7 @@ def test_link_eval_scores_suggestions_against_labelled_pairs(tmp_path):
     labelled = [{"a": "primary-db", "b": "failover-runbook"}]
     svc = recall.build_service(tmp_path, None)
     try:
-        scored = recall._score_links(svc, memories, labelled)
+        scored = link_eval._score_links(svc, memories, labelled)
     finally:
         svc.close()
     assert scored["recall"] == 1.0  # primary-db / failover-runbook found
