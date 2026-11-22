@@ -3,6 +3,7 @@
 import importlib.metadata
 import json
 import os
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -283,6 +284,113 @@ def test_readonly_wal_resolves_symlink_and_cleans_up_tempdir(tmp_path):
         assert not temp_path.exists()
     finally:
         writer.close()
+
+
+def test_readonly_wal_retries_after_concurrent_change_and_succeeds(tmp_path, monkeypatch):
+    db_path = tmp_path / "nachos" / "memory.db"
+    SqliteStore(db_path).close()
+    writer = sqlite3.connect(db_path)
+    try:
+        assert writer.execute("PRAGMA journal_mode=WAL").fetchone()[0] == "wal"
+        writer.execute("PRAGMA wal_autocheckpoint=0")
+        writer.execute(
+            "INSERT INTO entries (key, title, summary, category, body) VALUES (?, ?, ?, ?, ?)",
+            ("initial", "Initial", "initial summary", "ops", "initial body text"),
+        )
+        writer.commit()
+
+        real_copyfile = shutil.copyfile
+        db_copies = 0
+
+        def racing_copyfile(src, dst, *args, **kwargs):
+            nonlocal db_copies
+            result = real_copyfile(src, dst, *args, **kwargs)
+            if Path(src) == db_path.resolve():
+                db_copies += 1
+                if db_copies == 1:
+                    # Simulate a concurrent WAL write between copying .db and -wal.
+                    writer.execute(
+                        "INSERT INTO entries (key, title, summary, category, body) "
+                        "VALUES (?, ?, ?, ?, ?)",
+                        ("raced", "Raced", "raced summary", "ops", "raced body text"),
+                    )
+                    writer.commit()
+            return result
+
+        monkeypatch.setattr(shutil, "copyfile", racing_copyfile)
+        store = SqliteStore(db_path, read_only=True)
+        try:
+            keys = sorted(row[0] for row in store.list())
+            assert keys == ["initial", "raced"]
+            assert db_copies == 2
+        finally:
+            store.close()
+    finally:
+        writer.close()
+
+
+def test_readonly_wal_fails_closed_when_source_never_stabilises(tmp_path, monkeypatch):
+    db_path = tmp_path / "nachos" / "memory.db"
+    SqliteStore(db_path).close()
+    writer = sqlite3.connect(db_path)
+    try:
+        assert writer.execute("PRAGMA journal_mode=WAL").fetchone()[0] == "wal"
+        writer.execute("PRAGMA wal_autocheckpoint=0")
+        writer.execute(
+            "INSERT INTO entries (key, title, summary, category, body) VALUES (?, ?, ?, ?, ?)",
+            ("k0", "T0", "summary zero", "ops", "body zero"),
+        )
+        writer.commit()
+
+        real_copyfile = shutil.copyfile
+        counter = 0
+
+        def always_mutating_copyfile(src, dst, *args, **kwargs):
+            nonlocal counter
+            result = real_copyfile(src, dst, *args, **kwargs)
+            if Path(src) == db_path.resolve():
+                counter += 1
+                writer.execute(
+                    "INSERT INTO entries (key, title, summary, category, body) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (f"k{counter}", f"T{counter}", "summary text", "ops", "body text"),
+                )
+                writer.commit()
+            return result
+
+        monkeypatch.setattr(shutil, "copyfile", always_mutating_copyfile)
+        with pytest.raises(OSError, match="did not stabilise"):
+            SqliteStore(db_path, read_only=True)
+        assert counter == 4
+    finally:
+        writer.close()
+
+
+def test_readonly_wal_fails_closed_when_quick_check_fails(tmp_path, monkeypatch):
+    db_path = tmp_path / "nachos" / "memory.db"
+    store = SqliteStore(db_path)
+    store.put("k1", title="T1", summary="summary one", category="ops", body="body one")
+    store.close()
+    conn = sqlite3.connect(db_path)
+    assert conn.execute("PRAGMA journal_mode=WAL").fetchone()[0] == "wal"
+    conn.close()
+
+    before = snapshot(tmp_path)
+    real_copyfile = shutil.copyfile
+
+    def corrupting_copyfile(src, dst, *args, **kwargs):
+        result = real_copyfile(src, dst, *args, **kwargs)
+        if Path(src) == db_path.resolve():
+            # Corrupt the copied database beyond the header so PRAGMA quick_check fails.
+            data = bytearray(Path(dst).read_bytes())
+            data[-64:] = b"\xff" * 64
+            Path(dst).write_bytes(data)
+        return result
+
+    monkeypatch.setattr(shutil, "copyfile", corrupting_copyfile)
+    with pytest.raises(sqlite3.DatabaseError, match=r"quick_check|malformed"):
+        SqliteStore(db_path, read_only=True)
+    assert snapshot(tmp_path) == before
 
 
 def test_readonly_connections_reject_writes(tmp_path):

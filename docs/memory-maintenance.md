@@ -36,11 +36,15 @@ source schema initialization, and never sync vectors or record usage:
   `-wal` / `-shm` sidecar) cannot be opened in place without SQLite creating or
   updating `-shm` read marks. Instead, `nachos-maintain` copies the database
   file (and its `-wal` file when present) into a private (`0700`) temporary
-  directory and opens the copy with `mode=ro` and `query_only = ON`. SQLite
-  rebuilds a transient `-shm` inside the temporary directory and reads any
-  committed, un-checkpointed WAL writes while leaving the original database,
-  `-wal`, and `-shm` bytes and modification times untouched. The temporary
-  directory is deleted when the connection closes.
+  directory, verifies that `(size, mtime_ns)` of both source files stayed stable
+  across the copy (retrying up to 3 times on concurrent writes or checkpoints),
+  opens the copy with `mode=ro` and `query_only = ON`, and runs
+  `PRAGMA quick_check` on the copy before reading. If the sources keep changing
+  or `quick_check` is not `ok`, it fails closed with an error. SQLite rebuilds
+  a transient `-shm` inside the temporary directory and reads any committed,
+  un-checkpointed WAL writes while leaving the original database, `-wal`, and
+  `-shm` bytes and modification times untouched. The temporary directory is
+  deleted when the connection closes.
 - An absent index is represented by an in-memory empty index, **not created on
   disk**. The flatfile uses the existing Markdown parser without invoking write
   operations.
