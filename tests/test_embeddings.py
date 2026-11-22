@@ -547,19 +547,11 @@ def test_ready_line_overrides_change_the_model_id(fake_serve_cli, monkeypatch):
         embedder.close()
 
 
-def test_preset_resolves_to_model_and_dtype_with_explicit_settings_winning():
-    assert make_embedder("nachos", preset="small").model_id == "nachos:Xenova/all-MiniLM-L6-v2:q8"
-    quality = make_embedder("nachos", preset="quality")
-    assert quality.model_id == "nachos:Alibaba-NLP/gte-modernbert-base:q8"
-    # embedding_dtype overrides the preset's dtype only
-    assert make_embedder("nachos", preset="quality", dtype="fp16").model_id.endswith(":fp16")
-    # embedding_model overrides the preset entirely; the preset's dtype is not applied
-    custom = make_embedder("nachos", preset="quality", model="org/custom")
-    assert custom.model_id == "nachos:org/custom"
-    both = make_embedder("nachos", preset="small", model="org/custom", dtype="q4")
+def test_blank_model_is_the_backend_default_and_explicit_model_dtype_are_used():
+    assert make_embedder("nachos").model_id == "nachos:default"
+    assert make_embedder("nachos", model="org/custom").model_id == "nachos:org/custom"
+    both = make_embedder("nachos", model="org/custom", dtype="q4")
     assert both.model_id == "nachos:org/custom:q4"
-    assert make_embedder("nachos", preset="").model_id == "nachos:default"
-    assert make_embedder("nachos", preset="bogus").model_id == "nachos:default"
 
 
 def test_rerank_max_length_is_passed_to_serve(fake_serve_cli, monkeypatch, tmp_path):
@@ -577,12 +569,11 @@ def test_rerank_max_length_is_passed_to_serve(fake_serve_cli, monkeypatch, tmp_p
         embedder.close()
 
 
-def test_preset_is_ignored_by_other_backends():
-    st = make_embedder("sentence-transformers", preset="quality", model="")
+def test_none_prefix_means_no_prefix_for_client_side_backends():
+    st = make_embedder("sentence-transformers", model="")
     assert st.model_id == "st:all-MiniLM-L6-v2"
     openai = make_embedder(
         "openai",
-        preset="quality",
         model="nomic-embed-text",
         base_url="http://h/v1",
         query_prefix="none",

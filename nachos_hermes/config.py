@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import Any, Callable
 
 from nachos_core.embeddings import EMBEDDING_BACKENDS, Embedder, make_embedder
-from nachos_core.models import PRESET_CHOICES, PRESETS
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +21,6 @@ DEFAULTS: dict[str, Any] = {
     "store": "sqlite",
     "manifest_char_budget": 1200,
     "embeddings": "auto",
-    "embedding_preset": "",
     "embedding_model": "",
     "embedding_dtype": "",
     "embedding_pooling": "",
@@ -52,7 +50,6 @@ _VERBATIM_KEYS = frozenset({"embedding_query_prefix", "embedding_document_prefix
 # String settings with a closed set of values; anything else is ignored.
 _CHOICES: dict[str, tuple[str, ...]] = {
     "capture": ("review", "off"),
-    "embedding_preset": PRESET_CHOICES,
     "embedding_pooling": ("", "mean", "cls"),
     "rerank": ("off", "nachos"),
     "similarity_floor": ("off", "auto"),
@@ -77,24 +74,13 @@ CONFIG_SCHEMA: list[dict[str, Any]] = [
         "sentence-transformers, then an OpenAI-compatible URL if set; off = lexical only.",
     },
     {
-        "key": "embedding_preset",
-        "choices": list(PRESET_CHOICES),
-        "description": "Pick an embedding model by size for the nachos backend: "
-        + "; ".join(
-            f"{p.name} = {p.model} {p.dtype} (~{p.download_mb} MB)" for p in PRESETS.values()
-        )
-        + ". Blank = no preset (backend default). embedding_model / embedding_dtype override "
-        "the preset. Changing the model re-embeds in the background-ish way "
-        "(recall stays lexical until done).",
-    },
-    {
         "key": "embedding_model",
-        "description": "Embedding model id (backend-specific; blank = preset or backend default). "
+        "description": "Embedding model id (backend-specific; blank = backend default, MiniLM for nachos-embeddings). "
         "For the nachos backend any Hugging Face ONNX encoder or a local directory path works.",
     },
     {
         "key": "embedding_dtype",
-        "description": "Model precision for the nachos backend, e.g. q8 (about 3x faster, cosine ~0.99 vs fp32). Blank = preset or backend default. Changing it re-embeds.",
+        "description": "Model precision for the nachos backend, e.g. q8 (about 3x faster, cosine ~0.99 vs fp32). Blank = backend default. Changing it re-embeds.",
     },
     {
         "key": "embedding_pooling",
@@ -348,7 +334,6 @@ def make_embedder_from_config(cfg: dict[str, Any]) -> Embedder | None:
         rerank=cfg["rerank"] == "nachos",
         rerank_model=cfg["rerank_model"],
         rerank_dtype=cfg["rerank_dtype"],
-        preset=cfg["embedding_preset"],
         pooling=cfg["embedding_pooling"],
         max_length=max(0, int(cfg["embedding_max_length"])),
         rerank_max_length=max(0, int(cfg["rerank_max_length"])),

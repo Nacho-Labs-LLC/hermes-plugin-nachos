@@ -46,9 +46,8 @@ Run `hermes memory setup` or edit `$HERMES_HOME/nachos/config.json`. Settings ar
 | `store` | `sqlite` | Store format: `sqlite` or hand-editable `flatfile`. |
 | `manifest_char_budget` | `1200` | Soft size target for the manifest; summaries shorten, entries are never dropped. |
 | `embeddings` | `auto` | Backend: `auto`, `nachos`, `openai`, `sentence-transformers` or `off`. |
-| `embedding_preset` | blank | `small`, `balanced` or `quality`: a named model for the `nachos` backend (see [Choosing a model](#choosing-a-model)). `embedding_model` / `embedding_dtype` override it. Blank = no preset. |
-| `embedding_model` | blank | Model id (blank = preset, else backend default). For the `nachos` backend any Hugging Face ONNX encoder or a local directory path. |
-| `embedding_dtype` | blank | Precision for the `nachos` backend, e.g. `q8` (about 3x faster, cosine about 0.99 vs fp32). Blank = preset or backend default. Changing it re-embeds. |
+| `embedding_model` | blank | Model id (blank = backend default, MiniLM for `nachos`; see [Choosing a model](#choosing-a-model)). For the `nachos` backend any Hugging Face ONNX encoder or a local directory path. |
+| `embedding_dtype` | blank | Precision for the `nachos` backend, e.g. `q8` (about 3x faster, cosine about 0.99 vs fp32). Blank = backend default. Changing it re-embeds. |
 | `embedding_pooling` | blank | `mean` or `cls` for the `nachos` backend. Blank = the model's built-in profile. Changing it re-embeds. |
 | `embedding_max_length` | `0` | Truncate inputs to this many tokens for the `nachos` backend (`0` = model default; can only lower the tokenizer limit). Changing it re-embeds. |
 | `embedding_base_url` | blank | OpenAI-compatible base URL. |
@@ -91,38 +90,45 @@ Any OpenAI-compatible `/embeddings` endpoint works (Ollama above); for a hosted 
 
 ### Choosing a model
 
-Pick by size with one setting, or name any model yourself:
+Name the model you want; there are no presets. Blank `embedding_model` means the backend default (MiniLM through `nachos-embeddings`). For example, the best measured model:
 
 ```json
-{ "embeddings": "nachos", "embedding_preset": "quality" }
+{ "embeddings": "nachos",
+  "embedding_model": "Alibaba-NLP/gte-modernbert-base",
+  "embedding_dtype": "q8" }
 ```
 
-| Preset | Model (dtype) | Download | Dims | Original hit@1 / hit@5 / MRR | Adversarial hit@1 / hit@5 | Search p50 | Build (208 entries) |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| *(`embeddings: off`)* | lexical only | none | - | 0.695 / 0.812 / 0.748 | 0.975 / 1.000 | 0.2 ms | 1.2 s |
-| `small` | `Xenova/all-MiniLM-L6-v2` (q8) | 23 MB | 384 | 0.758 / 0.924 / 0.832 | 0.988 / 1.000 | 8.2 ms | 4.8 s |
-| `balanced` | `Snowflake/snowflake-arctic-embed-s` (q8) | 34 MB | 384 | 0.753 / 0.911 / 0.824 | 0.988 / 1.000 | 9.3 ms | 5.6 s |
-| `quality` | `Alibaba-NLP/gte-modernbert-base` (q8) | 150 MB | 768 | **0.773 / 0.949 / 0.850** | **1.000 / 1.000** | 20.5 ms | 19.5 s |
+Our benchmark (synthetic fixtures in `bench/data`: 208 memories / 393 answerable queries, plus a held-out adversarial set; reranker off; `q8`; p50 is median search latency on one idle 16-thread CPU, so it varies with the machine):
 
-How to read it: all three presets beat lexical-only on the original set (hit@5 0.81 to 0.92 to 0.95); `quality` is the clear recall winner and costs about 2x the embedding time and a 768-dim index. `small` and `balanced` are within noise of each other on this fixture (a 0.005 hit@1 gap is two queries out of 393), so `balanced` is the retrieval-tuned 384-dim choice rather than a measured step up; other 384-dim models tried (`bge-small-en-v1.5` 0.728 / 0.916 / 0.807, `e5-small-v2` 0.753 / 0.898 / 0.818) and `nomic-embed-text-v1.5` (0.748 / 0.924 / 0.825, 137 MB and several times slower) did not beat them. Numbers: synthetic fixtures in `bench/data` (208 memories, 393 answerable queries; held-out adversarial set 128 memories, 81 queries), reranker off, one 16-thread CPU; latencies are medians of `--repeat 3` on an otherwise idle machine and vary with it. Measure on your own machine with `python -m bench --preset quality` (see [docs/benchmark.md](docs/benchmark.md)).
+| `embedding_model` (dtype q8) | Download | Dims | hit@1 / hit@5 / MRR | Adversarial hit@1 | p50 | Note |
+| --- | --- | --- | --- | --- | --- | --- |
+| *(`embeddings: off`)* | none | - | 0.695 / 0.812 / 0.748 | 0.975 | 0.2 ms | Lexical only. |
+| blank, or `Xenova/all-MiniLM-L6-v2` | 23 MB | 384 | 0.758 / 0.924 / 0.832 | 0.988 | 8.2 ms | Default; smallest and fastest. |
+| `Alibaba-NLP/gte-modernbert-base` | 150 MB | 768 | **0.773 / 0.949 / 0.850** | **1.000** | 20.5 ms | Best measured; about 2x the embedding time and a 768-dim index. |
+| `Snowflake/snowflake-arctic-embed-s` | 34 MB | 384 | 0.753 / 0.911 / 0.824 | 0.988 | 9.3 ms | Retrieval-tuned; ties MiniLM here. |
+| `Xenova/bge-small-en-v1.5` | 34 MB | 384 | 0.728 / 0.916 / 0.807 | 0.988 | 16.0 ms | Did not beat MiniLM here. |
+| `Xenova/e5-small-v2` | 34 MB | 384 | 0.753 / 0.898 / 0.818 | 0.975 | 15.2 ms | Did not beat MiniLM here. |
+| `nomic-ai/nomic-embed-text-v1.5` | 137 MB | 768 | 0.748 / 0.924 / 0.825 | 1.000 | 92.4 ms | Several times slower (p50 measured on a busier machine). |
 
-**Rules.** `embedding_model` and `embedding_dtype` always win over the preset: `embedding_model` replaces the preset entirely (its dtype is not carried over, because a custom model may not ship that file), `embedding_dtype` alone replaces only the precision. A preset applies to the `nachos` backend (including `auto` resolving to it); the other backends use `embedding_model` as before. For the `nachos` backend `embedding_model` accepts any Hugging Face ONNX encoder, or a local directory (`./models/my-model`, fully offline); `python -m nachos_hermes.models list` and `nachos-embeddings models` show what is built in.
+Differences under about 0.01 hit@1 (4 queries) are not significant on this fixture. The default `embedding_dtype` is blank (fp32, about 4x the download); `q8` is what was measured. Measure any model on your own machine with `python -m bench --model <id> --dtype q8` (see [docs/benchmark.md](docs/benchmark.md)).
+
+Changing `embedding_model` (or dtype) re-embeds safely: old vectors are kept until the new model has covered every entry, and recall stays lexical meanwhile (see [Switching models](#switching-models)). For the `nachos` backend `embedding_model` accepts any Hugging Face ONNX encoder, or a local directory (`./models/my-model`, fully offline); `python -m nachos_hermes.models list` shows the effective settings and `nachos-embeddings models` the models it ships profiles for.
 
 **Overrides.** Built-in per-model profiles (pooling, query/document prefixes) are only defaults. Set `embedding_pooling`, `embedding_max_length`, `embedding_query_prefix` and `embedding_document_prefix` to override them for the `nachos` backend (prefix: blank = the model's own, `none` = no prefix). The reranker takes `rerank_model`, `rerank_dtype` and `rerank_max_length` the same way. The embedding overrides except the query prefix change stored vectors, so changing one re-embeds (below); reranker settings never do. (Vectors are L2-normalized by the index, so the CLI's `--no-normalize` has no use here and is not exposed.)
 
 ### Switching models
 
-Changing any embedding setting (preset, model, dtype, pooling, max length, document prefix) puts the profile's vectors in a different space. Nachos switches safely:
+Changing any embedding setting (model, dtype, pooling, max length, document prefix) puts the profile's vectors in a different space. Nachos switches safely:
 
 - **Old vectors are kept** until the new model has embedded every entry, so a crash or a second change loses nothing and switching back is instant. Only then are the old vectors dropped and the new model's similarity thresholds (`duplicate_calibration`, `similarity_floor`) recalibrated from the new vectors.
-- **Recall never waits for the whole index.** A few edited entries are embedded inline as before. More than 24 stale entries (a model switch, a first run on an existing store) are re-embedded in small, time-sized batches: about `reindex_budget_ms` (default 250 ms) per recall or write, plus the entry in flight (a long entry is up to 16 chunks). Measured on the bench fixture switching `small` to `quality` (208 entries): the first recall used to block for 17.2 s; now recalls during the switch take a median of 314 ms (max 1.8 s) and the switch completes after 43 recalls.
+- **Recall never waits for the whole index.** A few edited entries are embedded inline as before. More than 24 stale entries (a model switch, a first run on an existing store) are re-embedded in small, time-sized batches: about `reindex_budget_ms` (default 250 ms) per recall or write, plus the entry in flight (a long entry is up to 16 chunks). Measured on the bench fixture switching MiniLM to gte-modernbert (208 entries): the first recall used to block for 17.2 s; now recalls during the switch take a median of 314 ms (max 1.8 s) and the switch completes after 43 recalls.
 - **Lexical meanwhile.** Until a scope is fully re-embedded, recall, duplicate checks and update hints use lexical matching only; partially embedded rankings would mix two vector spaces.
 - **Status.** `/nachos-memory-status` shows `re-embedding: profile 40/208 ...` while it runs. From a shell (read-only, no model loaded):
 
 ```bash
 python -m nachos_hermes.models status  --profile-home ~/.hermes/profiles/default   # coverage per model, needs_reindex
 python -m nachos_hermes.models reindex --profile-home ~/.hermes/profiles/default   # finish now (loads the model)
-python -m nachos_hermes.models list    [--profile-home H]                          # presets, effective settings, auxiliary LLMs
+python -m nachos_hermes.models list    [--profile-home H]                          # effective settings, auxiliary LLMs
 ```
 
 ### Language models Nachos can call

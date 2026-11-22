@@ -43,7 +43,7 @@ import weakref
 from abc import ABC, abstractmethod
 from typing import IO, Any
 
-from .models import prefix_argument, resolve_model
+from .models import prefix_argument
 
 logger = logging.getLogger(__name__)
 
@@ -529,7 +529,6 @@ def make_embedder(
     rerank: bool = False,
     rerank_model: str = "",
     rerank_dtype: str = "",
-    preset: str = "",
     pooling: str = "",
     max_length: int = 0,
     normalize: bool | None = None,
@@ -537,9 +536,9 @@ def make_embedder(
 ) -> Embedder | None:
     """Resolve a configured backend name to an Embedder, or None for lexical-only.
 
-    ``preset``, ``dtype``, ``pooling``, ``max_length``, ``normalize`` and ``rerank*`` apply to
-    the ``nachos`` CLI only (``auto`` resolving to it included); an explicit ``model`` or
-    ``dtype`` beats the preset. ``query_prefix`` / ``document_prefix`` are sent to the nachos
+    ``dtype``, ``pooling``, ``max_length``, ``normalize`` and ``rerank*`` apply to
+    the ``nachos`` CLI only (``auto`` resolving to it included); a blank ``model`` is the CLI's default
+    (MiniLM). ``query_prefix`` / ``document_prefix`` are sent to the nachos
     CLI as overrides of its per-model prefixes (blank = keep the profile's, ``none`` = no
     prefix) and prepended client-side by ``openai`` and ``sentence-transformers``.
     """
@@ -549,11 +548,10 @@ def make_embedder(
     prefixes = (_client_prefix(query_prefix), _client_prefix(document_prefix))
 
     def cli() -> CliEmbedder:
-        cli_model, cli_dtype = resolve_model(preset, model, dtype)
         return CliEmbedder(
             command,
-            cli_model,
-            dtype=cli_dtype,
+            model,
+            dtype=dtype,
             rerank=rerank,
             rerank_model=rerank_model,
             rerank_dtype=rerank_dtype,

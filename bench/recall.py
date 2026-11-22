@@ -37,7 +37,6 @@ if str(REPO_ROOT) not in sys.path:
 from nachos_core.embeddings import EMBEDDING_BACKENDS, Embedder, make_embedder  # noqa: E402
 from nachos_core.index import MemoryIndex  # noqa: E402
 from nachos_core.memory import PROFILE, MemoryService, Scope  # noqa: E402
-from nachos_core.models import PRESET_CHOICES  # noqa: E402
 from nachos_core.store import get_store  # noqa: E402
 from nachos_core.store.md_store import slugify  # noqa: E402
 
@@ -308,7 +307,6 @@ def resolve_embedder(backend: str, opts: argparse.Namespace) -> tuple[Embedder |
         rerank=getattr(opts, "rerank", False),
         rerank_model=getattr(opts, "rerank_model", ""),
         rerank_dtype=getattr(opts, "rerank_dtype", ""),
-        preset=getattr(opts, "preset", ""),
         pooling=getattr(opts, "pooling", ""),
         max_length=getattr(opts, "max_length", 0),
         rerank_max_length=getattr(opts, "rerank_max_length", 0),
@@ -665,16 +663,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--embeddings",
         default=None,
         help=f"comma-separated backends to run, from {', '.join(BACKENDS)} "
-        "(default: off; with --model or --preset: off,nachos, so the result sits next to "
+        "(default: off; with --model: off,nachos, so the result sits next to "
         "the lexical baseline)",
     )
     ap.add_argument("--model", default="", help="embedding_model passthrough")
-    ap.add_argument(
-        "--preset",
-        default="",
-        choices=PRESET_CHOICES,
-        help="embedding_preset: small | balanced | quality (nachos backend; --model/--dtype win)",
-    )
     ap.add_argument("--dtype", default="", help="embedding_dtype passthrough (nachos backend)")
     ap.add_argument(
         "--pooling", default="", choices=("", "mean", "cls"), help="embedding_pooling (nachos)"
@@ -743,7 +735,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     opts = ap.parse_args(argv)
     if opts.embeddings is None:
-        opts.embeddings = "off,nachos" if (opts.model or opts.preset) else "off"
+        opts.embeddings = "off,nachos" if opts.model else "off"
     opts.backends = [b.strip() for b in opts.embeddings.split(",") if b.strip()]
     unknown = [b for b in opts.backends if b not in BACKENDS]
     if unknown or not opts.backends:

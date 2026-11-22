@@ -287,23 +287,18 @@ def test_ranking_flags_are_parsed_into_service_options():
 
 
 class TestModelOptions:
-    def test_model_or_preset_adds_the_nachos_backend_beside_lexical(self):
+    def test_model_adds_the_nachos_backend_beside_lexical(self):
         assert recall.parse_args([]).backends == ["off"]
         assert recall.parse_args(["--model", "org/m"]).backends == ["off", "nachos"]
-        assert recall.parse_args(["--preset", "quality"]).backends == ["off", "nachos"]
         assert recall.parse_args(["--model", "m", "--embeddings", "nachos"]).backends == ["nachos"]
-
-    def test_unknown_preset_is_rejected(self):
-        with pytest.raises(SystemExit):
-            recall.parse_args(["--preset", "huge"])
 
     def test_model_flags_reach_the_embedder(self):
         opts = recall.parse_args(
             [
                 "--command",
                 sys.executable,
-                "--preset",
-                "small",
+                "--model",
+                "Xenova/all-MiniLM-L6-v2",
                 "--pooling",
                 "cls",
                 "--max-length",

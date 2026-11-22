@@ -37,7 +37,6 @@ def test_setup_schema_describes_all_non_secret_provider_settings():
         "store",
         "manifest_char_budget",
         "embeddings",
-        "embedding_preset",
         "embedding_model",
         "embedding_dtype",
         "embedding_pooling",

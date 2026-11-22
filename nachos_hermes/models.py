@@ -20,7 +20,6 @@ from typing import Any
 
 from nachos_core.index import MemoryIndex, index_path_for
 from nachos_core.memory import PROFILE, MemoryService, Scope
-from nachos_core.models import PRESETS, resolve_model
 from nachos_core.store import MDStore, SqliteStore, get_store
 
 from .config import (
@@ -41,27 +40,17 @@ _MODEL_KEYS = tuple(
 
 
 def effective_embedding(cfg: dict[str, Any]) -> dict[str, str]:
-    """The nachos model the config resolves to (preset applied, explicit settings winning)."""
-    model, dtype = resolve_model(
-        cfg["embedding_preset"], cfg["embedding_model"], cfg["embedding_dtype"]
-    )
-    return {"model": model or "(backend default)", "dtype": dtype or "(backend default)"}
+    """The nachos model the config names (blank = the CLI's default)."""
+    return {
+        "model": cfg["embedding_model"] or "(backend default)",
+        "dtype": cfg["embedding_dtype"] or "(backend default)",
+    }
 
 
 def list_report(home: Path | None) -> dict[str, Any]:
-    """Presets, the profile's model settings, and the auxiliary LLMs, in one structure."""
+    """The profile's model settings and the auxiliary LLMs, in one structure."""
     cfg = profile_config(home) if home is not None else profile_config(Path("/nonexistent"))
     return {
-        "presets": {
-            name: {
-                "model": p.model,
-                "dtype": p.dtype,
-                "dimension": p.dimension,
-                "download_mb": p.download_mb,
-                "summary": p.summary,
-            }
-            for name, p in PRESETS.items()
-        },
         "profile_home": str(home) if home is not None else None,
         "settings": {key: cfg[key] for key in _MODEL_KEYS},
         "effective_embedding": effective_embedding(cfg),
@@ -99,13 +88,15 @@ def status_report(home: Path, store_kind: str) -> dict[str, Any]:
         getattr(store, "close", lambda: None)()
         index.close()
     wanted = effective_embedding(cfg)
-    prefix = f"nachos:{wanted['model']}"
+    prefix = f"nachos:{cfg['embedding_model'] or 'default'}"
     # The exact id also carries pooling/prefix details only the running CLI reports, so match
     # the family: nachos:<model>[:<dtype>...].
     current = {
         m: n
         for m, n in counts.items()
-        if cfg["embeddings"] != "off" and m.startswith(prefix) and wanted["dtype"] in m
+        if cfg["embeddings"] != "off"
+        and m.startswith(prefix)
+        and (not cfg["embedding_dtype"] or cfg["embedding_dtype"] in m)
     }
     covered = max(current.values(), default=0)
     return {
@@ -122,13 +113,7 @@ def status_report(home: Path, store_kind: str) -> dict[str, Any]:
 
 
 def _human_list(report: dict[str, Any]) -> str:
-    lines = ["Embedding presets (embedding_preset):"]
-    for name, p in report["presets"].items():
-        lines.append(
-            f"  {name:9} {p['model']} {p['dtype']}  {p['dimension']} dims, ~{p['download_mb']} MB: "
-            f"{p['summary']}"
-        )
-    lines += ["", f"Settings for {report['profile_home'] or 'defaults'}:"]
+    lines = [f"Settings for {report['profile_home'] or 'defaults'}:"]
     lines += [f"  {key}: {json.dumps(value)}" for key, value in report["settings"].items()]
     eff = report["effective_embedding"]
     lines += ["", f"Effective nachos embedding model: {eff['model']} (dtype {eff['dtype']})"]

@@ -18,11 +18,9 @@ UNAVAILABLE = "Nachos memory store unavailable."
 INBOX_USAGE = "Usage: /nachos-memory-inbox [show <id> | approve <id|all> | reject <id|all>]"
 
 
-def _model_lines(models: dict[str, Any], cfg: dict[str, Any]) -> list[str]:
+def _model_lines(models: dict[str, Any]) -> list[str]:
     """Model-switch progress, kept old vectors and calibration, only when there is something to say."""
     lines: list[str] = []
-    if cfg.get("embedding_preset"):
-        lines.append(f"  preset      : {cfg['embedding_preset']}")
     for name, s in models["scopes"].items():
         if s["reindexing"]:
             lines.append(
@@ -51,7 +49,7 @@ def status_text(
         emb += f" (disabled: {status['embeddings_error']})"
     lines.append(f"  embeddings  : {emb}")
     if service.embedder:
-        lines.extend(_model_lines(service.model_status(), cfg))
+        lines.extend(_model_lines(service.model_status()))
     for name, s in status["scopes"].items():
         indexed = f", {s['indexed']} embedded" if service.embedder else ""
         sup = f", {s['superseded']} superseded" if s.get("superseded") else ""
