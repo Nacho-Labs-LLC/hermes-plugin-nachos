@@ -20,7 +20,7 @@ else
 fi
 
 SRC_DIRS=(nachos_core nachos_hermes plugins tools)
-LINT_PATHS=(__init__.py nachos_core nachos_hermes plugins tests tools)
+LINT_PATHS=(__init__.py bench nachos_core nachos_hermes plugins tests tools)
 
 # Missing tools are a hard failure, never a silent skip.
 missing=()
