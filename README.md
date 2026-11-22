@@ -106,11 +106,33 @@ The model comes from `auxiliary.nachos_capture.model` in `config.yaml`. **Cost w
 
 ## Maintenance
 
-Scripts take `--store {sqlite,flatfile}` and `--path` (default `$HERMES_HOME/nachos/memory.db`).
+The wheel/pip package includes `nachos-maintain`, an **offline, report-only**
+command with explicit profile selection:
 
-- `tools/memory_audit.py` (`--embeddings`, `--json`): `duplicates`, `unused [--days N]`, `purge-category NAME`, `history [--key K] [--limit N]`, `revert ID`. Read-only unless `--run`.
-- `tools/correct_summaries.py [--limit N] [--run]`: rewrites low-quality summaries with the model in `auxiliary.nachos_summary.model`; dry-run by default.
-- The change log (previous content of every create, update, remove and revert; newest 1000 kept) lives in the sidecar `memory.index.db`.
+```bash
+/path/to/venv/bin/nachos-maintain --profile-home /absolute/path/to/profile --json all
+# Independently schedulable: inbox | summaries | duplicates | unused | all
+/path/to/venv/bin/nachos-maintain --profile-home /absolute/path/to/profile --days 90 unused
+```
+
+No LLM/network, embeddings, memory edits, automatic approvals, deletions, or
+merges. `--store flatfile` selects `memory.md`; default is SQLite. Existing
+rollback-mode store/index files are opened read-only (`mode=ro` + `query_only`);
+WAL-mode databases (and any `-wal` sidecar) are copied into a private temporary
+directory before auditing so original files and sidecars are never created,
+checkpointed, or modified. Missing stores fail, and missing usage history is
+reported as unknown. Findings are review hints: old/unused does not mean false.
+See [memory maintenance](docs/memory-maintenance.md) for the JSON contract,
+separate daily/weekly/monthly cron recipes, summary review/correction, human
+consolidation, safety boundaries, and recovery limitations. Nothing is scheduled
+automatically.
+
+Existing **source-checkout** tools remain available with `--store {sqlite,flatfile}`
+and `--path` (default `$HERMES_HOME/nachos/memory.db`):
+
+- `tools/memory_audit.py` (`--embeddings`, `--json`): `duplicates`, `unused [--days N]`, `purge-category NAME`, `history [--key K] [--limit N]`, `revert ID`. No content changes unless `--run`, but opening these legacy tools can initialize store/index schema; use `nachos-maintain` for strictly report-only audits.
+- `tools/correct_summaries.py [--limit N] [--run]`: generates replacement summaries with `auxiliary.nachos_summary.model`. **Dry-run still calls an LLM**; `--run` writes directly, outside the service change log/redactor. Keep this separately approved, profile-scoped and cost-pinned, not a default cron action.
+- The change log (previous content of every service create, update, remove and revert; newest 1000 kept) lives in the sidecar `memory.index.db`.
 
 ## Privacy
 

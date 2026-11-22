@@ -18,12 +18,16 @@ import hashlib
 import json
 import math
 import os
+import shutil
 import sqlite3
+import tempfile
 import time
 from array import array
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
+
+_SQLITE_MAGIC = b"SQLite format 3\x00"
 
 
 def index_path_for(store_path: Path) -> Path:
@@ -57,9 +61,71 @@ def dot(a: list[float], b: list[float]) -> float:
     return sum(x * y for x, y in zip(a, b))
 
 
+def _needs_wal_snapshot(path: Path) -> bool:
+    """True when opening ``path`` directly with ``mode=ro`` could create/mutate WAL sidecars."""
+    if any(os.path.lexists(f"{path}{suffix}") for suffix in ("-wal", "-shm")):
+        return True
+    with path.open("rb") as fh:
+        header = fh.read(20)
+    return (
+        len(header) == 20 and header[:16] == _SQLITE_MAGIC and (header[18] == 2 or header[19] == 2)
+    )
+
+
+def open_read_only_sqlite(
+    path: str | os.PathLike[str],
+) -> tuple[sqlite3.Connection, tempfile.TemporaryDirectory[str] | None]:
+    """Open a SQLite file read-only without creating, checkpointing, or modifying source files.
+
+    Rollback-mode databases are opened directly with ``mode=ro`` and ``PRAGMA query_only = ON``.
+    WAL-mode databases (header version 2 or existing ``-wal``/``-shm`` sidecars) are copied along
+    with any ``-wal`` file into a private temporary directory so SQLite can rebuild its transient
+    ``-shm`` index there without touching the original files or directory.
+    """
+    resolved = Path(path).resolve()
+    temp_dir: tempfile.TemporaryDirectory[str] | None = None
+    target = resolved
+    try:
+        if _needs_wal_snapshot(resolved):
+            temp_dir = tempfile.TemporaryDirectory(prefix="nachos-ro-")
+            target = Path(temp_dir.name) / resolved.name
+            shutil.copyfile(resolved, target)
+            wal_src = Path(f"{resolved}-wal")
+            if os.path.lexists(wal_src):
+                shutil.copyfile(wal_src, Path(f"{target}-wal"))
+        conn = sqlite3.connect(f"{target.as_uri()}?mode=ro", uri=True, check_same_thread=False)
+        try:
+            conn.execute("PRAGMA query_only = ON")
+            conn.execute("PRAGMA schema_version").fetchone()
+        except Exception:
+            conn.close()
+            raise
+    except Exception:
+        if temp_dir is not None:
+            temp_dir.cleanup()
+        raise
+    return conn, temp_dir
+
+
+def close_sqlite(
+    conn: sqlite3.Connection, temp_dir: tempfile.TemporaryDirectory[str] | None
+) -> None:
+    """Close a SQLite connection and clean up any read-only snapshot temp directory."""
+    with contextlib.suppress(Exception):
+        conn.close()
+    if temp_dir is not None:
+        with contextlib.suppress(Exception):
+            temp_dir.cleanup()
+
+
 class MemoryIndex:
-    def __init__(self, path: str | os.PathLike[str]) -> None:
+    def __init__(self, path: str | os.PathLike[str], *, read_only: bool = False) -> None:
         self._path = str(path)
+        self._cache: tuple[str, dict[str, list[float]]] | None = None
+        self._temp_dir: tempfile.TemporaryDirectory[str] | None = None
+        if read_only:
+            self._conn, self._temp_dir = open_read_only_sqlite(path)
+            return
         if self._path != ":memory:":
             Path(self._path).parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(self._path, check_same_thread=False)
@@ -105,7 +171,6 @@ class MemoryIndex:
             """
         )
         self._conn.commit()
-        self._cache: tuple[str, dict[str, list[float]]] | None = None
 
     # -- vectors -----------------------------------------------------------
 
@@ -383,5 +448,5 @@ class MemoryIndex:
         return cur.rowcount
 
     def close(self) -> None:
-        with contextlib.suppress(Exception):
-            self._conn.close()
+        close_sqlite(self._conn, self._temp_dir)
+        self._temp_dir = None
