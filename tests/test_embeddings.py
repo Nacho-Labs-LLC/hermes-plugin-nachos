@@ -102,7 +102,7 @@ def fake_serve_cli(tmp_path, monkeypatch):
     path.chmod(path.stat().st_mode | stat.S_IEXEC)
     counter = tmp_path / "starts.txt"
     monkeypatch.setenv("FAKE_COUNTER", str(counter))
-    monkeypatch.setenv("FAKE_VERSION", "0.6.0")  # a current CLI answers --version
+    monkeypatch.setenv("FAKE_VERSION", "0.7.0")  # a current CLI answers --version
     return path, counter
 
 
@@ -218,7 +218,7 @@ def fake_cli(tmp_path, monkeypatch):
     path.write_text(_FAKE_CLI.format(python=sys.executable))
     path.chmod(path.stat().st_mode | stat.S_IEXEC)
     monkeypatch.setenv("PATH", f"{path.parent}{os.pathsep}{os.environ.get('PATH', '')}")
-    monkeypatch.setenv("FAKE_VERSION", "0.6.0")  # a current CLI answers --version
+    monkeypatch.setenv("FAKE_VERSION", "0.7.0")  # a current CLI answers --version
     return path
 
 
@@ -245,7 +245,7 @@ def test_unknown_backend_is_rejected():
         make_embedder("word2vec")
 
 
-def test_openai_compatible_endpoint(monkeypatch):
+def test_openai_compatible_endpoint():
     seen = {}
 
     class Handler(BaseHTTPRequestHandler):
@@ -267,11 +267,11 @@ def test_openai_compatible_endpoint(monkeypatch):
     server = HTTPServer(("127.0.0.1", 0), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
-        monkeypatch.setenv("TEST_EMBED_KEY", "secret-token")
         embedder = OpenAICompatEmbedder(
             f"http://127.0.0.1:{server.server_port}/v1",
             "nomic-embed-text",
             api_key_env="TEST_EMBED_KEY",
+            credential_resolver={"TEST_EMBED_KEY": "secret-token"}.get,
         )
         vectors = embedder.embed(["a", "b"])
     finally:
@@ -646,7 +646,7 @@ def test_older_cli_version_degrades_gracefully_and_warns_once(
         assert reqs_file.read_text().splitlines() == ["None", "None"]
     finally:
         embedder.close()
-    warnings = [r.message for r in caplog.records if "older than 0.6.0" in r.message]
+    warnings = [r.message for r in caplog.records if "older than 0.7.0" in r.message]
     assert len(warnings) == 1
 
 
@@ -670,7 +670,7 @@ def test_older_cli_ready_line_version_disables_types_and_rerank(
         assert reqs_file.read_text().splitlines() == ["None"]
     finally:
         embedder.close()
-    assert sum("older than 0.6.0" in r.message for r in caplog.records) == 1
+    assert sum("older than 0.7.0" in r.message for r in caplog.records) == 1
     assert not any("reranking disabled" in r.message for r in caplog.records)
 
 
@@ -683,14 +683,14 @@ def test_older_oneshot_cli_strips_0_6_override_flags(fake_cli, monkeypatch, tmp_
         assert embedder.embed(["abc"]) == [[3.0, 1.0]]
         assert embedder.embed(["de"]) == [[2.0, 1.0]]
     assert args_file.read_text() == "--model org/m --dtype q8"
-    assert sum("older than 0.6.0" in r.message for r in caplog.records) == 1
+    assert sum("older than 0.7.0" in r.message for r in caplog.records) == 1
 
 
 def test_cli_version_0_6_0_keeps_full_features(fake_serve_cli, monkeypatch, tmp_path, caplog):
     path, _ = fake_serve_cli
     args_file = tmp_path / "args.txt"
     reqs_file = tmp_path / "reqs.txt"
-    monkeypatch.setenv("FAKE_VERSION", "0.6.0")
+    monkeypatch.setenv("FAKE_VERSION", "0.7.0")
     monkeypatch.setenv("FAKE_TYPED", "1")
     monkeypatch.setenv("FAKE_RERANK", "1")
     monkeypatch.setenv("FAKE_ARGS", str(args_file))
@@ -700,7 +700,7 @@ def test_cli_version_0_6_0_keeps_full_features(fake_serve_cli, monkeypatch, tmp_
         with caplog.at_level("WARNING", logger="nachos_core.embeddings"):
             assert embedder.embed(["abc"], input_type="query") == [[3.0, 2.0]]
             assert embedder.rerank("q", ["no", "hit hit"]) == [0.0, 2.0]
-        assert embedder.cli_version == (0, 6, 0)
+        assert embedder.cli_version == (0, 7, 0)
         assert embedder.supports_type is True
         assert embedder.supports_rerank is True
         assert "--pooling cls" in args_file.read_text()
@@ -736,7 +736,7 @@ def test_cli_without_version_flag_is_treated_as_older_and_warns_once(
         assert reqs_file.read_text().splitlines() == ["None", "None"]
     finally:
         embedder.close()
-    assert sum("older than 0.6.0" in r.message for r in caplog.records) == 1
+    assert sum("older than 0.7.0" in r.message for r in caplog.records) == 1
 
 
 def test_ready_line_version_overrides_a_failed_version_probe(fake_serve_cli, monkeypatch, tmp_path):
@@ -744,12 +744,12 @@ def test_ready_line_version_overrides_a_failed_version_probe(fake_serve_cli, mon
     reqs_file = tmp_path / "reqs.txt"
     monkeypatch.delenv("FAKE_VERSION")
     monkeypatch.setenv("FAKE_TYPED", "1")
-    monkeypatch.setenv("FAKE_READY_EXTRA", json.dumps({"version": "0.6.0"}))
+    monkeypatch.setenv("FAKE_READY_EXTRA", json.dumps({"version": "0.7.0"}))
     monkeypatch.setenv("FAKE_REQS", str(reqs_file))
     embedder = CliEmbedder(str(path))
     try:
         assert embedder.embed(["abc"], input_type="query") == [[3.0, 2.0]]
-        assert embedder.cli_version == (0, 6, 0)
+        assert embedder.cli_version == (0, 7, 0)
         assert embedder.supports_type is True
         assert reqs_file.read_text().splitlines() == ["query"]
     finally:

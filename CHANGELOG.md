@@ -20,13 +20,23 @@
 
 ### Migration
 - Stores and indexes migrate in place on first open: SQLite `memory.db` gains `created_at`, `updated_at`, `superseded_by` and `prev_superseded_by` columns; flatfile `memory.md` entries stay readable and new or updated entries get a `<!-- created: ... | updated: ... | superseded_by: ... -->` comment; `memory.index.db` switches to WAL, re-keys `vectors` by `(key, chunk_no, model)` and adds `calibration`, `links` and `provenance` tables.
-- Use `nachos-embeddings >= 0.6.0` for input types, reranking and model overrides. Nachos checks `nachos-embeddings --version`; an older CLI (or one without `--version`) logs one warning and falls back to basic embeddings. Lexical-only mode still needs no extra dependency.
+- Use `nachos-embeddings >= 0.7.0` for input types, reranking and model overrides. Nachos checks `nachos-embeddings --version`; an older CLI logs one warning and falls back to basic embeddings. This includes the published 0.6.0 CLI, which has no `--version`. Lexical-only mode still needs no extra dependency.
 - New defaults: `abstention: hint`, `duplicate_calibration: auto`, `similarity_floor: off`, `rerank: off`, `rerank_candidates: 25`, `reindex_budget_ms: 250`, `related_per_hit: 3`, `history_context_before: 1`, `history_context_after: 1`, `history_max_chars: 6000`.
 - `possible_updates` replaces `suggested_supersedes` in `nachos_memory_put` results; the old name remains as an alias for this release.
 - Downgrading to 0.6.x against a migrated `memory.index.db` is not supported. Back up `$HERMES_HOME/nachos/` before upgrading. To roll back, restore the backup, or keep `memory.db` / `memory.md` and rename `memory.index.db` (and any `-wal` / `-shm` files) so 0.6.x builds a fresh index. A fresh index loses the change log, usage counts, links and provenance, and 0.6.x ignores `superseded_by`.
 
 ### Removed
 - Nothing is removed. `embedding_normalize` is intentionally not exposed: the index always L2-normalizes vectors.
+
+## 0.6.1 (unreleased)
+
+### Fixed
+- Resolve OpenAI-compatible embedding credentials at request time through Hermes' active profile secret scope, including the audit CLI and auto-selected backend. Never fall back to direct process-environment credential reads; a configured missing key prevents the request and recall degrades to lexical matching.
+- Align root and memory-provider manifests with the catalog candidate's verified Hermes minimum, `>=0.21.6`.
+
+### Documentation
+- Disclose all session-capture model inputs: trimmed transcripts, up to 200 memory titles/summaries and up to 100 USER.md entries. Human approval gates memory insertion, not outbound transmission; `capture: off` disables capture.
+- Clarify optional embedding network calls, raw transcript checkpoints, profile-scoped key resolution and the distinction between this unreleased candidate and published v0.6.0.
 
 ## 0.6.0
 

@@ -14,7 +14,8 @@ Backends:
   retrieval models apply their own prefixes; older CLIs are never sent a type.
 * ``openai``  — any OpenAI-compatible ``/embeddings`` endpoint over plain
   HTTP: Ollama, LM Studio, llama.cpp server, vLLM, or OpenAI itself. The API
-  key is read from an environment variable at call time and never stored.
+  key is resolved by an injected host resolver at request time, never from
+  the process environment. Without a key name, local endpoints need no auth.
 * ``sentence-transformers`` — in-process model, if the package is installed.
 
 ``openai`` and ``sentence-transformers`` have no query/document concept, so
@@ -32,7 +33,6 @@ import contextlib
 import importlib.util
 import json
 import logging
-import os
 import queue
 import re
 import shutil
@@ -42,6 +42,7 @@ import urllib.parse
 import urllib.request
 import weakref
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from typing import IO, Any
 
 from .models import prefix_argument
@@ -50,7 +51,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_RERANK_MODEL = "jinaai/jina-reranker-v1-tiny-en"
 EMBEDDING_BACKENDS = ("auto", "nachos", "openai", "sentence-transformers", "off")
-MIN_CLI_VERSION = (0, 6, 0)
+MIN_CLI_VERSION = (0, 7, 0)
 MIN_CLI_VERSION_STR = ".".join(str(part) for part in MIN_CLI_VERSION)
 _VERSION_RE = re.compile(r"\bv?(\d+)\.(\d+)\.(\d+)\b")
 
@@ -76,7 +77,7 @@ def _probe_cli_version(command: str) -> tuple[bool, tuple[int, int, int] | None]
 
     ``ran`` is False when the binary is missing or hangs (no verdict; embedding then fails or
     falls back to lexical as usual). A CLI that runs but exits non-zero or prints nothing
-    parseable has no ``--version`` and so predates 0.6.0: ``(True, None)``.
+    parseable has no ``--version`` and so predates 0.7.0: ``(True, None)``.
     """
     try:
         proc = subprocess.run(  # noqa: S603 - argv list from operator config, no shell
@@ -551,6 +552,8 @@ class OpenAICompatEmbedder(Embedder):
         timeout: float = 60.0,
         query_prefix: str = "",
         document_prefix: str = "",
+        *,
+        credential_resolver: Callable[[str], str | None] | None = None,
     ):
         if not base_url or not model:
             raise ValueError("openai embeddings need embedding_base_url and embedding_model")
@@ -559,6 +562,7 @@ class OpenAICompatEmbedder(Embedder):
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.api_key_env = api_key_env
+        self._credential_resolver = credential_resolver
         self.timeout = timeout
         self.model_id = f"openai:{self.base_url}:{model}" + _prefix_suffix(
             query_prefix, document_prefix
@@ -566,7 +570,13 @@ class OpenAICompatEmbedder(Embedder):
 
     def _embed_batch(self, texts: list[str]) -> list[list[float]]:
         headers = {"Content-Type": "application/json"}
-        key = os.environ.get(self.api_key_env, "") if self.api_key_env else ""
+        key = ""
+        if self.api_key_env:
+            if self._credential_resolver is None:
+                raise RuntimeError("embeddings API key requires a credential resolver")
+            key = self._credential_resolver(self.api_key_env) or ""
+            if not key:
+                raise RuntimeError("embeddings API credential unavailable")
         if key:
             headers["Authorization"] = f"Bearer {key}"
         if urllib.parse.urlsplit(self.base_url).scheme not in ("http", "https"):
@@ -627,6 +637,7 @@ def make_embedder(
     max_length: int = 0,
     normalize: bool | None = None,
     rerank_max_length: int = 0,
+    credential_resolver: Callable[[str], str | None] | None = None,
 ) -> Embedder | None:
     """Resolve a configured backend name to an Embedder, or None for lexical-only.
 
@@ -660,10 +671,15 @@ def make_embedder(
     if kind == "nachos" or (kind == "auto" and shutil.which(command)):
         return cli()
     if kind == "auto":
-        return _auto_embedder(model, base_url, api_key_env, prefixes)
+        return _auto_embedder(model, base_url, api_key_env, prefixes, credential_resolver)
     if kind == "openai":
         return OpenAICompatEmbedder(
-            base_url, model, api_key_env, query_prefix=prefixes[0], document_prefix=prefixes[1]
+            base_url,
+            model,
+            api_key_env,
+            query_prefix=prefixes[0],
+            document_prefix=prefixes[1],
+            credential_resolver=credential_resolver,
         )
     if kind == "sentence-transformers":
         return SentenceTransformersEmbedder(model, *prefixes)
@@ -677,13 +693,22 @@ def _client_prefix(value: str) -> str:
 
 
 def _auto_embedder(
-    model: str, base_url: str, api_key_env: str, prefixes: tuple[str, str]
+    model: str,
+    base_url: str,
+    api_key_env: str,
+    prefixes: tuple[str, str],
+    credential_resolver: Callable[[str], str | None] | None = None,
 ) -> Embedder | None:
     """``auto`` without the nachos CLI: sentence-transformers, then OpenAI-compatible."""
     if importlib.util.find_spec("sentence_transformers") is not None:
         return SentenceTransformersEmbedder(model, *prefixes)
     if base_url and model:
         return OpenAICompatEmbedder(
-            base_url, model, api_key_env, query_prefix=prefixes[0], document_prefix=prefixes[1]
+            base_url,
+            model,
+            api_key_env,
+            query_prefix=prefixes[0],
+            document_prefix=prefixes[1],
+            credential_resolver=credential_resolver,
         )
     return None

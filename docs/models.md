@@ -30,7 +30,7 @@ For a hosted endpoint also set `embedding_api_key_env` to the name of the enviro
 
 ### `nachos-embeddings` version
 
-Use `nachos-embeddings >= 0.6.0`. Earlier releases lack input types (query vs document), cross-encoder reranking and the model-override flags. Nachos checks `nachos-embeddings --version` once (0.6.0 and later also report their version in the `serve` ready line). An older CLI is not an error: when the version is below 0.6.0, or the CLI has no `--version`, Nachos logs one warning and falls back to basic embeddings, without input types, reranking or the 0.6 overrides (and uses one process per call if `serve` is unavailable). A missing CLI falls back to lexical recall as before.
+Use `nachos-embeddings >= 0.7.0`. Earlier releases lack input types (query vs document), cross-encoder reranking and the model-override flags. Nachos checks `nachos-embeddings --version` once (0.7.0 and later also report their version in the `serve` ready line). An older CLI is not an error: when the version is below 0.7.0, or the CLI has no `--version` (the published 0.6.0 has none), Nachos logs one warning and falls back to basic embeddings, without input types, reranking or the 0.7 overrides (and uses one process per call if `serve` is unavailable). A missing CLI falls back to lexical recall as before.
 
 ## Choosing a model
 

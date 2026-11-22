@@ -233,6 +233,18 @@ CONFIG_SCHEMA: list[dict[str, Any]] = [
 ]
 
 
+def hermes_credential(name: str) -> str | None:
+    """Resolve at request time in the active Hermes secret scope; never use env fallback.
+
+    Import and scope failures deliberately propagate to the memory service's
+    lexical degradation path, before any embedding HTTP request is sent.
+    """
+    from agent.secret_scope import get_secret
+
+    value: str | None = get_secret(name)
+    return value
+
+
 def hermes_redactor() -> Callable[[str], str] | None:
     """Hermes' own secret redactor, forced on (memory is a persistence boundary)."""
     try:
@@ -372,6 +384,7 @@ def make_embedder_from_config(cfg: dict[str, Any]) -> Embedder | None:
         pooling=cfg["embedding_pooling"],
         max_length=max(0, int(cfg["embedding_max_length"])),
         rerank_max_length=max(0, int(cfg["rerank_max_length"])),
+        credential_resolver=hermes_credential,
     )
 
 

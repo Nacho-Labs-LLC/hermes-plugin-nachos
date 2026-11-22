@@ -5,6 +5,6 @@ description: "Local-first durable memory for Hermes Agent: always-on manifest, s
 author: "Nacho Labs LLC"
 license: MIT
 homepage: "https://github.com/Nacho-Labs-LLC/hermes-plugin-nachos"
-requires_hermes: ">=0.21"
+requires_hermes: ">=0.21.6"
 provides_tools: []
 provides_hooks: []

@@ -35,6 +35,7 @@ from _common import default_store_path, open_service
 
 from nachos_core.embeddings import make_embedder
 from nachos_core.memory import PROFILE, MemoryService
+from nachos_hermes.config import hermes_credential
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -54,6 +55,11 @@ def _build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--embedding-dtype", default="", help="nachos backend precision, e.g. q8")
     ap.add_argument("--embedding-query-prefix", default="", help="openai/sentence-transformers")
     ap.add_argument("--embedding-document-prefix", default="", help="openai/sentence-transformers")
+    ap.add_argument(
+        "--embedding-api-key-env",
+        default="",
+        help="credential name resolved through the active Hermes secret scope (blank: no auth)",
+    )
     ap.add_argument("--json", action="store_true", help="machine-readable output")
     sub = ap.add_subparsers(dest="command", required=True)
 
@@ -188,6 +194,8 @@ def main(argv: list[str] | None = None) -> int:
         dtype=args.embedding_dtype,
         query_prefix=args.embedding_query_prefix,
         document_prefix=args.embedding_document_prefix,
+        api_key_env=args.embedding_api_key_env,
+        credential_resolver=hermes_credential,
     )
     service = open_service(args.store, path, embedder=embedder)
     try:

@@ -27,6 +27,8 @@ python -m pip install "git+https://github.com/Nacho-Labs-LLC/hermes-plugin-nacho
 
 Alternatively, keep the repository root at `$HERMES_HOME/plugins/nachos/`.
 
+This version requires **Hermes >=0.21.6** (the minimum verified baseline for profile-scoped credentials and catalog discovery).
+
 Enable it, then start a new session:
 
 ```bash
@@ -34,7 +36,7 @@ hermes config set memory.provider nachos
 hermes config set memory.memory_enabled false   # turns off only the built-in MEMORY.md; leave memory.user_profile_enabled on
 ```
 
-If you have an existing `MEMORY.md`, import it first ([Migrate](#migrate)). With no further setup you get lexical recall. For semantic recall install the local embedding CLI (Node.js >= 20.9, version `>= 0.6.0`):
+If you have an existing `MEMORY.md`, import it first ([Migrate](#migrate)). With no further setup you get lexical recall. For semantic recall install the local embedding CLI (Node.js >= 20.9, version `>= 0.7.0`):
 
 ```bash
 npm i -g @nacho-labs/nachos-embeddings
@@ -84,7 +86,7 @@ Run `hermes memory setup` or edit `$HERMES_HOME/nachos/config.json`. Settings ar
 | `embedding_pooling` | blank | `mean` or `cls` for `nachos`. Blank = the model's profile. Re-embeds on change. |
 | `embedding_max_length` | `0` | Truncate inputs to this many tokens for `nachos` (`0` = model default; can only lower the limit). Re-embeds on change. |
 | `embedding_base_url` | blank | OpenAI-compatible base URL. |
-| `embedding_api_key_env` | blank | Name of the environment variable holding the API key. |
+| `embedding_api_key_env` | blank | Name of the API key resolved through Hermes' active profile secret scope; never a key value. |
 | `embedding_query_prefix` | blank | Text prepended to queries, for example `query: ` (E5) or `search_query: ` (nomic). Spaces are kept. For `nachos`, blank keeps the model's own prefix and `none` disables it; other backends have no built-in prefix. |
 | `embedding_document_prefix` | blank | Text prepended to stored entries, for example `passage: ` or `search_document: `. Same blank / `none` rules. Re-embeds on change. |
 | `duplicate_threshold` | `0.65` | Similarity (above 0, up to 1) at which a new entry is flagged as a likely duplicate. |
@@ -118,6 +120,8 @@ Name the model you want; there are no presets. Blank `embedding_model` means Min
   "embedding_model": "Alibaba-NLP/gte-modernbert-base",
   "embedding_dtype": "q8" }
 ```
+
+Any OpenAI-compatible `/embeddings` endpoint works (Ollama above); for a hosted one also set `embedding_api_key_env`. Credentials are resolved at request time through Hermes' `agent.secret_scope.get_secret`, not read directly from process environment or credential files by Nachos. A configured but unavailable key prevents the embedding request; the memory service falls back to lexical matching. A blank key name permits unauthenticated local endpoints. `{ "embeddings": "off" }` disables semantic recall.
 
 Measured on the synthetic benchmark (208 entries, 393 answerable queries, reranker off, `q8`; p50 is median search latency on one idle 16-thread CPU and varies by machine):
 
@@ -163,7 +167,7 @@ With `shared_store: on`, recall, put and remove also take `scope: "shared"`; the
 | `nachos-maintain --profile-home H [--store S] [--days N] [--json] <check>` | Offline report-only audit. Checks: `inbox`, `summaries`, `duplicates`, `unused`, `superseded`, `suspicious_supersedes`, `provenance`, `links`, `reconciliation`, `all`. Run it from the Hermes environment's `bin/`; nothing is scheduled automatically. |
 | `nachos-reconcile <inventory\|packet\|session\|export\|validate\|apply\|viewer\|skill\|cron-evidence>` | Offline review and apply workflow ([reconciliation](docs/reconciliation.md)). |
 | `nachos-models` (`python -m nachos_hermes.models`) `list\|status\|reindex` | Effective model settings and re-embedding ([models](docs/models.md#switching-models)). |
-| `tools/memory_audit.py`, `tools/correct_summaries.py`, `tools/import_memories.py` | Source-checkout scripts: audit/purge/history/revert with explicit paths, LLM summary correction, import ([maintenance](docs/memory-maintenance.md#source-checkout-tools)). |
+| `tools/memory_audit.py`, `tools/correct_summaries.py`, `tools/import_memories.py` | Source-checkout scripts (`memory_audit.py` takes `--embedding-api-key-env NAME`, resolved through the same Hermes profile-secret scope as recall): audit/purge/history/revert with explicit paths, LLM summary correction, import ([maintenance](docs/memory-maintenance.md#source-checkout-tools)). |
 
 ## Privacy and data locations
 
@@ -182,11 +186,17 @@ Everything is under `$HERMES_HOME/nachos/` (per profile):
 - Nothing is sent over the network by default. Network use is limited to: the first download of an embedding or reranker model (`nachos-embeddings`; `--offline` forbids it), an OpenAI-compatible endpoint if you configure one, and the auxiliary LLM you choose for capture (and `correct_summaries.py`).
 - With `shared_store: on` and a path outside `$HERMES_HOME`, `hermes backup` includes the shared store.
 
+With `capture: review` (the default), a finished session (3+ user messages, enough text) queues a trimmed transcript in `$HERMES_HOME/nachos/inbox/pending/`; no LLM runs at exit. A background worker later sends that transcript, up to 200 existing memory titles/summaries and up to 100 entries read from `memories/USER.md` to Hermes' configured auxiliary LLM. Existing memories and user facts are included to avoid duplicate or misplaced suggestions; USER.md is read, not modified. This is an outbound model call when the configured provider is remote.
+
+The worker asks for up to 5 durable facts, applies the quality gate and redaction, and stores them as suggestions. Nothing enters memory until you run `/nachos-memory-inbox approve`; the agent is told how many await review but cannot approve them. **Approval gates insertion into memory, not transmission to the model.** Set `capture: off` to disable session capture and its model calls.
+
+Optional OpenAI-compatible embeddings send recall queries and memory titles, summaries and body excerpts to the configured endpoint. The local CLI backend spawns a separately installed `nachos-embeddings` worker; sentence-transformers can load/download its model. Session capture sends the additional inputs described above to the auxiliary LLM before human review. Nachos injects a manifest and tool-use contract into the system prompt, but provides no context engine and does not modify USER.md or SOUL.md.
+
 ## Troubleshooting
 
 - **No semantic recall.** Run `/nachos-memory-status` for the active backend. `auto` needs `nachos-embeddings` on `PATH`, `sentence-transformers`, or `embedding_base_url` plus `embedding_model`. A backend that failed at runtime stays lexical until the next process start.
 - **Recall is lexical right after changing a model.** Expected: re-embedding runs in steps. Check progress with `/nachos-memory-status`, or finish it with `python -m nachos_hermes.models reindex --profile-home <home>`.
-- **Reranking or query/document types seem inactive.** The `nachos-embeddings` CLI is probably older than 0.6.0 and Nachos has fallen back to basic embeddings. Upgrade with `npm i -g @nacho-labs/nachos-embeddings` (`nachos-embeddings models` also needs 0.6.0).
+- **Reranking or query/document types seem inactive.** The `nachos-embeddings` CLI is probably older than 0.7.0 and Nachos has fallen back to basic embeddings. Upgrade with `npm i -g @nacho-labs/nachos-embeddings` (`nachos-embeddings models` also needs 0.7.0).
 - **A setting has no effect.** Invalid values are silently ignored in favour of the default; compare with the table above and `python -m nachos_hermes.models list`.
 - **Capture suggestions never appear.** Capture needs `capture: review`, a session of 3 or more user messages, and a working auxiliary model. Failed jobs stay queued and are dropped after 5 consecutive failures.
 - **`skipped: non-primary agent context`.** Writes from delegated or scheduled sessions are refused; hand the work to a primary session.
