@@ -138,15 +138,14 @@ def history(
     max_chars = max(500, int(cfg["history_max_chars"]))
     session, checkpoint, _index = parse_ref(ref) if ref else ("", None, None)
     if ref and checkpoint:
-        result = open_ref(checkpoint_root, ref, before=before, after=after, max_chars=max_chars)
-        if result is None:
+        results = _open_checkpoint(checkpoint_root, ref, before, after, max_chars)
+        if results is None:
             return json.dumps(
                 {
                     "error": f"Checkpoint for ref {ref!r} is gone (checkpoints expire after "
                     f"checkpoint_max_age_days); search the session with query instead.",
                 }
             )
-        results = [result]
     elif not query:
         return json.dumps({"error": "ref names no checkpoint message; add a query to search it"})
     else:
@@ -164,8 +163,21 @@ def history(
             after=after,
             max_chars=max_chars,
         )
+    return json.dumps(
+        {"query": query, "count": len(results), "results": _redacted(results, redact)}
+    )
+
+
+def _open_checkpoint(
+    root: Path, ref: str, before: int, after: int, max_chars: int
+) -> list[dict[str, Any]] | None:
+    result = open_ref(root, ref, before=before, after=after, max_chars=max_chars)
+    return None if result is None else [result]
+
+
+def _redacted(results: list[dict[str, Any]], redact: Callable[[str], str]) -> list[dict[str, Any]]:
     for row in results:
         row["excerpt"] = redact(row["excerpt"])
         for part in row["context"]:
             part["text"] = redact(part["text"])
-    return json.dumps({"query": query, "count": len(results), "results": results})
+    return results
