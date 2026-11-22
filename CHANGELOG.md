@@ -25,6 +25,9 @@
 - `possible_updates` replaces `suggested_supersedes` in `nachos_memory_put` results; the old name remains as an alias for this release.
 - Downgrading to 0.6.x against a migrated `memory.index.db` is not supported. Back up `$HERMES_HOME/nachos/` before upgrading. To roll back, restore the backup, or keep `memory.db` / `memory.md` and rename `memory.index.db` (and any `-wal` / `-shm` files) so 0.6.x builds a fresh index. A fresh index loses the change log, usage counts, links and provenance, and 0.6.x ignores `superseded_by`.
 
+### Dependencies
+- Dev/CI tooling only (runtime stays stdlib-only): pytest 8.4.2 → 9.2.0 (`>=9.0.3` fixes the pytest tmpdir security advisory, Dependabot #1), ruff 0.17.4, Playwright 1.64.1, `actions/checkout` v7.0.1, `actions/setup-python` v7.1.0. The browser gate runs on `ubuntu-latest` again.
+
 ### Removed
 - Nothing is removed. `embedding_normalize` is intentionally not exposed: the index always L2-normalizes vectors.
 
