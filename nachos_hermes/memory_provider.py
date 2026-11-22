@@ -74,6 +74,7 @@ from .schemas import (
     HISTORY_SCHEMA,
     PUT_SCHEMA,
     RECALL_SCHEMA,
+    RECALL_SCHEMA_HINT,
     REMOVE_SCHEMA,
     clamp_int,
     with_scope,
@@ -157,6 +158,7 @@ class NachosMemoryProvider(MemoryProvider):
                 similarity_floor="p75" if self._cfg["similarity_floor"] == "auto" else None,
                 calibrate_duplicates=self._calibrate_duplicates(),
                 rerank_candidates=max(1, int(self._cfg["rerank_candidates"])),
+                rerank_borderline=self._cfg["rerank"] == "borderline",
             )
             service.session_id = self._session_id
             return service
@@ -203,7 +205,7 @@ class NachosMemoryProvider(MemoryProvider):
                 api_key_env=self._cfg["embedding_api_key_env"],
                 query_prefix=self._cfg["embedding_query_prefix"],
                 document_prefix=self._cfg["embedding_document_prefix"],
-                rerank=self._cfg["rerank"] == "nachos",
+                rerank=self._cfg["rerank"] in ("nachos", "borderline"),
                 rerank_model=self._cfg["rerank_model"],
                 rerank_dtype=self._cfg["rerank_dtype"],
             )
@@ -260,6 +262,16 @@ class NachosMemoryProvider(MemoryProvider):
     # -- manifest ----------------------------------------------------------
 
     def system_prompt_block(self) -> str:
+        abstain_mode = self._cfg.get("abstention", "hint")
+        recall_hint = (
+            " (if it returns `no_confident_match: true`, treat listed entries as "
+            "low-confidence candidates and retry with 1-3 rephrasings in `queries`, "
+            "including one phrased like the stored fact)"
+            if abstain_mode == "on"
+            else " (`no_confident_match: true` flags low-confidence hits to verify)"
+            if abstain_mode == "hint"
+            else ""
+        )
         contract = (
             "# Active durable-memory backend\n"
             "Nachos is the active, authoritative durable-memory provider for this "
@@ -270,10 +282,8 @@ class NachosMemoryProvider(MemoryProvider):
             "`nachos_memory_put` (pass `supersedes` with the old key when replacing "
             "an outdated fact; if the response lists a `possible_updates` entry "
             "that is an older version of the same fact, call `nachos_memory_put` "
-            "again with `supersedes=[key]`); recall with `nachos_memory_recall` "
-            "(if it returns `no_confident_match: true`, treat listed entries as "
-            "low-confidence candidates and retry with 1-3 rephrasings in `queries`, "
-            "including one phrased like the stored fact), remove with "
+            "again with `supersedes=[key]`); recall with `nachos_memory_recall`"
+            f"{recall_hint}, remove with "
             "`nachos_memory_remove`. Never use the built-in `memory` tool with "
             '`target: "memory"`: it is disabled and not shown to you. Persona and '
             "identity belong to SOUL.md and are not memory. Earlier conversation that was "
@@ -491,7 +501,10 @@ class NachosMemoryProvider(MemoryProvider):
 
     def get_tool_schemas(self) -> list[dict[str, Any]]:
         shared = bool(self._service and SHARED in self._service.scopes)
-        schemas = [RECALL_SCHEMA, PUT_SCHEMA, REMOVE_SCHEMA]
+        recall_schema = (
+            RECALL_SCHEMA if self._cfg.get("abstention", "hint") == "on" else RECALL_SCHEMA_HINT
+        )
+        schemas = [recall_schema, PUT_SCHEMA, REMOVE_SCHEMA]
         if shared:
             schemas = [with_scope(s) for s in schemas]
         return [*schemas, HISTORY_SCHEMA]
@@ -528,13 +541,15 @@ class NachosMemoryProvider(MemoryProvider):
         if query or (queries and any(q.strip() for q in queries)):
             limit = clamp_int(args.get("limit"), 10, 1, 25)
             include_superseded = bool(args.get("include_superseded", False))
-            if self._cfg.get("abstention", "on") == "on":
+            abstain_mode = self._cfg.get("abstention", "hint")
+            if abstain_mode in ("hint", "on"):
                 payload = service.search_with_confidence(
                     query,
                     queries=queries,
                     limit=limit,
                     scope=scope,
                     include_superseded=include_superseded,
+                    mode=abstain_mode,
                 )
                 return json.dumps(payload)
             results = service.search(

@@ -26,7 +26,7 @@ from nachos_core.ranking import normalize_queries, update_threshold_for
 from nachos_core.store import get_store
 from nachos_hermes.config import DEFAULTS, apply_config
 from nachos_hermes.memory_provider import NachosMemoryProvider
-from nachos_hermes.schemas import RECALL_SCHEMA
+from nachos_hermes.schemas import RECALL_SCHEMA, RECALL_SCHEMA_HINT
 
 
 class _FixedModelEmbedder(Embedder):
@@ -166,12 +166,23 @@ class TestConfidenceAndAbstention:
         assert res_gte["confident"] is False
         assert res_gte["confidence"] == "low"
 
+        # Decisive semantic path: strong semantic z-score alone carries a word-free paraphrase.
+        para_hi = assess_confidence(
+            has_results=True,
+            lexical_coverage=0.0,
+            semantic_top1=0.40,
+            semantic_topk=0.22,
+            profile=minilm,
+            agreement=False,
+        )
+        assert para_hi["confident"] is True
+
         # Rerank score lifts a borderline hit when confident.
         lifted = assess_confidence(
             has_results=True,
             lexical_coverage=0.0,
-            semantic_top1=0.30,
-            semantic_topk=0.22,
+            semantic_top1=0.24,
+            semantic_topk=0.18,
             profile=minilm,
             agreement=False,
             rerank_score=0.92,
@@ -265,7 +276,10 @@ class TestConfidenceAndAbstention:
 
     def test_provider_recall_tool_and_config(self, tmp_path: Path) -> None:
         cfg = dict(DEFAULTS)
+        assert cfg["abstention"] == "hint"
+        apply_config(cfg, {"abstention": "on", "rerank": "borderline"})
         assert cfg["abstention"] == "on"
+        assert cfg["rerank"] == "borderline"
         apply_config(cfg, {"abstention": "off"})
         assert cfg["abstention"] == "off"
         apply_config(cfg, {"abstention": "bogus"})
@@ -274,9 +288,25 @@ class TestConfidenceAndAbstention:
         provider = NachosMemoryProvider()
         provider.initialize("sess-abstain", hermes_home=str(tmp_path))
         try:
+            # Default 'hint' mode: exposes no_confident_match field, NO retry instruction in schema.
             assert "no_confident_match" in provider.system_prompt_block()
-            assert "no_confident_match" in RECALL_SCHEMA["description"]
+            assert "retry" not in provider.system_prompt_block().lower()
+            hint_schema = next(
+                s for s in provider.get_tool_schemas() if s["name"] == "nachos_memory_recall"
+            )
+            assert hint_schema is RECALL_SCHEMA_HINT
+            assert "retry" not in hint_schema["description"].lower()
 
+            # Opt-in 'on' mode adds the retry instruction in schema & system prompt.
+            provider._cfg["abstention"] = "on"
+            on_schema = next(
+                s for s in provider.get_tool_schemas() if s["name"] == "nachos_memory_recall"
+            )
+            assert on_schema is RECALL_SCHEMA
+            assert "retry" in on_schema["description"].lower()
+            assert "retry" in provider.system_prompt_block().lower()
+
+            provider._cfg["abstention"] = "hint"
             provider.handle_tool_call(
                 "nachos_memory_put",
                 {"title": "Harbor billing", "body": "Harbor handles invoices and card webhooks."},
@@ -482,3 +512,110 @@ class TestMultiQueryRecall:
         assert run["triples"]["n"] == 29
         assert run["triples"]["3-query"]["hit@1"] > run["triples"]["1-query"]["hit@1"]
         assert run["all_groups"]["n"] >= 100
+
+
+class _RerankingTestEmbedder(_CountingEmbedder):
+    """Test embedder with a controllable cross-encoder rerank method."""
+
+    supports_rerank = True
+
+    def __init__(
+        self,
+        model_id: str,
+        vectors_by_tag: dict[str, list[float]],
+        rerank_scores: dict[tuple[str, str], float],
+    ) -> None:
+        super().__init__(model_id, vectors_by_tag)
+        self._rerank_scores = rerank_scores
+        self.rerank_calls: list[tuple[str, int]] = []
+
+    def rerank(self, query: str, documents: list[str]) -> list[float]:
+        self.rerank_calls.append((query, len(documents)))
+        out: list[float] = []
+        qlow = query.lower()
+        for doc in documents:
+            dlow = doc.lower()
+            score = 0.1
+            for (qtag, dtag), val in self._rerank_scores.items():
+                if qtag in qlow and dtag in dlow:
+                    score = max(score, val)
+            out.append(score)
+        return out
+
+
+class TestBorderlineVerifierAndMultiQueryRerank:
+    def test_borderline_verifier_only_runs_on_borderline_queries(self, tmp_path: Path) -> None:
+        # MiniLM prior mean=0.0481, std=0.0898.
+        # Cosine 0.25 -> sem_z = 2.25 -> s_sem = 0.425 (inside borderline band 0.48 +- 0.12!).
+        # Cosine 0.98 -> sem_z = 10.38 -> s_sem = 1.0 (clearly confident, skips rerank!).
+        emb = _RerankingTestEmbedder(
+            "nachos:Xenova/all-MiniLM-L6-v2:q8",
+            {
+                "harbor": [1.0, 0.0, 0.0],
+                "vague money": [0.25, 0.0, math.sqrt(1.0 - 0.25**2)],
+                "redis": [0.0, 1.0, 0.0],
+            },
+            {("vague money", "harbor"): 0.90},
+        )
+        scope = Scope(
+            PROFILE,
+            get_store("sqlite", tmp_path / "memory.db"),
+            MemoryIndex(tmp_path / "idx.db"),
+        )
+        svc = MemoryService(OrderedDict([(PROFILE, scope)]), embedder=emb, rerank_borderline=True)
+        try:
+            svc.put(title="Harbor billing", body="Harbor issues customer invoices and webhooks.")
+            svc.put(title="Redis cache", body="Redis stores ephemeral session rate limits.")
+            emb.rerank_calls.clear()
+
+            # Strong match -> NOT borderline -> zero cross-encoder calls!
+            strong = svc.search_with_confidence("harbor invoices")
+            assert strong["confident"] is True
+            assert "verified" not in strong["signals"]
+            assert emb.rerank_calls == []
+
+            # Borderline query -> triggers cross-encoder on top <= 5, lifts to confident!
+            border = svc.search_with_confidence("vague money")
+            assert len(emb.rerank_calls) == 1
+            assert emb.rerank_calls[0][1] <= 5
+            assert border["signals"]["verified"] is True
+            assert border["signals"]["rerank"] == 0.9
+            assert border["confident"] is True
+        finally:
+            svc.close()
+
+    def test_multi_query_rerank_caps_candidates_and_takes_max_across_variants(
+        self, tmp_path: Path
+    ) -> None:
+        emb = _RerankingTestEmbedder(
+            "nachos:Xenova/all-MiniLM-L6-v2:q8",
+            {
+                "alembic": [1.0, 0.0],
+                "other": [0.8, 0.6],
+            },
+            {
+                ("variant two", "alembic"): 0.95,
+                ("variant one", "other"): 0.30,
+            },
+        )
+        scope = Scope(
+            PROFILE,
+            get_store("sqlite", tmp_path / "memory.db"),
+            MemoryIndex(tmp_path / "idx.db"),
+        )
+        svc = MemoryService(OrderedDict([(PROFILE, scope)]), embedder=emb, rerank_candidates=25)
+        try:
+            for i in range(7):
+                svc.put(title=f"Other note {i}", body=f"Other operational details number {i}.")
+            svc.put(title="Alembic migrations", body="Migrations run via Alembic before deploy.")
+            emb.rerank_calls.clear()
+
+            res = svc.search(queries=["variant one", "variant two"], limit=6)
+            # Multi-query rerank calls rerank once per variant, capped at 5 candidates each!
+            assert len(emb.rerank_calls) == 2
+            assert all(n <= 5 for _q, n in emb.rerank_calls)
+            alembic_row = next((r for r in res if r["key"] == "alembic-migrations"), None)
+            assert alembic_row is not None
+            assert alembic_row["rerank"] == 0.95
+        finally:
+            svc.close()

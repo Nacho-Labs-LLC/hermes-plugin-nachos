@@ -51,8 +51,8 @@ from .lexical import LexicalIndex
 from .quality import low_signal_reason
 from .ranking import (
     DEFAULT_BLEND,
+    build_confidence_response,
     duplicate_threshold_for,
-    evaluate_search_confidence,
     find_duplicate_pairs,
     find_similar_entries,
     fuse_multi_query,
@@ -156,6 +156,7 @@ class MemoryService:
         calibrate_updates: bool = True,
         rerank_candidates: int = 25,
         rerank_mode: str = DEFAULT_BLEND,
+        rerank_borderline: bool = False,
     ):
         if PROFILE not in scopes:
             raise ValueError("a 'profile' scope is required")
@@ -176,6 +177,8 @@ class MemoryService:
         #: Fused results sent to the cross-encoder, when the embedder offers one.
         self.rerank_candidates = rerank_candidates
         self.rerank_mode = rerank_mode
+        #: When True (rerank="borderline"), skip full reranking and only verify borderline queries.
+        self.rerank_borderline = rerank_borderline
         self._rerank_error: str | None = None
         self.embedder_error: str | None = None
         self.session_id: str = ""
@@ -398,7 +401,7 @@ class MemoryService:
         scope: str | None = None,
         include_superseded: bool = False,
     ) -> list[dict[str, Any]]:
-        results, _query_list, _stats = self._run_search(
+        results, _query_list, _stats, _chunks = self._run_search(
             query, queries=queries, limit=limit, scope=scope, include_superseded=include_superseded
         )
         return results
@@ -411,9 +414,10 @@ class MemoryService:
         limit: int = 10,
         scope: str | None = None,
         include_superseded: bool = False,
+        mode: str = "on",
     ) -> dict[str, Any]:
         """Search and attach a per-query confidence assessment + explicit abstention signal."""
-        results, query_list, stats = self._run_search(
+        results, query_list, stats, chunks = self._run_search(
             query,
             queries=queries,
             limit=limit,
@@ -421,17 +425,21 @@ class MemoryService:
             include_superseded=include_superseded,
             collect_stats=True,
         )
-        top_scope = self.scopes[results[0]["scope"]] if results else None
-        embedder = self._active_embedder()
-        return evaluate_search_confidence(
+        payload, error = build_confidence_response(
             query_list,
             results,
             stats,
-            top_lexical=self._lexical_index(top_scope) if top_scope is not None else None,
-            top_index=top_scope.index if top_scope is not None else None,
-            top_metas=self._scope_meta(top_scope) if top_scope is not None else None,
-            model_id=embedder.model_id if embedder is not None else None,
+            self.scopes,
+            chunks=chunks,
+            lexical_fn=self._lexical_index,
+            meta_fn=self._scope_meta,
+            embedder=self._active_embedder(),
+            rerank_borderline=self.rerank_borderline and self._reranking(),
+            mode=mode,
         )
+        if error is not None:
+            self._rerank_error = error
+        return payload
 
     def _run_search(
         self,
@@ -442,10 +450,15 @@ class MemoryService:
         scope: str | None = None,
         include_superseded: bool = False,
         collect_stats: bool = False,
-    ) -> tuple[list[dict[str, Any]], list[str], list[dict[str, list[float]]]]:
+    ) -> tuple[
+        list[dict[str, Any]],
+        list[str],
+        list[dict[str, list[float]]],
+        dict[tuple[str, str], int],
+    ]:
         query_list = normalize_queries(query, queries)
         if not query_list:
-            return [], [], []
+            return [], [], [], {}
         targets = self._scopes_for(scope)
         qvecs = self._query_vectors(targets, query_list)
         fused, stats_list = fuse_multi_query(
@@ -459,12 +472,13 @@ class MemoryService:
             rrf_k=_RRF_K,
         )
 
-        reranking = self._reranking()
+        reranking = self._reranking() and not self.rerank_borderline
         pool_limit = max(limit, self.rerank_candidates) if reranking else limit
         ranked = self._select_ranked(fused, limit=pool_limit, include_superseded=include_superseded)
         if reranking:
-            ranked = self._rerank(query_list[0], ranked, limit)
-        return hydrate_ranked(ranked, self.scopes, self._scope_meta), query_list, stats_list
+            ranked = self._rerank(query_list, ranked, limit)
+        chunks = {pair: int(row.get("chunk", 0)) for pair, row in ranked}
+        return hydrate_ranked(ranked, self.scopes, self._scope_meta), query_list, stats_list, chunks
 
     def _reranking(self) -> bool:
         embedder = self._active_embedder()
@@ -472,7 +486,7 @@ class MemoryService:
 
     def _rerank(
         self,
-        query: str,
+        queries: Sequence[str],
         ranked: list[tuple[tuple[str, str], dict[str, Any]]],
         limit: int,
     ) -> list[tuple[tuple[str, str], dict[str, Any]]]:
@@ -482,7 +496,7 @@ class MemoryService:
             return ranked[:limit]
         out, error = rerank_rows(
             embedder,
-            query,
+            queries,
             ranked,
             self.scopes,
             limit=limit,

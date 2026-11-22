@@ -186,6 +186,12 @@ def summarize_abstention(
     f1 = 2 * prec * rec / (prec + rec) if (prec + rec) else 0.0
     near_miss = [r for r in unanswerable if r.get("kind") == "near-miss"]
     standard = [r for r in unanswerable if r.get("kind") != "near-miss"]
+    fp_by_cat: dict[str, int] = {}
+    for r in answerable:
+        if not r.get("confident", True):
+            fp_by_cat[r["category"]] = fp_by_cat.get(r["category"], 0) + 1
+    verified = sum(1 for r in (*answerable, *unanswerable) if r.get("verified"))
+    total_q = len(answerable) + len(unanswerable)
     out: dict[str, Any] = {
         "n_unanswerable": len(unanswerable),
         "abstained_unanswerable": tp,
@@ -194,6 +200,7 @@ def summarize_abstention(
         "abstained_answerable": fp,
         "abstained_non_paraphrase": fp_non_para,
         "n_non_paraphrase": len(non_para),
+        "false_abstentions_by_category": dict(sorted(fp_by_cat.items())),
         "precision": round(prec, 4),
         "recall": round(rec, 4),
         "f1": round(f1, 4),
@@ -205,6 +212,9 @@ def summarize_abstention(
         if answerable
         else 0.0,
     }
+    if verified:
+        out["verified_queries"] = verified
+        out["verified_rate"] = round(verified / total_q, 4) if total_q else 0.0
     if near_miss:
         nm_tp = sum(1 for r in near_miss if not r.get("confident", True))
         std_tp = sum(1 for r in standard if not r.get("confident", True))
@@ -310,7 +320,7 @@ def run_queries(
     rows = []
     for q in queries:
         timings, keys = [], []
-        confident, confidence, conf_score = True, "high", 1.0
+        confident, confidence, conf_score, verified = True, "high", 1.0, False
         for i in range(max(1, repeat)):
             start = time.perf_counter()
             payload = svc.search_with_confidence(q["query"], limit=SEARCH_LIMIT)
@@ -320,6 +330,7 @@ def run_queries(
                 confident = bool(payload["confident"])
                 confidence = str(payload["confidence"])
                 conf_score = float(payload["confidence_score"])
+                verified = bool(payload.get("signals", {}).get("verified", False))
         rows.append(
             {
                 "id": q["id"],
@@ -332,6 +343,7 @@ def run_queries(
                 "confident": confident,
                 "confidence": confidence,
                 "confidence_score": conf_score,
+                "verified": verified,
                 "ms": percentile(timings, 50),
                 "top": keys[:3],
             }
@@ -360,7 +372,7 @@ def resolve_embedder(backend: str, opts: argparse.Namespace) -> tuple[Embedder |
         dtype=opts.dtype,
         query_prefix=opts.query_prefix,
         document_prefix=opts.document_prefix,
-        rerank=getattr(opts, "rerank", False),
+        rerank=bool(getattr(opts, "rerank", False) or getattr(opts, "rerank_borderline", False)),
         rerank_model=getattr(opts, "rerank_model", ""),
         rerank_dtype=getattr(opts, "rerank_dtype", ""),
     )
@@ -391,6 +403,8 @@ def ranking_options(opts: argparse.Namespace) -> dict[str, Any]:
     if getattr(opts, "rerank", False):
         out["rerank_candidates"] = opts.rerank_candidates
         out["rerank_mode"] = opts.rerank_mode
+    if getattr(opts, "rerank_borderline", False):
+        out["rerank_borderline"] = True
     if getattr(opts, "calibrate_duplicates", False):
         out["calibrate_duplicates"] = True
     if getattr(opts, "no_update_calibration", False):
@@ -540,12 +554,21 @@ def format_report(report: dict[str, Any]) -> str:
                 if "near_miss_n" in ab
                 else ""
             )
+            ver_note = (
+                f"; verified {ab['verified_queries']} ({ab['verified_rate']:.1%})"
+                if "verified_queries" in ab
+                else ""
+            )
+            fp_cats = ab.get("false_abstentions_by_category") or {}
+            fp_note = (
+                " [" + ", ".join(f"{c}={n}" for c, n in fp_cats.items()) + "]" if fp_cats else ""
+            )
             lines += [
                 f"abstention: P={ab['precision']:.3f} R={ab['recall']:.3f} F1={ab['f1']:.3f} "
                 f"(unanswerable {ab['abstained_unanswerable']}/{ab['n_unanswerable']}{detail}; "
-                f"answerable abstained {ab['abstained_answerable']}/{ab['n_answerable']}, "
+                f"answerable abstained {ab['abstained_answerable']}/{ab['n_answerable']}{fp_note}, "
                 f"non-para {ab['abstained_non_paraphrase']}/{ab['n_non_paraphrase']}; "
-                f"confident hit@1={ab['confident_hit@1']:.3f})",
+                f"confident hit@1={ab['confident_hit@1']:.3f}{ver_note})",
                 "",
             ]
     return "\n".join(lines)
@@ -998,6 +1021,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="disable calibrated floor for possible_updates (measure uncalibrated baseline)",
     )
     ap.add_argument("--rerank", action="store_true", help="enable the nachos cross-encoder rerank")
+    ap.add_argument(
+        "--rerank-borderline",
+        action="store_true",
+        help="enable borderline-only cross-encoder verification (rerank: borderline)",
+    )
     ap.add_argument("--rerank-model", default="", help="rerank_model passthrough")
     ap.add_argument("--rerank-dtype", default="", help="rerank_dtype passthrough")
     ap.add_argument("--rerank-candidates", type=int, default=25)

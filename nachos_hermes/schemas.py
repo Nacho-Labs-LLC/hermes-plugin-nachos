@@ -29,42 +29,59 @@ def with_scope(schema: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-RECALL_SCHEMA = {
+_RECALL_PARAMS: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "key": {"type": "string", "description": "Exact entry key (slug of title)."},
+        "query": {"type": "string", "description": "Natural-language or keyword search."},
+        "queries": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": (
+                "Optional 1-4 query rephrasings (fused with RRF; embeddings batched in one "
+                "call). Use with or instead of 'query'."
+            ),
+        },
+        "limit": {"type": "integer", "description": "Max results for a query (default 10)."},
+        "include_superseded": {
+            "type": "boolean",
+            "description": "Include superseded entries in query results (default false).",
+        },
+    },
+}
+
+_RECALL_BASE_DESC = (
+    "Pull full memory entry content on demand. Provide 'key' for an exact "
+    "entry from the manifest (superseded entries still return their content "
+    "plus a superseded_by pointer), or 'query' / 'queries' (up to 4 variants, "
+    "fused with RRF in one batched embedding call) to search: matches by keywords "
+    "and, when embeddings are enabled, by meaning, redirecting superseded hits "
+    "to their current successor unless include_superseded is true. "
+)
+
+RECALL_SCHEMA_HINT: dict[str, Any] = {
     "name": "nachos_memory_recall",
     "description": (
-        "Pull full memory entry content on demand. Provide 'key' for an exact "
-        "entry from the manifest (superseded entries still return their content "
-        "plus a superseded_by pointer), or 'query' / 'queries' (up to 4 variants, "
-        "fused with RRF in one batched embedding call) to search: matches by keywords "
-        "and, when embeddings are enabled, by meaning, redirecting superseded hits "
-        "to their current successor unless include_superseded is true. Query "
-        "responses include confident/confidence; when confidence is low or "
+        _RECALL_BASE_DESC
+        + "Query responses include confident/confidence and no_confident_match as "
+        "informational hints. Use when the manifest shows a relevant entry or you "
+        "suspect one exists."
+    ),
+    "parameters": _RECALL_PARAMS,
+}
+
+RECALL_SCHEMA: dict[str, Any] = {
+    "name": "nachos_memory_recall",
+    "description": (
+        _RECALL_BASE_DESC
+        + "Query responses include confident/confidence; when confidence is low or "
         "no_confident_match is true, treat listed results as low-confidence "
         "candidates and retry with 1-3 rephrasings in 'queries', including one "
         "written as the stored fact would be (e.g. 'Decision: migrations run through "
         "Alembic...'). Use when the manifest shows a relevant entry or you suspect "
         "one exists."
     ),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "key": {"type": "string", "description": "Exact entry key (slug of title)."},
-            "query": {"type": "string", "description": "Natural-language or keyword search."},
-            "queries": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": (
-                    "Optional 1-4 query rephrasings (fused with RRF; embeddings batched in one "
-                    "call). Use with or instead of 'query', especially to retry low-confidence hits."
-                ),
-            },
-            "limit": {"type": "integer", "description": "Max results for a query (default 10)."},
-            "include_superseded": {
-                "type": "boolean",
-                "description": "Include superseded entries in query results (default false).",
-            },
-        },
-    },
+    "parameters": _RECALL_PARAMS,
 }
 
 PUT_SCHEMA = {

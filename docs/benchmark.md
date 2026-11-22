@@ -524,11 +524,11 @@ Readings:
 | Zero-dependency | `embeddings: off` | none | 1.1 s | 0.2 / 0.3 ms | 0.695 / 0.812 / 0.748 | 0.975 / 1.000 |
 
 - **Keep `rerank: off` by default**: with supersedes + redirect active, `gte-modernbert-base` q8 (`rerank: off`) already hits `1.000` on `outdated`, `long-body`, `near-dup`, and every adversarial query at `12–17 ms` p50, while `rerank: on` costs `120–320 ms` per recall and slightly degrades redirected old-wording queries.
-- **Defaults in code**: `chunk_penalty = 0.05`, `duplicate_calibration = "auto"`, `calibrate_updates = True` (`p99` floor when calibrated), `similarity_floor = "off"`, `rerank = "off"`, `abstention = "on"`.
+- **Defaults in code**: `chunk_penalty = 0.05`, `duplicate_calibration = "auto"`, `calibrate_updates = True` (`p99` floor when calibrated), `similarity_floor = "off"`, `rerank = "off"`, `abstention = "hint"`.
 
 ## Abstention, cold-start priors, and multi-query recall
 
-Measured on `naterchrdsn/abstain` (on top of `naterchrdsn/memory-next` commit `a0001a875a`). Adds per-query search confidence + explicit abstention (`abstention: on` default), offline per-model calibration priors blended across cold start (30–100 entries), and batched multi-query recall (`queries: [string]`, up to 4 variants).
+Measured on `naterchrdsn/abstain` (on top of `naterchrdsn/memory-next` commit `a0001a875a`). Adds per-query search confidence + explicit abstention (`abstention: hint` default, `on` opt-in), offline per-model calibration priors blended across cold start (30–100 entries), optional borderline cross-encoder verification (`rerank: borderline`), and batched multi-query recall (`queries: [string]`, up to 4 variants, with top-5 max-rerank when rerank is enabled).
 
 ### Offline per-model priors and cold-start blending
 
@@ -562,25 +562,30 @@ Both benchmark suites were expanded with unanswerable **near-miss** negatives (s
 - `bench/data/queries.json`: +20 near-miss negatives (`q424`–`q443`, total 50 unanswerable = 30 standard + 20 near-miss alongside 393 answerable).
 - `bench/data/adversarial/queries.json`: +15 near-miss negatives (`a097`–`a111`, total 30 no-answer = 15 standard + 15 near-miss alongside 81 answerable).
 
-`MemoryService.search_with_confidence` combines cheap per-query signals — OOV-aware lexical coverage (weighting out-of-vocabulary query terms at `max_idf`, checking redirected predecessors too), lexical top-1 vs top-5 margin, calibrated semantic z-score `(sim - mean) / std` against the model's profile, semantic margin, `lexical+semantic` agreement, and optional cross-encoder score — into a `0..1` `confidence_score` (`ABSTAIN_THRESHOLD = 0.38`). When below threshold, recall sets `confident: false`, `no_confident_match: true`, and a `note`, while keeping low-confidence candidates listed so hit@k never drops (`0.000` hit@1 / hit@5 / MRR@10 change across all runs).
+`MemoryService.search_with_confidence` combines cheap per-query signals — OOV-aware lexical coverage (weighting out-of-vocabulary query terms at `max_idf`, checking redirected predecessors too), lexical/semantic margins, calibrated semantic z-score `(sim - mean) / std` against the model's profile, `lexical+semantic` agreement, and optional cross-encoder score — into a `0..1` `confidence_score`. In semantic mode, the semantic z-score path and the lexical+agreement path combine via `max(s_sem, lex_path)` with a separate semantic cutoff (`SEMANTIC_ABSTAIN_THRESHOLD = 0.48`, vs `LEXICAL_ABSTAIN_THRESHOLD = 0.38`) so word-free paraphrases with a strong z-score are not penalised for zero lexical overlap and lexical-strong hits (e.g. `long-body`) are not dragged down by moderate semantic z-scores. When below threshold, recall sets `confident: false`, `no_confident_match: true`, and a `note`, while keeping low-confidence candidates listed so hit@k never drops (`0.000` hit@1 / hit@5 / MRR@10 change across all runs).
 
-**Original (`bench/data`, 393 answerable + 50 negative [30 std + 20 near-miss]):**
+**False-abstain breakdown before (weighted average, single `0.38` cutoff) -> after (decisive-OR, separate backend thresholds) on `bench/data` (393 answerable + 50 negative):**
 
-| Backend | Answerable hit@1 / hit@5 / MRR@10 | Confident hit@1 | Abstention P / R / F1 | Unanswerable abstained (std / near-miss) | Answerable abstained (non-paraphrase) |
-| --- | --- | --- | --- | --- | --- |
-| lexical (`off`) | 0.695 / 0.812 / 0.748 | 0.690 | 0.312 / 0.680 / 0.428 | 34/50 (23/30, 11/20) | 75/393 (19/333) |
-| MiniLM-L6 q8 | 0.758 / 0.924 / 0.832 | 0.733 | 0.354 / 0.560 / 0.434 | 28/50 (22/30, 6/20) | 51/393 (5/333) |
-| gte-modernbert q8 | 0.773 / 0.949 / 0.850 | 0.728 | 0.312 / 0.600 / 0.411 | 30/50 (25/30, 5/20) | 66/393 (12/333) |
+| Backend | Formula | Abstention P / R / F1 | Confident hit@1 | Unanswerable abstained (std / nm) | Answerable abstained (total) | By category (`para / nat / long / mhop / outd / kw+nd`) |
+| --- | --- | --- | --- | --- | --- | --- |
+| lexical (`off`) | before & after (`0.38`) | 0.312 / 0.680 / 0.428 | 0.690 | 34/50 (23/30, 11/20) | 75/393 (19 non-para) | `56 / 10 / 2 / 4 / 3 / 0` |
+| MiniLM-L6 q8 | before (avg `0.38`) | 0.354 / 0.560 / 0.434 | 0.733 | 28/50 (22/30, 6/20) | 51/393 (5 non-para) | `46 / 3 / 2 / 0 / 0 / 0` |
+| **MiniLM-L6 q8** | **after (OR `0.48`)** | **0.448 / 0.520 / 0.481** | **0.751** | **26/50 (22/30, 4/20)** | **32/393 (5 non-para)** | **`27 / 3 / 1 / 1 / 0 / 0`** |
+| gte-modernbert q8 | before (avg `0.38`) | 0.312 / 0.600 / 0.411 | 0.728 | 30/50 (25/30, 5/20) | 66/393 (12 non-para) | `54 / 4 / 5 / 3 / 0 / 0` |
+| **gte-modernbert q8** | **after (OR `0.48`)** | **0.367 / 0.580 / 0.450** | **0.748** | **29/50 (25/30, 4/20)** | **50/393 (8 non-para)** | **`42 / 2 / 3 / 3 / 0 / 0`** |
 
-**Held-out adversarial (`bench/data/adversarial`, 81 answerable + 30 no-answer [15 std + 15 near-miss]):**
+**Held-out adversarial (`bench/data/adversarial`, 81 answerable + 30 no-answer [15 std + 15 near-miss]), including optional `rerank: borderline`:**
 
-| Backend | Answerable hit@1 / hit@5 / MRR@10 | Confident hit@1 | Abstention P / R / F1 | Unanswerable abstained (std / near-miss) | Answerable abstained |
-| --- | --- | --- | --- | --- | --- |
-| lexical (`off`) | 0.975 / 1.000 / 0.986 | 0.975 | **1.000 / 0.667 / 0.800** | 20/30 (9/15, 11/15) | **0/81** |
-| MiniLM-L6 q8 | 0.988 / 1.000 / 0.994 | 0.988 | **1.000 / 0.533 / 0.696** | 16/30 (10/15, 6/15) | **0/81** |
-| gte-modernbert q8 | 1.000 / 1.000 / 1.000 | 1.000 | **1.000 / 0.667 / 0.800** | 20/30 (11/15, 9/15) | **0/81** |
+| Backend | Mode | Answerable hit@1 / hit@5 / MRR@10 | Abstention P / R / F1 | Unanswerable abstained (std / nm) | Answerable abstained | Verified % | Search p50 / mean ms |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| lexical (`off`) | `rerank: off` | 0.975 / 1.000 / 0.986 | **1.000 / 0.667 / 0.800** | 20/30 (9/15, 11/15) | **0/81** | - | 0.2 / 0.2 |
+| MiniLM-L6 q8 | `rerank: off` | 0.988 / 1.000 / 0.994 | **1.000 / 0.333 / 0.500** | 10/30 (9/15, 1/15) | **0/81** | 0% | 4.7 / 4.8 |
+| MiniLM-L6 q8 | **`rerank: borderline`** | 0.988 / 1.000 / 0.994 | **1.000 / 0.567 / 0.723** | 17/30 (11/15, 6/15) | **0/81** | **13.5%** (15/111) | **4.9 / 8.2** |
+| gte-modernbert q8 | `rerank: off` | 1.000 / 1.000 / 1.000 | **1.000 / 0.467 / 0.636** | 14/30 (8/15, 6/15) | **0/81** | 0% | 14.6 / 16.9 |
+| gte-modernbert q8 | **`rerank: borderline`** | 1.000 / 1.000 / 1.000 | **1.000 / 0.567 / 0.723** | 17/30 (10/15, 7/15) | **0/81** | **9.9%** (11/111) | **12.1 / 19.1** |
 
-- **Default decision (`abstention: on`)**: Ships on by default. It causes `0.000` hit@1 / hit@5 / MRR@10 regression (candidates remain visible), adds negligible overhead, achieves `1.000` abstention precision with `0/81` false abstentions on the held-out adversarial set (`R = 0.53–0.67`), and abstains on only `1.5%–5.7%` of non-paraphrase answerable queries on the original set (`5/333` MiniLM, `12/333` gte, `19/333` lexical). Most answerable abstentions on the original fixture are word-free `paraphrase` queries — precisely the queries where abstention triggers the multi-query retry loop below.
+- **Optional borderline verifier (`rerank: borderline`)**: fires only when initial confidence sits within `±0.12` of the threshold (`9.9%–13.5%` of queries), scoring only the top 5 results with `jina-reranker-v1-tiny-en`. On the held-out adversarial set it raises recall sharply (`MiniLM 0.333 -> 0.567`, `gte 0.467 -> 0.567`, both `P = 1.000`, `F1 = 0.723`) for only `+2–3 ms` average latency (`28–46 ms` on verified queries; median latency unchanged at `5–12 ms`, vs `123–129 ms` for full rerank). On the original set (`12.6%–13.1%` verified; mean latency `9.0 -> 18.8 ms` MiniLM, `25.8 -> 40.0 ms` gte), the small English cross-encoder scores word-free paraphrases low (`~0.20`), pulling additional paraphrases below threshold (`MiniLM P 0.448 -> 0.355, R 0.540`; `gte P 0.367 -> 0.326, R 0.560`). It stays off when `rerank: off`.
+- **Default decision (`abstention: hint` default, `on` opt-in)**: Switching to decisive-OR cuts semantic false abstentions by `24%–37%` (`51 -> 32` MiniLM, `66 -> 50` gte; non-paraphrase false abstentions only `1.5%–2.4%`) and raises `confident hit@1` to `0.748–0.751`. However, original-set precision still cannot reach `>= 0.60` at `R >= 0.50` across backends (ceiling is `~0.50` MiniLM, `~0.41` gte, `~0.31` lexical) because the 60 word-free `paraphrase` queries overlap `negative:std` in semantic z-score and score lower than `negative:near-miss` on every signal (including the cross-encoder). Therefore **`abstention: hint` ships by default** (result fields `confident`/`no_confident_match` are present as informational hints without instructing automatic retries in the tool description), while **`abstention: on`** is opt-in to enable automatic retry guidance.
 
 ### Multi-query recall (`--multi-query`, 1 vs 3 queries)
 
@@ -618,6 +623,16 @@ python -m bench.recall --command ./shim --embeddings nachos --model Alibaba-NLP/
 | MiniLM-L6 q8 | 0.576 / 0.834 / 0.689 | 0.947 / 1.000 / 0.970 | 0.808 / 0.987 / 0.888 | 13.8 / 25.6 / 21.6 | 32% (49/151) |
 | gte-modernbert q8 | 0.596 / 0.881 / 0.721 | 0.974 / 1.000 / 0.987 | 0.874 / 0.993 / 0.931 | 38.6 / 64.7 / 50.3 | 38% (57/151) |
 
+**Multi-query + cross-encoder rerank (`--rerank --rerank-dtype q8 --multi-query`, top-5 max-rerank across variants):**
+
+| Backend | Subset | 1-query hit@1 / hit@5 / MRR@10 (p50 ms) | multi-query hit@1 / hit@5 / MRR@10 (p50 ms) |
+| --- | --- | --- | --- |
+| MiniLM-L6 q8 + rerank | 3-query triples (`n = 29`) | 0.138 / 0.655 / 0.353 (322.7 ms) | **1.000 / 1.000 / 1.000 (107.4 ms)** |
+| MiniLM-L6 q8 + rerank | All multi-variant (`n = 151`) | 0.609 / 0.834 / 0.705 (214.6 ms) | **0.993 / 1.000 / 0.997 (88.9 ms)** |
+| gte-modernbert q8 + rerank | 3-query triples (`n = 29`) | 0.103 / 0.655 / 0.318 (368.0 ms) | **1.000 / 1.000 / 1.000 (201.0 ms)** |
+| gte-modernbert q8 + rerank | All multi-variant (`n = 151`) | 0.636 / 0.881 / 0.738 (341.8 ms) | **1.000 / 1.000 / 1.000 (135.4 ms)** |
+
 Readings:
 - Multi-query recall turns the hardest category in the benchmark (`paraphrase`) from `0.172–0.241` hit@1 into **`0.966` hit@1 / `1.000` hit@5** (and even `2-query` without title keywords jumps to `0.793–0.862` hit@1), while batching all 3 queries into one embedding call keeps latency sub-linear (`1.6x–2.6x` single-query p50).
+- When `rerank: nachos` is enabled, capping multi-query reranking to the top 5 fused candidates and taking the max cross-encoder score across variants evaluates only `15` pairs for 3 queries (fewer than single-query rerank's `25` pairs), reaching **`1.000 / 1.000 / 1.000`** on triples (`0.993–1.000` across all 151 groups) at **`1.8x–3.0x` lower p50 latency** than single-query full reranking.
 - Pairing abstention with retry-on-low-confidence captures most of the gain automatically (`hit@1 0.172 -> 0.931` on `gte` triples, `hit@5 0.655 -> 1.000`; `0/22` retries and `0 ms` extra latency on the adversarial multi-variant set where 1-query already hits `1.000`).

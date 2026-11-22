@@ -31,7 +31,7 @@ DEFAULTS: dict[str, Any] = {
     "duplicate_threshold": 0.65,
     "duplicate_calibration": "auto",
     "similarity_floor": "off",
-    "abstention": "on",
+    "abstention": "hint",
     "rerank": "off",
     "rerank_model": "",
     "rerank_dtype": "",
@@ -47,10 +47,10 @@ _VERBATIM_KEYS = frozenset({"embedding_query_prefix", "embedding_document_prefix
 # String settings with a closed set of values; anything else is ignored.
 _CHOICES: dict[str, tuple[str, ...]] = {
     "capture": ("review", "off"),
-    "rerank": ("off", "nachos"),
+    "rerank": ("off", "nachos", "borderline"),
     "similarity_floor": ("off", "auto"),
     "duplicate_calibration": ("auto", "off"),
-    "abstention": ("on", "off"),
+    "abstention": ("hint", "on", "off"),
 }
 
 CONFIG_SCHEMA: list[dict[str, Any]] = [
@@ -120,16 +120,18 @@ CONFIG_SCHEMA: list[dict[str, Any]] = [
     },
     {
         "key": "abstention",
-        "choices": ["on", "off"],
-        "description": "on attaches per-query confidence and an explicit no_confident_match "
-        "flag to recall query responses while still listing low-confidence candidates.",
+        "choices": ["hint", "on", "off"],
+        "description": "hint (default) attaches confidence and no_confident_match fields as an "
+        "informational signal without instructing automatic retries; on adds retry-with-rephrasings "
+        "guidance to the recall tool; off omits confidence fields.",
     },
     {
         "key": "rerank",
-        "choices": ["off", "nachos"],
-        "description": "nachos = re-score the top fused results with a cross-encoder served by "
-        "the nachos-embeddings CLI (needs the nachos embeddings backend and a CLI with "
-        "--rerank-model; otherwise ignored). Adds roughly 0.3 s per recall.",
+        "choices": ["off", "nachos", "borderline"],
+        "description": "nachos = re-score the top fused results on every recall with a "
+        "cross-encoder served by nachos-embeddings; borderline = re-score only borderline "
+        "confidence queries (top 5 candidates) to verify abstention at low average latency; "
+        "off = disabled.",
     },
     {
         "key": "rerank_model",

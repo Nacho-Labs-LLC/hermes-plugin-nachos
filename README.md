@@ -55,8 +55,8 @@ Run `hermes memory setup` or edit `$HERMES_HOME/nachos/config.json`. Settings ar
 | `duplicate_threshold` | `0.65` | Similarity (0-1) above which a new entry is flagged as a likely duplicate. With `duplicate_calibration: auto` this is a minimum: it is raised to the embedding model's own random-pair 99th percentile when that is higher. Any value other than `0.65` is used exactly as given. |
 | `duplicate_calibration` | `auto` | `auto` calibrates the default threshold per embedding model (using offline per-model priors below 30 entries and blending into the store's own random-pair distribution from 30 to 100 entries); `off` uses `duplicate_threshold` as is. |
 | `similarity_floor` | `off` | `auto` drops semantic hits below the model's own 75th percentile of random-pair similarity (using priors below 30 entries and blending into empirical vectors from 30 to 100 entries). |
-| `abstention` | `on` | `on` attaches per-query confidence metadata (`confident`, `confidence`, `confidence_score`, `signals`) to recall results and sets `no_confident_match: true` with a `note` when matches are weak (candidates remain listed so the agent can verify or retry with rephrasings); `off` returns only the raw result list. |
-| `rerank` | `off` | `nachos` re-scores the top fused results with a cross-encoder served by `nachos-embeddings` (needs the `nachos` backend and a CLI with `--rerank-model`; silently ignored otherwise). Adds roughly 0.3 s per recall. |
+| `abstention` | `hint` | `hint` (default) attaches per-query confidence metadata (`confident`, `confidence`, `confidence_score`, `signals`) and `no_confident_match: true` as informational hints while keeping candidates listed (no automatic retry instruction in the tool description); `on` adds retry-with-rephrasings guidance to `nachos_memory_recall`; `off` returns only the raw result list. |
+| `rerank` | `off` | `nachos` re-scores the top fused results on every recall with a cross-encoder served by `nachos-embeddings` (needs the `nachos` backend and a CLI with `--rerank-model`; adds ~0.2–0.3 s per recall); `borderline` re-scores only borderline-confidence queries (top 5 candidates, ~10–13% of queries) to verify abstention at near-zero median latency; `off` disables reranking. |
 | `rerank_model` | blank | Cross-encoder id (blank = `jinaai/jina-reranker-v1-tiny-en`, about 35 MB at q8). |
 | `rerank_dtype` | blank | Cross-encoder precision, e.g. `q8`. |
 | `rerank_candidates` | `25` | How many top fused results the reranker re-scores. |
@@ -89,7 +89,7 @@ Any OpenAI-compatible `/embeddings` endpoint works (Ollama above); for a hosted 
 
 | Name | Purpose |
 | --- | --- |
-| `nachos_memory_recall` | Fetch an entry by `key` (returns a `superseded_by` note if superseded), or search with `query` and/or up to 4 rephrasings in `queries` (batched in one embedding call and fused with RRF; `limit`, optional `include_superseded`). With `abstention: on`, weak searches flag `no_confident_match: true` while keeping low-confidence candidates visible. |
+| `nachos_memory_recall` | Fetch an entry by `key` (returns a `superseded_by` note if superseded), or search with `query` and/or up to 4 rephrasings in `queries` (batched in one embedding call and fused with RRF; `limit`, optional `include_superseded`). With `abstention: hint` (default) or `on`, weak searches flag `no_confident_match: true` while keeping low-confidence candidates visible. |
 | `nachos_memory_put` | Add or update an entry (`title`, `body`, optional `summary`, `category`, `supersedes`); rejects low-signal text, lists `possible_duplicates` and `suggested_supersedes`. |
 | `nachos_memory_remove` | Delete an entry by `key` or `title`. |
 | `nachos_history_search` | Recover details compression removed from the current conversation, including subagent results (`query`, `scope`: `conversation` or `all`, `limit`). For past sessions use Hermes' `session_search`. |

@@ -17,14 +17,21 @@ CALIBRATION_MIN_HEADS = 30
 #: Head count at which the store's own empirical distribution gets 100% weight.
 CALIBRATION_FULL_HEADS = 100
 
-#: Confidence score cutoffs (0..1).
-ABSTAIN_THRESHOLD = 0.38
-HIGH_CONFIDENCE_THRESHOLD = 0.60
+#: Per-backend confidence score cutoffs (0..1).
+LEXICAL_ABSTAIN_THRESHOLD = 0.38
+SEMANTIC_ABSTAIN_THRESHOLD = 0.48
+ABSTAIN_THRESHOLD = LEXICAL_ABSTAIN_THRESHOLD
+HIGH_CONFIDENCE_THRESHOLD = 0.65
+#: Half-width around the abstain threshold that triggers optional cross-encoder verification.
+BORDERLINE_BAND = 0.12
 
 NO_MATCH_NOTE = "No matching memory found."
 LOW_CONFIDENCE_NOTE = (
     "No confident match in memory. Results below are low-confidence candidates only "
     "— verify before relying on them or treat the topic as not stored."
+)
+HINT_LOW_CONFIDENCE_NOTE = (
+    "Low-confidence match; verify the returned candidates before relying on them."
 )
 
 # Order matches nachos-embeddings/src/providers/model-profiles.ts plus MiniLM (default).
@@ -206,9 +213,16 @@ def assess_confidence(
     profile: Mapping[str, float] | None = None,
     agreement: bool = False,
     rerank_score: float | None = None,
-    abstain_threshold: float = ABSTAIN_THRESHOLD,
+    abstain_threshold: float | None = None,
 ) -> dict[str, Any]:
-    """Combine calibrated semantic, lexical, agreement, margin and optional rerank signals."""
+    """Combine calibrated semantic, lexical, agreement, margin and optional rerank signals.
+
+    In semantic mode, semantic z-score and lexical-hybrid paths combine via ``max`` so
+    word-free paraphrases with a strong calibrated z-score are not penalised for zero
+    lexical overlap, and lexical-strong hits (e.g. long-body) are not dragged down by
+    moderate semantic z-scores. Lexical-only and semantic modes use separate calibrated
+    thresholds unless ``abstain_threshold`` is explicitly overridden.
+    """
     if not has_results:
         return {
             "confident": False,
@@ -218,17 +232,21 @@ def assess_confidence(
         }
     s_lex = _clamp01(lexical_coverage)
     if semantic_top1 is not None:
+        threshold = (
+            SEMANTIC_ABSTAIN_THRESHOLD if abstain_threshold is None else float(abstain_threshold)
+        )
         center, scale = _profile_center_scale(profile)
         sem_z = (semantic_top1 - center) / scale
-        s_sem = _clamp01((sem_z - 1.5) / 3.0)
+        s_sem = _clamp01((sem_z - 1.1) / 2.7)
         if semantic_topk is not None:
             margin_z = (semantic_top1 - semantic_topk) / scale
-            s_mar = _clamp01((margin_z - 0.4) / 2.0)
+            s_mar = _clamp01((margin_z - 0.3) / 2.0)
         else:
             margin_z = 0.0
             s_mar = 0.5
-        s_agr = 1.0 if agreement else 0.0
-        score = 0.40 * s_sem + 0.30 * s_lex + 0.20 * s_mar + 0.10 * s_agr
+        s_agr = 0.12 if agreement else 0.0
+        lex_path = _clamp01(0.80 * s_lex + 0.12 * s_mar + s_agr) if s_lex > 0.0 else 0.0
+        score = max(s_sem, lex_path)
         signals: dict[str, Any] = {
             "semantic_z": round(sem_z, 2),
             "margin_z": round(margin_z, 2),
@@ -239,13 +257,16 @@ def assess_confidence(
             score = 0.55 * score + 0.45 * _clamp01(rerank_score)
             signals["rerank"] = round(rerank_score, 3)
     else:
+        threshold = (
+            LEXICAL_ABSTAIN_THRESHOLD if abstain_threshold is None else float(abstain_threshold)
+        )
         s_mar = _clamp01(lexical_margin)
         score = (0.80 * s_lex + 0.20 * s_mar) if s_lex > 0.0 else 0.0
         signals = {
             "lexical_coverage": round(s_lex, 3),
             "lexical_margin": round(s_mar, 3),
         }
-    confident = score >= abstain_threshold
+    confident = score >= threshold
     tier = "high" if score >= HIGH_CONFIDENCE_THRESHOLD else ("medium" if confident else "low")
     return {
         "confident": confident,
@@ -255,8 +276,25 @@ def assess_confidence(
     }
 
 
+def is_borderline(
+    assessment: Mapping[str, Any],
+    *,
+    semantic: bool,
+    band: float = BORDERLINE_BAND,
+) -> bool:
+    """True when a non-empty search's confidence sits within ``band`` of its abstain threshold."""
+    if assessment.get("confidence") == "none":
+        return False
+    threshold = SEMANTIC_ABSTAIN_THRESHOLD if semantic else LEXICAL_ABSTAIN_THRESHOLD
+    return abs(float(assessment.get("confidence_score", 0.0)) - threshold) <= band
+
+
 def format_search_response(
-    query: str, results: list[dict[str, Any]], assessment: Mapping[str, Any]
+    query: str,
+    results: list[dict[str, Any]],
+    assessment: Mapping[str, Any],
+    *,
+    mode: str = "on",
 ) -> dict[str, Any]:
     """Assemble the structured recall payload with confidence and explicit abstention fields."""
     payload: dict[str, Any] = {
@@ -270,5 +308,6 @@ def format_search_response(
     }
     if not payload["confident"]:
         payload["no_confident_match"] = True
-        payload["note"] = LOW_CONFIDENCE_NOTE if results else NO_MATCH_NOTE
+        low_note = HINT_LOW_CONFIDENCE_NOTE if mode == "hint" else LOW_CONFIDENCE_NOTE
+        payload["note"] = low_note if results else NO_MATCH_NOTE
     return payload
