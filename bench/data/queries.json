@@ -1,0 +1,3506 @@
+[
+ {
+  "category": "keyword",
+  "query": "harbor invoices",
+  "id": "q001",
+  "expect": [
+   "harbor-billing-service"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "which service issues invoices and handles payment webhooks?",
+  "id": "q002",
+  "expect": [
+   "harbor-billing-service"
+  ]
+ },
+ {
+  "category": "paraphrase",
+  "query": "the gopher-language money collection backend",
+  "id": "q003",
+  "expect": [
+   "harbor-billing-service"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "lumen visx",
+  "id": "q004",
+  "expect": [
+   "lumen-analytics-dashboard"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "what is Lumen built with?",
+  "id": "q005",
+  "expect": [
+   "lumen-analytics-dashboard"
+  ]
+ },
+ {
+  "category": "paraphrase",
+  "query": "in-house browser view plotting how groups of users stick around week after week",
+  "id": "q006",
+  "expect": [
+   "lumen-analytics-dashboard"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "tidepool airflow dags",
+  "id": "q007",
+  "expect": [
+   "tidepool-data-pipeline"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "where do the nightly warehouse loads run?",
+  "id": "q008",
+  "expect": [
+   "tidepool-data-pipeline"
+  ]
+ },
+ {
+  "category": "paraphrase",
+  "query": "scheduled jobs that copy transactional records into analytics storage each evening",
+  "id": "q009",
+  "expect": [
+   "tidepool-data-pipeline"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "quill astro pagefind",
+  "id": "q010",
+  "expect": [
+   "quill-documentation-site"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "how is the public developer documentation built?",
+  "id": "q011",
+  "expect": [
+   "quill-documentation-site"
+  ]
+ },
+ {
+  "category": "paraphrase",
+  "query": "website where outside programmers read our guides",
+  "id": "q012",
+  "expect": [
+   "quill-documentation-site"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "brindle kotlin multiplatform",
+  "id": "q013",
+  "expect": [
+   "brindle-mobile-app"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "how often does the Brindle app release?",
+  "id": "q014",
+  "expect": [
+   "brindle-mobile-app"
+  ]
+ },
+ {
+  "category": "paraphrase",
+  "query": "handheld client that reuses one codebase across both phone platforms",
+  "id": "q015",
+  "expect": [
+   "brindle-mobile-app"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "cairn terraform",
+  "id": "q016",
+  "expect": [
+   "cairn-infrastructure-repo"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "where is the Terraform code for our clusters?",
+  "id": "q017",
+  "expect": [
+   "cairn-infrastructure-repo"
+  ]
+ },
+ {
+  "category": "paraphrase",
+  "query": "declarative cloud provisioning scripts requiring a co-reviewer's sign-off",
+  "id": "q018",
+  "expect": [
+   "cairn-infrastructure-repo"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "orrery redis features",
+  "id": "q019",
+  "expect": [
+   "orrery-feature-store"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "what latency target does the feature store have?",
+  "id": "q020",
+  "expect": [
+   "orrery-feature-store"
+  ]
+ },
+ {
+  "category": "paraphrase",
+  "query": "quick-response lookup backend delivering inputs to predictive algorithms",
+  "id": "q021",
+  "expect": [
+   "orrery-feature-store"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "sundial rust scheduler",
+  "id": "q022",
+  "expect": [
+   "sundial-scheduler"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "what replaced cron for internal jobs?",
+  "id": "q023",
+  "expect": [
+   "sundial-scheduler"
+  ]
+ },
+ {
+  "category": "paraphrase",
+  "query": "timer daemon compiled to one standalone executable that kicks off recurring tasks",
+  "id": "q024",
+  "expect": [
+   "sundial-scheduler"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "mosaic storybook chromatic",
+  "id": "q025",
+  "expect": [
+   "mosaic-design-system"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "where do shared UI components and design tokens live?",
+  "id": "q026",
+  "expect": [
+   "mosaic-design-system"
+  ]
+ },
+ {
+  "category": "paraphrase",
+  "query": "reusable widgets package that keeps every front-end looking consistent",
+  "id": "q027",
+  "expect": [
+   "mosaic-design-system"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "lantern oidc sso",
+  "id": "q028",
+  "expect": [
+   "lantern-auth-gateway"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "what handles single sign-on for internal tools?",
+  "id": "q029",
+  "expect": [
+   "lantern-auth-gateway"
+  ]
+ },
+ {
+  "category": "paraphrase",
+  "query": "login proxy that checks who staff are before they open back-office apps",
+  "id": "q030",
+  "expect": [
+   "lantern-auth-gateway"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "ferrule scaffold",
+  "id": "q031",
+  "expect": [
+   "ferrule-cli"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "which tool scaffolds a new service?",
+  "id": "q032",
+  "expect": [
+   "ferrule-cli"
+  ]
+ },
+ {
+  "category": "paraphrase",
+  "query": "terminal utility that stamps out boilerplate for a fresh microservice",
+  "id": "q033",
+  "expect": [
+   "ferrule-cli"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "pavilion nextjs storefront",
+  "id": "q034",
+  "expect": [
+   "pavilion-storefront"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "what framework does the customer-facing shop use?",
+  "id": "q035",
+  "expect": [
+   "pavilion-storefront"
+  ]
+ },
+ {
+  "category": "paraphrase",
+  "query": "online retail website for shoppers",
+  "id": "q036",
+  "expect": [
+   "pavilion-storefront"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "catalog graphql persisted queries",
+  "id": "q037",
+  "expect": [
+   "catalog-api"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "does production allow arbitrary GraphQL queries?",
+  "id": "q038",
+  "expect": [
+   "catalog-api"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "notifier sms push email",
+  "id": "q039",
+  "expect": [
+   "notifier-service"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "which service sends push notifications and SMS?",
+  "id": "q040",
+  "expect": [
+   "notifier-service"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "ledgerlint reconcile payouts",
+  "id": "q041",
+  "expect": [
+   "ledgerlint-checker"
+  ]
+ },
+ {
+  "category": "paraphrase",
+  "query": "overnight audit finding discrepancies between money owed and money received",
+  "id": "q042",
+  "expect": [
+   "ledgerlint-checker"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "beacon flags sse",
+  "id": "q043",
+  "expect": [
+   "beacon-feature-flags"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "what happens to requests if the feature flag service goes down?",
+  "id": "q044",
+  "expect": [
+   "beacon-feature-flags"
+  ]
+ },
+ {
+  "category": "paraphrase",
+  "query": "toggle switchboard whose client libraries keep working offline",
+  "id": "q045",
+  "expect": [
+   "beacon-feature-flags"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "sieve opensearch synonyms",
+  "id": "q046",
+  "expect": [
+   "sieve-search-service"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "how long does reindexing the search cluster take?",
+  "id": "q047",
+  "expect": [
+   "sieve-search-service"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "warden vault leases",
+  "id": "q048",
+  "expect": [
+   "warden-secrets-broker"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "how do services get database credentials?",
+  "id": "q049",
+  "expect": [
+   "warden-secrets-broker"
+  ]
+ },
+ {
+  "category": "paraphrase",
+  "query": "intermediary dispensing temporary passwords once a workload proves who it is",
+  "id": "q050",
+  "expect": [
+   "warden-secrets-broker"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "trellis github actions workflows",
+  "id": "q051",
+  "expect": [
+   "trellis-ci-templates"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "where are the shared CI workflows defined?",
+  "id": "q052",
+  "expect": [
+   "trellis-ci-templates"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "gazetteer backstage catalog-info",
+  "id": "q053",
+  "expect": [
+   "gazetteer-service-catalog"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "which portal lists service owners?",
+  "id": "q054",
+  "expect": [
+   "gazetteer-service-catalog"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "quartz finance exports",
+  "id": "q055",
+  "expect": [
+   "quartz-reporting-jobs"
+  ]
+ },
+ {
+  "category": "paraphrase",
+  "query": "accounting spreadsheets produced after each month closes",
+  "id": "q056",
+  "expect": [
+   "quartz-reporting-jobs"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "rookery slack bot",
+  "id": "q057",
+  "expect": [
+   "rookery-chat-bot"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "what bot handles who-is-on-call questions in chat?",
+  "id": "q058",
+  "expect": [
+   "rookery-chat-bot"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "meridian geocoding",
+  "id": "q059",
+  "expect": [
+   "meridian-geo-service"
+  ]
+ },
+ {
+  "category": "paraphrase",
+  "query": "street-location lookup that switches to a backup supplier when the first is slow",
+  "id": "q060",
+  "expect": [
+   "meridian-geo-service"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "tern driver android offline",
+  "id": "q061",
+  "expect": [
+   "tern-driver-app"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "which app do delivery drivers use?",
+  "id": "q062",
+  "expect": [
+   "tern-driver-app"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "kiln base images digest",
+  "id": "q063",
+  "expect": [
+   "kiln-image-builder"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "should services pin container base images by tag or digest?",
+  "id": "q064",
+  "expect": [
+   "kiln-image-builder"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "plover k6 load",
+  "id": "q065",
+  "expect": [
+   "plover-load-tests"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "what throughput must staging sustain in load tests?",
+  "id": "q066",
+  "expect": [
+   "plover-load-tests"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "atlas lineage pii tags",
+  "id": "q067",
+  "expect": [
+   "atlas-data-catalog"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "heron status page",
+  "id": "q068",
+  "expect": [
+   "heron-status-page"
+  ]
+ },
+ {
+  "category": "paraphrase",
+  "query": "outward-facing health board updated by the person leading an outage response",
+  "id": "q069",
+  "expect": [
+   "heron-status-page"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "compass roadmap objectives",
+  "id": "q070",
+  "expect": [
+   "compass-roadmap-tool"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "saffron mjml templates",
+  "id": "q071",
+  "expect": [
+   "saffron-email-templates"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "how are transactional email templates compiled?",
+  "id": "q072",
+  "expect": [
+   "saffron-email-templates"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "bellows autoscaler queue depth",
+  "id": "q073",
+  "expect": [
+   "bellows-autoscaler"
+  ]
+ },
+ {
+  "category": "paraphrase",
+  "query": "controller that expands compute pools according to backlog length",
+  "id": "q074",
+  "expect": [
+   "bellows-autoscaler"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "juniper onboarding checklist",
+  "id": "q075",
+  "expect": [
+   "juniper-onboarding-site"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "marlin fraud score",
+  "id": "q076",
+  "expect": [
+   "marlin-fraud-rules"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "at what score are orders held for manual review?",
+  "id": "q077",
+  "expect": [
+   "marlin-fraud-rules"
+  ]
+ },
+ {
+  "category": "paraphrase",
+  "query": "risk screening that parks suspicious purchases for a human to inspect",
+  "id": "q078",
+  "expect": [
+   "marlin-fraud-rules"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "asdf direnv homebrew",
+  "id": "q079",
+  "expect": [
+   "developer-laptop-setup"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "how do we manage tool versions on laptops?",
+  "id": "q080",
+  "expect": [
+   "developer-laptop-setup"
+  ]
+ },
+ {
+  "category": "paraphrase",
+  "query": "what keeps programming-language runtimes pinned across employees' computers",
+  "id": "q081",
+  "expect": [
+   "developer-laptop-setup"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "wireguard vpn profile",
+  "id": "q082",
+  "expect": [
+   "vpn-access"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "how do I get into the staging network?",
+  "id": "q083",
+  "expect": [
+   "vpn-access"
+  ]
+ },
+ {
+  "category": "paraphrase",
+  "query": "encrypted tunnel config needed to reach pre-production machines",
+  "id": "q084",
+  "expect": [
+   "vpn-access"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "kube-prod kubectl contexts",
+  "id": "q085",
+  "expect": [
+   "kubernetes-clusters"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "which regions does the production cluster span?",
+  "id": "q086",
+  "expect": [
+   "kubernetes-clusters"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "registry.example.internal retention",
+  "id": "q087",
+  "expect": [
+   "container-registry"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "where do container images get pushed?",
+  "id": "q088",
+  "expect": [
+   "container-registry"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "pgbouncer transaction pooling",
+  "id": "q089",
+  "expect": [
+   "postgres-fleet"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "how many database connections can a service open?",
+  "id": "q090",
+  "expect": [
+   "postgres-fleet"
+  ]
+ },
+ {
+  "category": "paraphrase",
+  "query": "relational datastore topology with a mirror that must acknowledge every write",
+  "id": "q091",
+  "expect": [
+   "postgres-fleet"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "redis allkeys-lru",
+  "id": "q092",
+  "expect": [
+   "redis-clusters"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "can I keep durable data in the cache Redis?",
+  "id": "q093",
+  "expect": [
+   "redis-clusters"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "nats jetstream",
+  "id": "q094",
+  "expect": [
+   "message-queue"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "is event delivery exactly once or at least once?",
+  "id": "q095",
+  "expect": [
+   "message-queue"
+  ]
+ },
+ {
+  "category": "paraphrase",
+  "query": "broker retention window and redelivery guarantees for inter-service notifications",
+  "id": "q096",
+  "expect": [
+   "message-queue"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "prometheus grafana loki tempo",
+  "id": "q097",
+  "expect": [
+   "observability-stack"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "how long are metrics retained?",
+  "id": "q098",
+  "expect": [
+   "observability-stack"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "pagerduty primary secondary",
+  "id": "q099",
+  "expect": [
+   "on-call-tooling"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "when does the on-call handoff happen?",
+  "id": "q100",
+  "expect": [
+   "on-call-tooling"
+  ]
+ },
+ {
+  "category": "paraphrase",
+  "query": "who gets alerted if the first responder stays silent",
+  "id": "q101",
+  "expect": [
+   "on-call-tooling"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "dns zone ttl",
+  "id": "q102",
+  "expect": [
+   "dns-and-domains"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "can I change DNS records in the cloud console?",
+  "id": "q103",
+  "expect": [
+   "dns-and-domains"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "cdn purge surrogate-control",
+  "id": "q104",
+  "expect": [
+   "cdn-configuration"
+  ]
+ },
+ {
+  "category": "paraphrase",
+  "query": "content-delivery freshness window and how outdated files get flushed",
+  "id": "q105",
+  "expect": [
+   "cdn-configuration"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "ci runners arm concurrency",
+  "id": "q106",
+  "expect": [
+   "ci-runners"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "how many CI jobs can run at once?",
+  "id": "q107",
+  "expect": [
+   "ci-runners"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "secrets rotate leaked credential",
+  "id": "q108",
+  "expect": [
+   "secrets-handling"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "what should I do if a credential is committed by mistake?",
+  "id": "q109",
+  "expect": [
+   "secrets-handling"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "uv ruff python",
+  "id": "q110",
+  "expect": [
+   "python-toolchain"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "which Python version do new services use?",
+  "id": "q111",
+  "expect": [
+   "python-toolchain"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "pnpm frozen-lockfile node",
+  "id": "q112",
+  "expect": [
+   "node-toolchain"
+  ]
+ },
+ {
+  "category": "paraphrase",
+  "query": "javascript runtime release line and package installer that CI enforces strictly",
+  "id": "q113",
+  "expect": [
+   "node-toolchain"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "golangci-lint go modules vendored",
+  "id": "q114",
+  "expect": [
+   "go-toolchain"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "editorconfig indent line endings",
+  "id": "q115",
+  "expect": [
+   "editor-conventions"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "what indentation do Python files use?",
+  "id": "q116",
+  "expect": [
+   "editor-conventions"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "snapshots backup retention restore drill",
+  "id": "q117",
+  "expect": [
+   "database-backups"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "how long are nightly backups kept?",
+  "id": "q118",
+  "expect": [
+   "database-backups"
+  ]
+ },
+ {
+  "category": "paraphrase",
+  "query": "how far back can we rewind the relational data and how often is that rehearsed",
+  "id": "q119",
+  "expect": [
+   "database-backups"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "bucket lifecycle infrequent access",
+  "id": "q120",
+  "expect": [
+   "object-storage-buckets"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "which bucket is allowed to be public?",
+  "id": "q121",
+  "expect": [
+   "object-storage-buckets"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "cert-manager certificates renew",
+  "id": "q122",
+  "expect": [
+   "tls-certificates"
+  ]
+ },
+ {
+  "category": "paraphrase",
+  "query": "self-service reissuing of encryption identities for websites ahead of lapsing",
+  "id": "q123",
+  "expect": [
+   "tls-certificates"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "ssh certificates ca authorized_keys",
+  "id": "q124",
+  "expect": [
+   "ssh-access-policy"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "can I add my own key to authorized_keys on a host?",
+  "id": "q125",
+  "expect": [
+   "ssh-access-policy"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "utc timestamps cron",
+  "id": "q126",
+  "expect": [
+   "time-conventions"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "what timezone do logs use?",
+  "id": "q127",
+  "expect": [
+   "time-conventions"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "cost tags budget alerts",
+  "id": "q128",
+  "expect": [
+   "cloud-cost-tags"
+  ]
+ },
+ {
+  "category": "paraphrase",
+  "query": "labelling rule that lets finance attribute spend to owners",
+  "id": "q129",
+  "expect": [
+   "cloud-cost-tags"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "office wifi ssid guest",
+  "id": "q130",
+  "expect": [
+   "office-network"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "mdm encryption screen lock",
+  "id": "q131",
+  "expect": [
+   "device-management"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "what happens if my laptop is out of date?",
+  "id": "q132",
+  "expect": [
+   "device-management"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "json logs request_id",
+  "id": "q133",
+  "expect": [
+   "logging-conventions"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "can I log request bodies?",
+  "id": "q134",
+  "expect": [
+   "logging-conventions"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "local ports 4010 5173",
+  "id": "q135",
+  "expect": [
+   "local-dev-ports"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "which port does Harbor use locally?",
+  "id": "q136",
+  "expect": [
+   "local-dev-ports"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "preview namespace pull request",
+  "id": "q137",
+  "expect": [
+   "preview-environments"
+  ]
+ },
+ {
+  "category": "paraphrase",
+  "query": "disposable sandbox created for every code review and torn down a day following merging",
+  "id": "q138",
+  "expect": [
+   "preview-environments"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "grpc protobuf schemas",
+  "id": "q139",
+  "expect": [
+   "decision-grpc-between-backend-services"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "why do internal services use gRPC?",
+  "id": "q140",
+  "expect": [
+   "decision-grpc-between-backend-services"
+  ]
+ },
+ {
+  "category": "paraphrase",
+  "query": "agreed rule on binary wire formats for lateral traffic",
+  "id": "q141",
+  "expect": [
+   "decision-grpc-between-backend-services"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "polyrepo monorepo",
+  "id": "q142",
+  "expect": [
+   "decision-stay-polyrepo"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "did we consider a monorepo?",
+  "id": "q143",
+  "expect": [
+   "decision-stay-polyrepo"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "postgres mongodb default",
+  "id": "q144",
+  "expect": [
+   "decision-postgres-over-mongodb"
+  ]
+ },
+ {
+  "category": "paraphrase",
+  "query": "why we shun schemaless datastores unless someone signs off",
+  "id": "q145",
+  "expect": [
+   "decision-postgres-over-mongodb"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "trunk-based short-lived branches",
+  "id": "q146",
+  "expect": [
+   "decision-trunk-based-development"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "how long can a feature branch live?",
+  "id": "q147",
+  "expect": [
+   "decision-trunk-based-development"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "semver deprecation major",
+  "id": "q148",
+  "expect": [
+   "decision-semantic-versioning-for-libraries"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "when can a library remove a deprecated function?",
+  "id": "q149",
+  "expect": [
+   "decision-semantic-versioning-for-libraries"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "quarterly planning cadence",
+  "id": "q150",
+  "expect": [
+   "decision-quarterly-planning-cadence"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "pii logs forbidden",
+  "id": "q151",
+  "expect": [
+   "decision-no-pii-in-logs"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "may I log customer email addresses?",
+  "id": "q152",
+  "expect": [
+   "decision-no-pii-in-logs"
+  ]
+ },
+ {
+  "category": "paraphrase",
+  "query": "prohibition on writing people's private details into diagnostic output",
+  "id": "q153",
+  "expect": [
+   "decision-no-pii-in-logs"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "follow-the-sun rotations",
+  "id": "q154",
+  "expect": [
+   "decision-follow-the-sun-on-call"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "who covers pages overnight?",
+  "id": "q155",
+  "expect": [
+   "decision-follow-the-sun-on-call"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "email provider consolidated deliverability",
+  "id": "q156",
+  "expect": [
+   "decision-single-email-vendor"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "beacon in-house vendors cost",
+  "id": "q157",
+  "expect": [
+   "decision-build-beacon-in-house"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "why did we build our own feature flag service?",
+  "id": "q158",
+  "expect": [
+   "decision-build-beacon-in-house"
+  ]
+ },
+ {
+  "category": "paraphrase",
+  "query": "reasoning behind not buying a toggle product from a supplier",
+  "id": "q159",
+  "expect": [
+   "decision-build-beacon-in-house"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "rust approved infrastructure",
+  "id": "q160",
+  "expect": [
+   "decision-rust-only-for-infrastructure-tools"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "can I write a new product service in Rust?",
+  "id": "q161",
+  "expect": [
+   "decision-rust-only-for-infrastructure-tools"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "arm runners cost savings",
+  "id": "q162",
+  "expect": [
+   "decision-arm-for-build-runners"
+  ]
+ },
+ {
+  "category": "paraphrase",
+  "query": "moving the compilation fleet to a cheaper processor architecture",
+  "id": "q163",
+  "expect": [
+   "decision-arm-for-build-runners"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "api versioning /v1 prefix",
+  "id": "q164",
+  "expect": [
+   "decision-url-versioned-external-apis"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "how long are old API versions supported?",
+  "id": "q165",
+  "expect": [
+   "decision-url-versioned-external-apis"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "testing pyramid end-to-end flaky",
+  "id": "q166",
+  "expect": [
+   "decision-testing-pyramid-targets"
+  ]
+ },
+ {
+  "category": "paraphrase",
+  "query": "proportions of fast and slow automated checks we aim for",
+  "id": "q167",
+  "expect": [
+   "decision-testing-pyramid-targets"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "data retention account closure invoices",
+  "id": "q168",
+  "expect": [
+   "decision-data-retention-periods"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "how long do we keep invoices?",
+  "id": "q169",
+  "expect": [
+   "decision-data-retention-periods"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "approvals review requirements cairn lantern",
+  "id": "q170",
+  "expect": [
+   "decision-review-requirements"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "how many approvals do infrastructure changes need?",
+  "id": "q171",
+  "expect": [
+   "decision-review-requirements"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "adr architecture decision records",
+  "id": "q172",
+  "expect": [
+   "decision-record-decisions-as-adrs"
+  ]
+ },
+ {
+  "category": "paraphrase",
+  "query": "where concise write-ups explaining why we picked something are kept",
+  "id": "q173",
+  "expect": [
+   "decision-record-decisions-as-adrs"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "cache ttl invalidation pricing inventory",
+  "id": "q174",
+  "expect": [
+   "decision-default-cache-ttls"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "timeout retries jitter idempotency key",
+  "id": "q175",
+  "expect": [
+   "decision-standard-timeout-budget"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "how many times may a client retry a failed call?",
+  "id": "q176",
+  "expect": [
+   "decision-standard-timeout-budget"
+  ]
+ },
+ {
+  "category": "paraphrase",
+  "query": "resilience policy for outgoing requests that fail transiently",
+  "id": "q177",
+  "expect": [
+   "decision-standard-timeout-budget"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "money integer cents currency",
+  "id": "q178",
+  "expect": [
+   "decision-money-stored-as-integer-minor-units"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "can prices be floats?",
+  "id": "q179",
+  "expect": [
+   "decision-money-stored-as-integer-minor-units"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "service naming lowercase",
+  "id": "q180",
+  "expect": [
+   "decision-service-naming"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "wcag accessibility axe",
+  "id": "q181",
+  "expect": [
+   "decision-accessibility-baseline"
+  ]
+ },
+ {
+  "category": "paraphrase",
+  "query": "norm our screens have to satisfy so people with disabilities can use them",
+  "id": "q182",
+  "expect": [
+   "decision-accessibility-baseline"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "dependabot security patches 72 hours",
+  "id": "q183",
+  "expect": [
+   "decision-dependency-update-policy"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "how fast must critical vulnerabilities be patched?",
+  "id": "q184",
+  "expect": [
+   "decision-dependency-update-policy"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "docs with code quill guides",
+  "id": "q185",
+  "expect": [
+   "decision-docs-live-with-the-code"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "slo availability error budget tier-1",
+  "id": "q186",
+  "expect": [
+   "decision-internal-service-slos"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "what availability do tier-1 services target?",
+  "id": "q187",
+  "expect": [
+   "decision-internal-service-slos"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "dark launch mirrored traffic gradual",
+  "id": "q188",
+  "expect": [
+   "decision-dark-launches-for-risky-changes"
+  ]
+ },
+ {
+  "category": "paraphrase",
+  "query": "staged exposure approach: invisible deployment, shadow requests, then widening percentages",
+  "id": "q189",
+  "expect": [
+   "decision-dark-launches-for-risky-changes"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "buddy pairing new engineer first change",
+  "id": "q190",
+  "expect": [
+   "decision-pairing-for-onboarding"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "license gpl mit apache dependencies",
+  "id": "q191",
+  "expect": [
+   "decision-open-source-license-policy"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "may we depend on a GPL library?",
+  "id": "q192",
+  "expect": [
+   "decision-open-source-license-policy"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "batch window 01:00 05:00",
+  "id": "q193",
+  "expect": [
+   "decision-batch-jobs-avoid-business-hours"
+  ]
+ },
+ {
+  "category": "paraphrase",
+  "query": "time slot reserved for resource-hungry overnight workloads",
+  "id": "q194",
+  "expect": [
+   "decision-batch-jobs-avoid-business-hours"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "ferrule deploy prod rollback",
+  "id": "q195",
+  "expect": [
+   "procedure-deploying-to-production"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "how do I deploy a service to production?",
+  "id": "q196",
+  "expect": [
+   "procedure-deploying-to-production"
+  ]
+ },
+ {
+  "category": "paraphrase",
+  "query": "steps for pushing a release live and undoing it if failures spike",
+  "id": "q197",
+  "expect": [
+   "procedure-deploying-to-production"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "rollback previous digest migrations",
+  "id": "q198",
+  "expect": [
+   "procedure-emergency-rollback"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "does a rollback undo database migrations?",
+  "id": "q199",
+  "expect": [
+   "procedure-emergency-rollback"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "incident commander scribe severity",
+  "id": "q200",
+  "expect": [
+   "procedure-declaring-an-incident"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "how do I start an incident?",
+  "id": "q201",
+  "expect": [
+   "procedure-declaring-an-incident"
+  ]
+ },
+ {
+  "category": "paraphrase",
+  "query": "what to do the moment a major outage is suspected",
+  "id": "q202",
+  "expect": [
+   "procedure-declaring-an-incident"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "postmortem blameless action items",
+  "id": "q203",
+  "expect": [
+   "procedure-blameless-postmortems"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "how soon must a postmortem be written?",
+  "id": "q204",
+  "expect": [
+   "procedure-blameless-postmortems"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "expand contract migration column",
+  "id": "q205",
+  "expect": [
+   "procedure-database-schema-migrations"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "can I rename a database column in a single release?",
+  "id": "q206",
+  "expect": [
+   "procedure-database-schema-migrations"
+  ]
+ },
+ {
+  "category": "paraphrase",
+  "query": "multi-release technique for changing table structure without downtime",
+  "id": "q207",
+  "expect": [
+   "procedure-database-schema-migrations"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "production access portal expire",
+  "id": "q208",
+  "expect": [
+   "procedure-requesting-production-access"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "how do I get temporary production access?",
+  "id": "q209",
+  "expect": [
+   "procedure-requesting-production-access"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "brindle release branch qa hotfix",
+  "id": "q210",
+  "expect": [
+   "procedure-releasing-brindle"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "when is the Brindle release branch cut?",
+  "id": "q211",
+  "expect": [
+   "procedure-releasing-brindle"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "rotate api keys overlap revoke",
+  "id": "q212",
+  "expect": [
+   "procedure-rotating-api-keys"
+  ]
+ },
+ {
+  "category": "paraphrase",
+  "query": "swapping a credential for a fresh replacement without breaking callers",
+  "id": "q213",
+  "expect": [
+   "procedure-rotating-api-keys"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "restore snapshot new instance pgbouncer",
+  "id": "q214",
+  "expect": [
+   "procedure-restoring-a-database-from-snapshot"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "can I restore a backup directly over the live database?",
+  "id": "q215",
+  "expect": [
+   "procedure-restoring-a-database-from-snapshot"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "handoff note open alerts",
+  "id": "q216",
+  "expect": [
+   "procedure-on-call-handoff"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "what goes in the on-call handoff note?",
+  "id": "q217",
+  "expect": [
+   "procedure-on-call-handoff"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "ferrule new service gazetteer slo dashboard",
+  "id": "q218",
+  "expect": [
+   "procedure-creating-a-new-service"
+  ]
+ },
+ {
+  "category": "paraphrase",
+  "query": "sequence for bootstrapping a brand-new microservice end to end",
+  "id": "q219",
+  "expect": [
+   "procedure-creating-a-new-service"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "stale flags cleanup delete beacon",
+  "id": "q220",
+  "expect": [
+   "procedure-removing-stale-feature-flags"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "in what order do I delete a feature flag and its code?",
+  "id": "q221",
+  "expect": [
+   "procedure-removing-stale-feature-flags"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "load test announce staging k6 summary",
+  "id": "q222",
+  "expect": [
+   "procedure-running-a-load-test"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "may I run load tests on production?",
+  "id": "q223",
+  "expect": [
+   "procedure-running-a-load-test"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "vulnerability triage severity deadline",
+  "id": "q224",
+  "expect": [
+   "procedure-handling-a-vulnerability-report"
+  ]
+ },
+ {
+  "category": "paraphrase",
+  "query": "timeline for fixing a disclosed weakness depending on how bad it is",
+  "id": "q225",
+  "expect": [
+   "procedure-handling-a-vulnerability-report"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "cmctl renew certificate stuck",
+  "id": "q226",
+  "expect": [
+   "procedure-manual-certificate-renewal"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "what if automatic certificate renewal fails?",
+  "id": "q227",
+  "expect": [
+   "procedure-manual-certificate-renewal"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "deletion request verify identity 30 days",
+  "id": "q228",
+  "expect": [
+   "procedure-customer-data-deletion-request"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "how fast must we erase a customer's data on request?",
+  "id": "q229",
+  "expect": [
+   "procedure-customer-data-deletion-request"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "flaky test quarantine sprint",
+  "id": "q230",
+  "expect": [
+   "procedure-quarantining-a-flaky-test"
+  ]
+ },
+ {
+  "category": "paraphrase",
+  "query": "what happens to automated checks that succeed and then break randomly",
+  "id": "q231",
+  "expect": [
+   "procedure-quarantining-a-flaky-test"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "lost laptop remote wipe report",
+  "id": "q232",
+  "expect": [
+   "procedure-lost-or-stolen-laptop"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "what do I do if my laptop is stolen?",
+  "id": "q233",
+  "expect": [
+   "procedure-lost-or-stolen-laptop"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "cost review top spend lines",
+  "id": "q234",
+  "expect": [
+   "procedure-monthly-cost-review"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "pull request size description codeowners",
+  "id": "q235",
+  "expect": [
+   "procedure-pull-request-etiquette"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "how big should a pull request be?",
+  "id": "q236",
+  "expect": [
+   "procedure-pull-request-etiquette"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "hotfix deployed tag cherry-pick backport",
+  "id": "q237",
+  "expect": [
+   "procedure-hotfix-to-production"
+  ]
+ },
+ {
+  "category": "paraphrase",
+  "query": "urgent patch route that bypasses the normal queue of merged changes",
+  "id": "q238",
+  "expect": [
+   "procedure-hotfix-to-production"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "backfill dag date range row counts",
+  "id": "q239",
+  "expect": [
+   "procedure-backfilling-a-warehouse-table"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "how many days can I backfill in one run?",
+  "id": "q240",
+  "expect": [
+   "procedure-backfilling-a-warehouse-table"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "dns record cairn dig ttl cutover",
+  "id": "q241",
+  "expect": [
+   "procedure-changing-a-dns-record"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "leaked secret revoke audit",
+  "id": "q242",
+  "expect": [
+   "procedure-responding-to-a-leaked-secret"
+  ]
+ },
+ {
+  "category": "paraphrase",
+  "query": "immediate actions after sensitive credentials become public",
+  "id": "q243",
+  "expect": [
+   "procedure-responding-to-a-leaked-secret"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "time off deputy calendar",
+  "id": "q244",
+  "expect": [
+   "procedure-planning-time-off"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "march outage checkout 47 minutes",
+  "id": "q245",
+  "expect": [
+   "history-march-checkout-outage"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "what caused the March checkout outage?",
+  "id": "q246",
+  "expect": [
+   "history-march-checkout-outage"
+  ]
+ },
+ {
+  "category": "paraphrase",
+  "query": "the incident where customers could not pay because a toggle was badly formed",
+  "id": "q247",
+  "expect": [
+   "history-march-checkout-outage"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "redis eviction counters reset",
+  "id": "q248",
+  "expect": [
+   "history-redis-eviction-incident"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "why can't durable state go in cache-redis?",
+  "id": "q249",
+  "expect": [
+   "history-redis-eviction-incident"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "postgres upgrade logical replication cutover",
+  "id": "q250",
+  "expect": [
+   "history-postgres-14-to-16-upgrade"
+  ]
+ },
+ {
+  "category": "paraphrase",
+  "query": "how we moved the databases to a newer major release with minimal downtime",
+  "id": "q251",
+  "expect": [
+   "history-postgres-14-to-16-upgrade"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "harbor rewrite django go latency",
+  "id": "q252",
+  "expect": [
+   "history-harbor-rewritten-from-python-to-go"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "what language was Harbor originally written in?",
+  "id": "q253",
+  "expect": [
+   "history-harbor-rewritten-from-python-to-go"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "sms provider switch delivery rate",
+  "id": "q254",
+  "expect": [
+   "history-switched-sms-providers"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "why did we change SMS providers?",
+  "id": "q255",
+  "expect": [
+   "history-switched-sms-providers"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "hack day rookery sundial prototype",
+  "id": "q256",
+  "expect": [
+   "history-autumn-hack-day-outcomes"
+  ]
+ },
+ {
+  "category": "paraphrase",
+  "query": "internal innovation event whose side projects became real tools",
+  "id": "q257",
+  "expect": [
+   "history-autumn-hack-day-outcomes"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "expired certificate mtls intermediate ca",
+  "id": "q258",
+  "expect": [
+   "history-expired-internal-certificate"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "when did mTLS break because a certificate expired?",
+  "id": "q259",
+  "expect": [
+   "history-expired-internal-certificate"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "dns cutover ttl load balancer migration",
+  "id": "q260",
+  "expect": [
+   "history-failed-dns-cutover"
+  ]
+ },
+ {
+  "category": "paraphrase",
+  "query": "why a hosting move dragged on when name caching persisted for ages",
+  "id": "q261",
+  "expect": [
+   "history-failed-dns-cutover"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "ci flakiness 12 percent 2 percent",
+  "id": "q262",
+  "expect": [
+   "history-ci-flakiness-drive"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "how much did flaky CI failures drop?",
+  "id": "q263",
+  "expect": [
+   "history-ci-flakiness-drive"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "pricing rounding bug float one cent",
+  "id": "q264",
+  "expect": [
+   "history-pricing-rounding-bug"
+  ]
+ },
+ {
+  "category": "paraphrase",
+  "query": "mistake where customers were billed slightly too much due to decimal arithmetic",
+  "id": "q265",
+  "expect": [
+   "history-pricing-rounding-bug"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "hiring freeze quarter reprioritised",
+  "id": "q266",
+  "expect": [
+   "history-hiring-freeze-last-winter"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "secrets audit 14 static credentials",
+  "id": "q267",
+  "expect": [
+   "history-secrets-audit-findings"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "how many stale credentials did the audit find?",
+  "id": "q268",
+  "expect": [
+   "history-secrets-audit-findings"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "kubernetes upgrade helm chart deprecated api",
+  "id": "q269",
+  "expect": [
+   "history-kubernetes-1-28-to-1-30"
+  ]
+ },
+ {
+  "category": "paraphrase",
+  "query": "rolling the container orchestrator to a newer release environment by environment",
+  "id": "q270",
+  "expect": [
+   "history-kubernetes-1-28-to-1-30"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "black friday pre-scaled deploy freeze orders per minute",
+  "id": "q271",
+  "expect": [
+   "history-black-friday-capacity"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "how many orders per minute did we handle at peak?",
+  "id": "q272",
+  "expect": [
+   "history-black-friday-capacity"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "reindex disk full search cluster crash",
+  "id": "q273",
+  "expect": [
+   "history-failed-reindex"
+  ]
+ },
+ {
+  "category": "paraphrase",
+  "query": "outage caused by rebuilding the lookup catalogue without spare storage",
+  "id": "q274",
+  "expect": [
+   "history-failed-reindex"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "reorganisation payments platform teams",
+  "id": "q275",
+  "expect": [
+   "history-team-reorganisation"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "which team owns Marlin?",
+  "id": "q276",
+  "expect": [
+   "history-team-reorganisation"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "tabletop breach drill escalation legal",
+  "id": "q277",
+  "expect": [
+   "history-tabletop-breach-exercise"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "app store rejection account deletion",
+  "id": "q278",
+  "expect": [
+   "history-app-store-rejection"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "why was Brindle rejected by the App Store?",
+  "id": "q279",
+  "expect": [
+   "history-app-store-rejection"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "cdn stale logo purge rebrand",
+  "id": "q280",
+  "expect": [
+   "history-stale-cdn-assets"
+  ]
+ },
+ {
+  "category": "paraphrase",
+  "query": "episode where an outdated image kept showing because caches were not flushed",
+  "id": "q281",
+  "expect": [
+   "history-stale-cdn-assets"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "queue backlog poison message dead-letter",
+  "id": "q282",
+  "expect": [
+   "history-notification-queue-backlog"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "what happened when a stuck consumer delayed email delivery?",
+  "id": "q283",
+  "expect": [
+   "history-notification-queue-backlog"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "cost spike orphaned cluster expiry tags",
+  "id": "q284",
+  "expect": [
+   "history-cloud-cost-spike"
+  ]
+ },
+ {
+  "category": "paraphrase",
+  "query": "unexpected hosting bill caused by forgotten temporary machines",
+  "id": "q285",
+  "expect": [
+   "history-cloud-cost-spike"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "pages per week alert tuning runbook links",
+  "id": "q286",
+  "expect": [
+   "history-on-call-load-review"
+  ]
+ },
+ {
+  "category": "natural",
+  "query": "how many pages did on-call average per week?",
+  "id": "q287",
+  "expect": [
+   "history-on-call-load-review"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "gdpr review data flows retention policy",
+  "id": "q288",
+  "expect": [
+   "history-gdpr-readiness-review"
+  ]
+ },
+ {
+  "category": "keyword",
+  "query": "lumen launch june beta data team",
+  "id": "q289",
+  "expect": [
+   "history-first-production-deploy-of-lumen"
+  ]
+ },
+ {
+  "category": "long-body",
+  "query": "oriole-witness",
+  "id": "q290",
+  "expect": [
+   "disaster-recovery-drill-runbook"
+  ]
+ },
+ {
+  "category": "long-body",
+  "query": "which quorum node must be started manually after promoting the region?",
+  "id": "q291",
+  "expect": [
+   "disaster-recovery-drill-runbook"
+  ]
+ },
+ {
+  "category": "long-body",
+  "query": "203.0.113.0/28 allowlisted",
+  "id": "q292",
+  "expect": [
+   "annual-penetration-test-preparation"
+  ]
+ },
+ {
+  "category": "long-body",
+  "query": "which source range must the testers be allowlisted from on the firewall?",
+  "id": "q293",
+  "expect": [
+   "annual-penetration-test-preparation"
+  ]
+ },
+ {
+  "category": "long-body",
+  "query": "trackball lead time",
+  "id": "q294",
+  "expect": [
+   "new-hire-hardware-checklist"
+  ]
+ },
+ {
+  "category": "long-body",
+  "query": "how long does the supplier take to deliver the ergonomic pointing device?",
+  "id": "q295",
+  "expect": [
+   "new-hire-hardware-checklist"
+  ]
+ },
+ {
+  "category": "long-body",
+  "query": "attestation compliance twelve months vendors",
+  "id": "q296",
+  "expect": [
+   "vendor-security-review-process"
+  ]
+ },
+ {
+  "category": "long-body",
+  "query": "how recent must a supplier's card-data compliance document be?",
+  "id": "q297",
+  "expect": [
+   "vendor-security-review-process"
+  ]
+ },
+ {
+  "category": "long-body",
+  "query": "capitalised cost centre 4417",
+  "id": "q298",
+  "expect": [
+   "quarter-close-engineering-tasks"
+  ]
+ },
+ {
+  "category": "long-body",
+  "query": "which legacy cost centre makes finance reject the export?",
+  "id": "q299",
+  "expect": [
+   "quarter-close-engineering-tasks"
+  ]
+ },
+ {
+  "category": "long-body",
+  "query": "boosting exact sku matches demoting",
+  "id": "q300",
+  "expect": [
+   "search-relevance-tuning-notes"
+  ]
+ },
+ {
+  "category": "long-body",
+  "query": "what boost value worked best for exact product code matches?",
+  "id": "q301",
+  "expect": [
+   "search-relevance-tuning-notes"
+  ]
+ },
+ {
+  "category": "long-body",
+  "query": "distribution certificates 13 months testflight",
+  "id": "q302",
+  "expect": [
+   "mobile-signing-and-provisioning-notes"
+  ]
+ },
+ {
+  "category": "long-body",
+  "query": "why would nightly TestFlight uploads suddenly stop working?",
+  "id": "q303",
+  "expect": [
+   "mobile-signing-and-provisioning-notes"
+  ]
+ },
+ {
+  "category": "long-body",
+  "query": "leap-day duplicated partition load_id 88123",
+  "id": "q304",
+  "expect": [
+   "warehouse-load-quirks"
+  ]
+ },
+ {
+  "category": "long-body",
+  "query": "why do some order counts double on the leap day?",
+  "id": "q305",
+  "expect": [
+   "warehouse-load-quirks"
+  ]
+ },
+ {
+  "category": "long-body",
+  "query": "egress rule port 9102 scraper",
+  "id": "q306",
+  "expect": [
+   "kubernetes-network-policy-notes"
+  ]
+ },
+ {
+  "category": "long-body",
+  "query": "why did dashboards go blank after network policies were enabled?",
+  "id": "q307",
+  "expect": [
+   "kubernetes-network-policy-notes"
+  ]
+ },
+ {
+  "category": "long-body",
+  "query": "annual price monthly equivalent conversion newsletter",
+  "id": "q308",
+  "expect": [
+   "pricing-experiment-learnings"
+  ]
+ },
+ {
+  "category": "long-body",
+  "query": "which pricing display lifted conversion for newsletter visitors?",
+  "id": "q309",
+  "expect": [
+   "pricing-experiment-learnings"
+  ]
+ },
+ {
+  "category": "long-body",
+  "query": "string longer than 140 characters screenshot portuguese",
+  "id": "q310",
+  "expect": [
+   "localisation-workflow"
+  ]
+ },
+ {
+  "category": "long-body",
+  "query": "when does the Portuguese translation come back unfinished?",
+  "id": "q311",
+  "expect": [
+   "localisation-workflow"
+  ]
+ },
+ {
+  "category": "long-body",
+  "query": "seasonality factor november 2.7",
+  "id": "q312",
+  "expect": [
+   "capacity-planning-model"
+  ]
+ },
+ {
+  "category": "long-body",
+  "query": "what multiplier do we apply for the November peak?",
+  "id": "q313",
+  "expect": [
+   "capacity-planning-model"
+  ]
+ },
+ {
+  "category": "long-body",
+  "query": "refund-loop tag bypass triage",
+  "id": "q314",
+  "expect": [
+   "support-escalation-guide"
+  ]
+ },
+ {
+  "category": "long-body",
+  "query": "which ticket tag skips triage and goes directly to the payments engineer?",
+  "id": "q315",
+  "expect": [
+   "support-escalation-guide"
+  ]
+ },
+ {
+  "category": "long-body",
+  "query": "wiki-attic archive bucket attachments",
+  "id": "q316",
+  "expect": [
+   "wiki-migration-notes"
+  ]
+ },
+ {
+  "category": "long-body",
+  "query": "where did the oversized wiki attachments end up?",
+  "id": "q317",
+  "expect": [
+   "wiki-migration-notes"
+  ]
+ },
+ {
+  "category": "long-body",
+  "query": "tcp_tw_reuse gateway hosts",
+  "id": "q318",
+  "expect": [
+   "server-hardening-baseline"
+  ]
+ },
+ {
+  "category": "long-body",
+  "query": "which kernel setting caused connection resets when applied everywhere?",
+  "id": "q319",
+  "expect": [
+   "server-hardening-baseline"
+  ]
+ },
+ {
+  "category": "outdated",
+  "query": "where is our source code hosted now?",
+  "id": "q320",
+  "expect": [
+   "code-hosting-2026"
+  ]
+ },
+ {
+  "category": "outdated",
+  "query": "current code hosting",
+  "id": "q321",
+  "expect": [
+   "code-hosting-2026"
+  ]
+ },
+ {
+  "category": "outdated",
+  "query": "which chat tool does engineering use these days?",
+  "id": "q322",
+  "expect": [
+   "team-chat-tool-current"
+  ]
+ },
+ {
+  "category": "outdated",
+  "query": "current team chat",
+  "id": "q323",
+  "expect": [
+   "team-chat-tool-current"
+  ]
+ },
+ {
+  "category": "outdated",
+  "query": "which regions is production deployed in now?",
+  "id": "q324",
+  "expect": [
+   "primary-regions-current"
+  ]
+ },
+ {
+  "category": "outdated",
+  "query": "production regions active",
+  "id": "q325",
+  "expect": [
+   "primary-regions-current"
+  ]
+ },
+ {
+  "category": "outdated",
+  "query": "what do we use to deploy services at the moment?",
+  "id": "q326",
+  "expect": [
+   "deploy-tooling-current"
+  ]
+ },
+ {
+  "category": "outdated",
+  "query": "current deploy tooling",
+  "id": "q327",
+  "expect": [
+   "deploy-tooling-current"
+  ]
+ },
+ {
+  "category": "outdated",
+  "query": "which Python version is the standard for services now?",
+  "id": "q328",
+  "expect": [
+   "python-standard-current"
+  ]
+ },
+ {
+  "category": "outdated",
+  "query": "current python standard",
+  "id": "q329",
+  "expect": [
+   "python-standard-current"
+  ]
+ },
+ {
+  "category": "outdated",
+  "query": "how long does the primary have to acknowledge a page currently?",
+  "id": "q330",
+  "expect": [
+   "page-acknowledgement-window-current"
+  ]
+ },
+ {
+  "category": "outdated",
+  "query": "current acknowledgement window",
+  "id": "q331",
+  "expect": [
+   "page-acknowledgement-window-current"
+  ]
+ },
+ {
+  "category": "outdated",
+  "query": "what is the current staging database endpoint?",
+  "id": "q332",
+  "expect": [
+   "staging-database-host-current"
+  ]
+ },
+ {
+  "category": "outdated",
+  "query": "staging database current",
+  "id": "q333",
+  "expect": [
+   "staging-database-host-current"
+  ]
+ },
+ {
+  "category": "outdated",
+  "query": "how long are logs retained now?",
+  "id": "q334",
+  "expect": [
+   "log-retention-current"
+  ]
+ },
+ {
+  "category": "outdated",
+  "query": "current log retention",
+  "id": "q335",
+  "expect": [
+   "log-retention-current"
+  ]
+ },
+ {
+  "category": "outdated",
+  "query": "when is the daily standup now?",
+  "id": "q336",
+  "expect": [
+   "team-standup-time-current"
+  ]
+ },
+ {
+  "category": "outdated",
+  "query": "current standup time",
+  "id": "q337",
+  "expect": [
+   "team-standup-time-current"
+  ]
+ },
+ {
+  "category": "outdated",
+  "query": "how often does Brindle ship currently?",
+  "id": "q338",
+  "expect": [
+   "brindle-release-cadence-current"
+  ]
+ },
+ {
+  "category": "outdated",
+  "query": "brindle current cadence",
+  "id": "q339",
+  "expect": [
+   "brindle-release-cadence-current"
+  ]
+ },
+ {
+  "category": "outdated",
+  "query": "which system manages feature flags at present?",
+  "id": "q340",
+  "expect": [
+   "feature-flag-tool-current"
+  ]
+ },
+ {
+  "category": "outdated",
+  "query": "feature flags current tool",
+  "id": "q341",
+  "expect": [
+   "feature-flag-tool-current"
+  ]
+ },
+ {
+  "category": "outdated",
+  "query": "how often are error budgets reviewed now?",
+  "id": "q342",
+  "expect": [
+   "error-budget-review-current"
+  ]
+ },
+ {
+  "category": "outdated",
+  "query": "current error budget review",
+  "id": "q343",
+  "expect": [
+   "error-budget-review-current"
+  ]
+ },
+ {
+  "category": "outdated",
+  "query": "which password manager does the team use currently?",
+  "id": "q344",
+  "expect": [
+   "password-manager-current"
+  ]
+ },
+ {
+  "category": "outdated",
+  "query": "password manager current",
+  "id": "q345",
+  "expect": [
+   "password-manager-current"
+  ]
+ },
+ {
+  "category": "outdated",
+  "query": "how long is a sprint now?",
+  "id": "q346",
+  "expect": [
+   "sprint-length-current"
+  ]
+ },
+ {
+  "category": "outdated",
+  "query": "current sprint length",
+  "id": "q347",
+  "expect": [
+   "sprint-length-current"
+  ]
+ },
+ {
+  "category": "outdated",
+  "query": "where do application exceptions get reported at the moment?",
+  "id": "q348",
+  "expect": [
+   "error-tracking-current"
+  ]
+ },
+ {
+  "category": "outdated",
+  "query": "error tracking current",
+  "id": "q349",
+  "expect": [
+   "error-tracking-current"
+  ]
+ },
+ {
+  "category": "near-dup",
+  "query": "how do I connect to the staging Postgres?",
+  "id": "q350",
+  "expect": [
+   "database-connection-details-staging"
+  ]
+ },
+ {
+  "category": "near-dup",
+  "query": "how do I connect to the production Postgres?",
+  "id": "q351",
+  "expect": [
+   "database-connection-details-production"
+  ]
+ },
+ {
+  "category": "near-dup",
+  "query": "what should I check before deploying Harbor?",
+  "id": "q352",
+  "expect": [
+   "deploy-checklist-harbor"
+  ]
+ },
+ {
+  "category": "near-dup",
+  "query": "what should I check before deploying Pavilion?",
+  "id": "q353",
+  "expect": [
+   "deploy-checklist-pavilion"
+  ]
+ },
+ {
+  "category": "near-dup",
+  "query": "where are the iOS signing certificates kept?",
+  "id": "q354",
+  "expect": [
+   "signing-keys-ios"
+  ]
+ },
+ {
+  "category": "near-dup",
+  "query": "where is the Android keystore kept?",
+  "id": "q355",
+  "expect": [
+   "signing-keys-android"
+  ]
+ },
+ {
+  "category": "near-dup",
+  "query": "who is the escalation contact for the EU on-call?",
+  "id": "q356",
+  "expect": [
+   "on-call-contacts-eu-rotation"
+  ]
+ },
+ {
+  "category": "near-dup",
+  "query": "who is the escalation contact for the US on-call?",
+  "id": "q357",
+  "expect": [
+   "on-call-contacts-us-rotation"
+  ]
+ },
+ {
+  "category": "near-dup",
+  "query": "which Grafana dashboard shows webhook lag?",
+  "id": "q358",
+  "expect": [
+   "grafana-dashboard-harbor"
+  ]
+ },
+ {
+  "category": "near-dup",
+  "query": "which Grafana dashboard shows the Redis hit ratio?",
+  "id": "q359",
+  "expect": [
+   "grafana-dashboard-orrery"
+  ]
+ },
+ {
+  "category": "near-dup",
+  "query": "what ruff rules do Python repos enable?",
+  "id": "q360",
+  "expect": [
+   "lint-rules-python"
+  ]
+ },
+ {
+  "category": "near-dup",
+  "query": "which linters do Go repos run?",
+  "id": "q361",
+  "expect": [
+   "lint-rules-go"
+  ]
+ },
+ {
+  "category": "near-dup",
+  "query": "when does the Harbor latency alert page?",
+  "id": "q362",
+  "expect": [
+   "alert-harbor-latency"
+  ]
+ },
+ {
+  "category": "near-dup",
+  "query": "when does the Harbor error rate alert page?",
+  "id": "q363",
+  "expect": [
+   "alert-harbor-error-rate"
+  ]
+ },
+ {
+  "category": "near-dup",
+  "query": "how are Postgres backups verified?",
+  "id": "q364",
+  "expect": [
+   "backups-postgres"
+  ]
+ },
+ {
+  "category": "near-dup",
+  "query": "how often are OpenSearch snapshots taken?",
+  "id": "q365",
+  "expect": [
+   "backups-opensearch"
+  ]
+ },
+ {
+  "category": "near-dup",
+  "query": "who approves access to staging?",
+  "id": "q366",
+  "expect": [
+   "access-approval-staging"
+  ]
+ },
+ {
+  "category": "near-dup",
+  "query": "who approves access to production?",
+  "id": "q367",
+  "expect": [
+   "access-approval-production"
+  ]
+ },
+ {
+  "category": "near-dup",
+  "query": "how do I fail over the cache Redis?",
+  "id": "q368",
+  "expect": [
+   "failover-cache-redis"
+  ]
+ },
+ {
+  "category": "near-dup",
+  "query": "how do I fail over the state Redis?",
+  "id": "q369",
+  "expect": [
+   "failover-state-redis"
+  ]
+ },
+ {
+  "category": "near-dup",
+  "query": "how do I change an email template?",
+  "id": "q370",
+  "expect": [
+   "changing-an-email-template"
+  ]
+ },
+ {
+  "category": "near-dup",
+  "query": "how do I change an SMS template?",
+  "id": "q371",
+  "expect": [
+   "changing-an-sms-template"
+  ]
+ },
+ {
+  "category": "near-dup",
+  "query": "how do docs previews work?",
+  "id": "q372",
+  "expect": [
+   "preview-builds-quill"
+  ]
+ },
+ {
+  "category": "near-dup",
+  "query": "how do storefront previews work?",
+  "id": "q373",
+  "expect": [
+   "preview-builds-pavilion"
+  ]
+ },
+ {
+  "category": "multi-hop",
+  "query": "how many database connections can the invoicing service open at most?",
+  "match": "all",
+  "id": "q374",
+  "expect": [
+   "harbor-billing-service",
+   "postgres-fleet"
+  ]
+ },
+ {
+  "category": "multi-hop",
+  "query": "which flag service caused the March outage and does its client keep working offline?",
+  "match": "all",
+  "id": "q375",
+  "expect": [
+   "history-march-checkout-outage",
+   "beacon-feature-flags"
+  ]
+ },
+ {
+  "category": "multi-hop",
+  "query": "where are the hardened base images published and how many tags are retained there?",
+  "match": "all",
+  "id": "q376",
+  "expect": [
+   "kiln-image-builder",
+   "container-registry"
+  ]
+ },
+ {
+  "category": "multi-hop",
+  "query": "which team owns the reconciliation checker and which team was it split from?",
+  "match": "all",
+  "id": "q377",
+  "expect": [
+   "ledgerlint-checker",
+   "history-team-reorganisation"
+  ]
+ },
+ {
+  "category": "multi-hop",
+  "query": "what time does the payout reconciliation run and what window should heavy batch jobs use?",
+  "match": "all",
+  "id": "q378",
+  "expect": [
+   "ledgerlint-checker",
+   "decision-batch-jobs-avoid-business-hours"
+  ]
+ },
+ {
+  "category": "multi-hop",
+  "query": "which cluster hosts storefront previews and when are they destroyed?",
+  "match": "all",
+  "id": "q379",
+  "expect": [
+   "pavilion-storefront",
+   "preview-environments"
+  ]
+ },
+ {
+  "category": "multi-hop",
+  "query": "what language is the scheduler written in and may product services use it?",
+  "match": "all",
+  "id": "q380",
+  "expect": [
+   "sundial-scheduler",
+   "decision-rust-only-for-infrastructure-tools"
+  ]
+ },
+ {
+  "category": "multi-hop",
+  "query": "which app relies on the geocoding wrapper and how long are its answers cached?",
+  "match": "all",
+  "id": "q381",
+  "expect": [
+   "tern-driver-app",
+   "meridian-geo-service"
+  ]
+ },
+ {
+  "category": "multi-hop",
+  "query": "how long do database credential leases last and what is the procedure to swap an API key?",
+  "match": "all",
+  "id": "q382",
+  "expect": [
+   "warden-secrets-broker",
+   "procedure-rotating-api-keys"
+  ]
+ },
+ {
+  "category": "multi-hop",
+  "query": "which team owns fraud scoring and what else did it split off with?",
+  "match": "all",
+  "id": "q383",
+  "expect": [
+   "marlin-fraud-rules",
+   "history-team-reorganisation"
+  ]
+ },
+ {
+  "category": "multi-hop",
+  "query": "what latency target does the feature store have and which Redis holds its hot keys policy?",
+  "match": "all",
+  "id": "q384",
+  "expect": [
+   "orrery-feature-store",
+   "redis-clusters"
+  ]
+ },
+ {
+  "category": "multi-hop",
+  "query": "which tool runs the nightly warehouse loads and how many days may be backfilled at once?",
+  "match": "all",
+  "id": "q385",
+  "expect": [
+   "tidepool-data-pipeline",
+   "procedure-backfilling-a-warehouse-table"
+  ]
+ },
+ {
+  "category": "multi-hop",
+  "query": "what scales workers from backlog and is delivery exactly once for the queue it watches?",
+  "match": "all",
+  "id": "q386",
+  "expect": [
+   "bellows-autoscaler",
+   "message-queue"
+  ]
+ },
+ {
+  "category": "multi-hop",
+  "query": "how is the docs site built and how long does the edge cache keep its assets?",
+  "match": "all",
+  "id": "q387",
+  "expect": [
+   "quill-documentation-site",
+   "cdn-configuration"
+  ]
+ },
+ {
+  "category": "multi-hop",
+  "query": "how many approvals does the login gateway need for changes and what does it do?",
+  "match": "all",
+  "id": "q388",
+  "expect": [
+   "lantern-auth-gateway",
+   "decision-review-requirements"
+  ]
+ },
+ {
+  "category": "multi-hop",
+  "query": "who updates the public status board and how do I declare an incident?",
+  "match": "all",
+  "id": "q389",
+  "expect": [
+   "heron-status-page",
+   "procedure-declaring-an-incident"
+  ]
+ },
+ {
+  "category": "multi-hop",
+  "query": "what is the deploy procedure and which stack holds the dashboards to watch afterwards?",
+  "match": "all",
+  "id": "q390",
+  "expect": [
+   "procedure-deploying-to-production",
+   "observability-stack"
+  ]
+ },
+ {
+  "category": "multi-hop",
+  "query": "which Python version do the monthly finance exports need and what is the standard for new services?",
+  "match": "all",
+  "id": "q391",
+  "expect": [
+   "quartz-reporting-jobs",
+   "python-toolchain"
+  ]
+ },
+ {
+  "category": "multi-hop",
+  "query": "what throughput do load tests target and may they run against production?",
+  "match": "all",
+  "id": "q392",
+  "expect": [
+   "plover-load-tests",
+   "procedure-running-a-load-test"
+  ]
+ },
+ {
+  "category": "multi-hop",
+  "query": "which service sends SMS and why did a stuck consumer once delay its messages?",
+  "match": "all",
+  "id": "q393",
+  "expect": [
+   "notifier-service",
+   "history-notification-queue-backlog"
+  ]
+ },
+ {
+  "category": "negative",
+  "query": "sourdough starter feeding schedule",
+  "expect": [],
+  "id": "q394"
+ },
+ {
+  "category": "negative",
+  "query": "who won the 2018 football world cup",
+  "expect": [],
+  "id": "q395"
+ },
+ {
+  "category": "negative",
+  "query": "best hiking trails near Lisbon",
+  "expect": [],
+  "id": "q396"
+ },
+ {
+  "category": "negative",
+  "query": "how to knit a cable pattern scarf",
+  "expect": [],
+  "id": "q397"
+ },
+ {
+  "category": "negative",
+  "query": "capital city of Australia",
+  "expect": [],
+  "id": "q398"
+ },
+ {
+  "category": "negative",
+  "query": "recipe for vegetarian lasagna",
+  "expect": [],
+  "id": "q399"
+ },
+ {
+  "category": "negative",
+  "query": "symptoms of seasonal flu",
+  "expect": [],
+  "id": "q400"
+ },
+ {
+  "category": "negative",
+  "query": "how do ocean tides work",
+  "expect": [],
+  "id": "q401"
+ },
+ {
+  "category": "negative",
+  "query": "piano chord progressions for jazz",
+  "expect": [],
+  "id": "q402"
+ },
+ {
+  "category": "negative",
+  "query": "when does the next solar eclipse happen",
+  "expect": [],
+  "id": "q403"
+ },
+ {
+  "category": "negative",
+  "query": "Kafka topic partition count for orders",
+  "expect": [],
+  "id": "q404"
+ },
+ {
+  "category": "negative",
+  "query": "MongoDB sharding key choice",
+  "expect": [],
+  "id": "q405"
+ },
+ {
+  "category": "negative",
+  "query": "Jenkins pipeline shared library location",
+  "expect": [],
+  "id": "q406"
+ },
+ {
+  "category": "negative",
+  "query": "Ansible playbook for patching hosts",
+  "expect": [],
+  "id": "q407"
+ },
+ {
+  "category": "negative",
+  "query": "Datadog monitor for p99 latency",
+  "expect": [],
+  "id": "q408"
+ },
+ {
+  "category": "negative",
+  "query": "Elasticsearch index lifecycle rollover policy",
+  "expect": [],
+  "id": "q409"
+ },
+ {
+  "category": "negative",
+  "query": "SAML attribute mapping for Okta",
+  "expect": [],
+  "id": "q410"
+ },
+ {
+  "category": "negative",
+  "query": "Windows laptop setup instructions",
+  "expect": [],
+  "id": "q411"
+ },
+ {
+  "category": "negative",
+  "query": "Docker Compose file for local development",
+  "expect": [],
+  "id": "q412"
+ },
+ {
+  "category": "negative",
+  "query": "Cypress end-to-end test suite location",
+  "expect": [],
+  "id": "q413"
+ },
+ {
+  "category": "negative",
+  "query": "RabbitMQ dead letter exchange configuration",
+  "expect": [],
+  "id": "q414"
+ },
+ {
+  "category": "negative",
+  "query": "Swift package manager dependency pinning",
+  "expect": [],
+  "id": "q415"
+ },
+ {
+  "category": "negative",
+  "query": "payroll system for contractors",
+  "expect": [],
+  "id": "q416"
+ },
+ {
+  "category": "negative",
+  "query": "office parking permit process",
+  "expect": [],
+  "id": "q417"
+ },
+ {
+  "category": "negative",
+  "query": "Slack channel for design reviews",
+  "expect": [],
+  "id": "q418"
+ },
+ {
+  "category": "negative",
+  "query": "quarterly OKR template spreadsheet",
+  "expect": [],
+  "id": "q419"
+ },
+ {
+  "category": "negative",
+  "query": "VPN profile for contractors on Windows",
+  "expect": [],
+  "id": "q420"
+ },
+ {
+  "category": "negative",
+  "query": "GraphQL federation gateway configuration",
+  "expect": [],
+  "id": "q421"
+ },
+ {
+  "category": "negative",
+  "query": "Azure subscription naming convention",
+  "expect": [],
+  "id": "q422"
+ },
+ {
+  "category": "negative",
+  "query": "password rotation policy for shared mailbox",
+  "expect": [],
+  "id": "q423"
+ },
+ {
+  "category": "negative",
+  "kind": "near-miss",
+  "query": "Harbor billing invoice PDF font licensing",
+  "expect": [],
+  "id": "q424"
+ },
+ {
+  "category": "negative",
+  "kind": "near-miss",
+  "query": "Brindle iOS Crashlytics dSYM upload script",
+  "expect": [],
+  "id": "q425"
+ },
+ {
+  "category": "negative",
+  "kind": "near-miss",
+  "query": "Postgres pg_stat_statements track_planning setting",
+  "expect": [],
+  "id": "q426"
+ },
+ {
+  "category": "negative",
+  "kind": "near-miss",
+  "query": "Redis cluster TLS mutual authentication client cert",
+  "expect": [],
+  "id": "q427"
+ },
+ {
+  "category": "negative",
+  "kind": "near-miss",
+  "query": "Tidepool Airflow Celery worker concurrency setting",
+  "expect": [],
+  "id": "q428"
+ },
+ {
+  "category": "negative",
+  "kind": "near-miss",
+  "query": "Mosaic design system dark mode contrast ratio tokens",
+  "expect": [],
+  "id": "q429"
+ },
+ {
+  "category": "negative",
+  "kind": "near-miss",
+  "query": "Lantern OIDC PKCE code verifier byte length",
+  "expect": [],
+  "id": "q430"
+ },
+ {
+  "category": "negative",
+  "kind": "near-miss",
+  "query": "Ferrule CLI zsh autocompletion install command",
+  "expect": [],
+  "id": "q431"
+ },
+ {
+  "category": "negative",
+  "kind": "near-miss",
+  "query": "Pavilion storefront Apple Pay merchant identifier",
+  "expect": [],
+  "id": "q432"
+ },
+ {
+  "category": "negative",
+  "kind": "near-miss",
+  "query": "Warden Vault audit log retention period",
+  "expect": [],
+  "id": "q433"
+ },
+ {
+  "category": "negative",
+  "kind": "near-miss",
+  "query": "Sieve OpenSearch HNSW vector index ef_construction",
+  "expect": [],
+  "id": "q434"
+ },
+ {
+  "category": "negative",
+  "kind": "near-miss",
+  "query": "Sundial scheduler daylight saving time cron behavior",
+  "expect": [],
+  "id": "q435"
+ },
+ {
+  "category": "negative",
+  "kind": "near-miss",
+  "query": "Orrery feature store Feast online materialization job",
+  "expect": [],
+  "id": "q436"
+ },
+ {
+  "category": "negative",
+  "kind": "near-miss",
+  "query": "Catalog API Apollo Studio schema registry key",
+  "expect": [],
+  "id": "q437"
+ },
+ {
+  "category": "negative",
+  "kind": "near-miss",
+  "query": "Cairn Terraform KMS customer managed key ARN",
+  "expect": [],
+  "id": "q438"
+ },
+ {
+  "category": "negative",
+  "kind": "near-miss",
+  "query": "Quill Astro robots txt crawl delay setting",
+  "expect": [],
+  "id": "q439"
+ },
+ {
+  "category": "negative",
+  "kind": "near-miss",
+  "query": "Lumen analytics dashboard CSV export row limit",
+  "expect": [],
+  "id": "q440"
+ },
+ {
+  "category": "negative",
+  "kind": "near-miss",
+  "query": "Beacon feature flags murmur3 bucketing hash seed",
+  "expect": [],
+  "id": "q441"
+ },
+ {
+  "category": "negative",
+  "kind": "near-miss",
+  "query": "Trellis CI GPU runner instance type",
+  "expect": [],
+  "id": "q442"
+ },
+ {
+  "category": "negative",
+  "kind": "near-miss",
+  "query": "Notifier service Twilio SMS sender short code",
+  "expect": [],
+  "id": "q443"
+ }
+]

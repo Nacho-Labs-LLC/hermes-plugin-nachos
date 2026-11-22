@@ -15,6 +15,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from nachos_core.embeddings import Embedder
 from nachos_core.index import MemoryIndex, index_path_for
 from nachos_core.memory import PROFILE, MemoryService, Scope
 from nachos_core.store import get_store
@@ -28,7 +29,11 @@ def default_store_path(store_kind: str) -> Path:
 
 
 def open_service(
-    store_kind: str, path: Path, *, embedder=None, redact: Callable[[str], str] | None = None
+    store_kind: str,
+    path: Path,
+    *,
+    embedder: Embedder | None = None,
+    redact: Callable[[str], str] | None = None,
 ) -> MemoryService:
     """Open the profile scope at ``path`` (store plus sidecar index)."""
     scope = Scope(PROFILE, get_store(store_kind, path), MemoryIndex(index_path_for(path)))

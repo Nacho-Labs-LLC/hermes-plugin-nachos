@@ -1,0 +1,57 @@
+{
+  "canonical": [
+    {
+      "value": {
+        "z": "é\r\n",
+        "a": 1
+      },
+      "utf8_hex": "7b2261223a312c227a223a22c3a95c725c6e227d",
+      "proposal_domain_digest": "167d823d2fd2ebeef10c4caf6f83071d87ad32dbfa4ab62a302e82efe357950c"
+    },
+    {
+      "value": {
+        "😀": "astral",
+        "": "BMP",
+        "2": "two",
+        "10": "ten"
+      },
+      "utf8_hex": "7b223130223a2274656e222c2232223a2274776f222c22ee8080223a22424d50222c22f09f9880223a2261737472616c227d",
+      "proposal_domain_digest": "e47790b8691076d14b159ae21093dcbb01ea43ba5b4fb137d1f1d1f0bae8c9db"
+    },
+    {
+      "value": {
+        "control": "\b\f\n\r\t\u0000",
+        "slash": "/",
+        "html": "<img src=\"https://invalid.example/probe\" onerror=\"window.fixtureExecuted=true\"> </script> & café 😀",
+        "combining": "é",
+        "composed": "é"
+      },
+      "utf8_hex": "7b22636f6d62696e696e67223a2265cc81222c22636f6d706f736564223a22c3a9222c22636f6e74726f6c223a225c625c665c6e5c725c745c7530303030222c2268746d6c223a223c696d67207372633d5c2268747470733a2f2f696e76616c69642e6578616d706c652f70726f62655c22206f6e6572726f723d5c2277696e646f772e6669787475726545786563757465643d747275655c223e203c2f7363726970743e202620636166c3a920f09f9880222c22736c617368223a222f227d",
+      "proposal_domain_digest": "9cab9bdcffb8ab4e14300243f520386eef247a5cc7ca911f153fd52a0d0c3f3d"
+    },
+    {
+      "value": [
+        null,
+        true,
+        false,
+        -9007199254740991,
+        9007199254740991
+      ],
+      "utf8_hex": "5b6e756c6c2c747275652c66616c73652c2d393030373139393235343734303939312c393030373139393235343734303939315d",
+      "proposal_domain_digest": "490bafe7020808177b3aa8158301cdf1c7952891688052002ff9fe68b76e52cb"
+    }
+  ],
+  "proposal_digests": {
+    "p-memory": "56675cf2a865ad5a81d38237fee4a9cd924e1ffcc4d415fce3a76a1f2fa19f61",
+    "p-skill": "3cfbce18c8ee4f588435adcf8bbb3e7516278f19a6bd31b0363ca22b65ba469d",
+    "p-disable": "a6ed4745d37308955b61b7a7ac9524f2ba40d86da4282636283a5aa5f1748487"
+  },
+  "invalid_json": [
+    "{\"a\":1,\"a\":2}",
+    "{\"n\":1.0}",
+    "{\"n\":1e0}",
+    "{\"n\":NaN}",
+    "{\"n\":9007199254740992}",
+    "{\"s\":\"\\ud800\"}"
+  ]
+}

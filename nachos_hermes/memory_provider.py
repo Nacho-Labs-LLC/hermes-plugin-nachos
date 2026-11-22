@@ -51,32 +51,32 @@ except ModuleNotFoundError:  # pragma: no cover - exercised outside Hermes
         """Fallback base so the module stays importable outside Hermes."""
 
 
-from nachos_core.embeddings import make_embedder
-from nachos_core.history import prune_checkpoints, search_history
+from nachos_core.embeddings import Embedder
+from nachos_core.history import locate_quote, prune_checkpoints
 from nachos_core.index import MemoryIndex, index_path_for
 from nachos_core.memory import PROFILE, SHARED, MemoryService, Scope
 from nachos_core.snapshots import SnapshotStore
 from nachos_core.store import get_store
-from nachos_core.store.md_store import slugify
 from nachos_core.toc import render_toc
 
-from . import capture_adapter, commands
+from . import capture_adapter, commands, memory_tools
 from .config import (
     CONFIG_SCHEMA,
     DEFAULTS,
     apply_config,
     backup_paths,
-    hermes_credential,
     hermes_redactor,
+    make_embedder_from_config,
     shared_dir,
     store_file,
 )
+from .reconcile_tool import RECONCILE_SCHEMA, handle_reconcile
 from .schemas import (
     HISTORY_SCHEMA,
     PUT_SCHEMA,
     RECALL_SCHEMA,
+    RECALL_SCHEMA_HINT,
     REMOVE_SCHEMA,
-    clamp_int,
     with_scope,
 )
 
@@ -88,7 +88,7 @@ class NachosMemoryProvider(MemoryProvider):
 
     pre_compress_checkpoint_api_version = 2
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._service: MemoryService | None = None
         self._cfg: dict[str, Any] = dict(DEFAULTS)
         self._session_id = ""
@@ -107,14 +107,9 @@ class NachosMemoryProvider(MemoryProvider):
     def is_available(self) -> bool:
         return True  # local, always ready
 
-    @property
-    def _store(self):
-        """Profile store (kept for older callers)."""
-        return self._service.profile.store if self._service else None
-
     # -- lifecycle ---------------------------------------------------------
 
-    def initialize(self, session_id: str, **kwargs) -> None:
+    def initialize(self, session_id: str, **kwargs: Any) -> None:
         self._session_id = session_id or ""
         self._lineage = [self._session_id] if self._session_id else []
         self._primary = kwargs.get("agent_context", "primary") == "primary"
@@ -155,6 +150,12 @@ class NachosMemoryProvider(MemoryProvider):
                 embedder=self._make_embedder(),
                 duplicate_threshold=float(self._cfg["duplicate_threshold"]),
                 redact=self._redact,
+                similarity_floor="p75" if self._cfg["similarity_floor"] == "auto" else None,
+                calibrate_duplicates=self._calibrate_duplicates(),
+                rerank_candidates=max(1, int(self._cfg["rerank_candidates"])),
+                reindex_budget_s=max(0, int(self._cfg["reindex_budget_ms"])) / 1000,
+                rerank_borderline=self._cfg["rerank"] == "borderline",
+                related_per_hit=max(0, int(self._cfg["related_per_hit"])),
             )
             service.session_id = self._session_id
             return service
@@ -191,19 +192,17 @@ class NachosMemoryProvider(MemoryProvider):
         path = store_file(directory, self._cfg["store"])
         return Scope(name, get_store(self._cfg["store"], path), MemoryIndex(index_path_for(path)))
 
-    def _make_embedder(self):
+    def _make_embedder(self) -> Embedder | None:
         try:
-            return make_embedder(
-                self._cfg["embeddings"],
-                model=self._cfg["embedding_model"],
-                dtype=self._cfg["embedding_dtype"],
-                base_url=self._cfg["embedding_base_url"],
-                api_key_env=self._cfg["embedding_api_key_env"],
-                credential_resolver=hermes_credential,
-            )
+            return make_embedder_from_config(self._cfg)
         except Exception as e:
             logger.warning("Nachos embeddings unavailable (%s); using lexical recall.", e)
             return None
+
+    def _calibrate_duplicates(self) -> bool:
+        """Calibrate unless disabled or the user pinned a threshold other than the default."""
+        pinned = float(self._cfg["duplicate_threshold"]) != float(DEFAULTS["duplicate_threshold"])
+        return self._cfg["duplicate_calibration"] == "auto" and not pinned
 
     def _apply_config(self, values: dict[str, Any]) -> None:
         apply_config(self._cfg, values)
@@ -249,6 +248,16 @@ class NachosMemoryProvider(MemoryProvider):
     # -- manifest ----------------------------------------------------------
 
     def system_prompt_block(self) -> str:
+        abstain_mode = self._cfg.get("abstention", "hint")
+        recall_hint = (
+            " (if it returns `no_confident_match: true`, treat listed entries as "
+            "low-confidence candidates and retry with 1-3 rephrasings in `queries`, "
+            "including one phrased like the stored fact)"
+            if abstain_mode == "on"
+            else " (`no_confident_match: true` flags low-confidence hits to verify)"
+            if abstain_mode == "hint"
+            else ""
+        )
         contract = (
             "# Active durable-memory backend\n"
             "Nachos is the active, authoritative durable-memory provider for this "
@@ -256,7 +265,13 @@ class NachosMemoryProvider(MemoryProvider):
             "`memory.memory_enabled: false`). Facts about the user (preferences, "
             "style, personal details) go to the built-in user profile: the `memory` "
             'tool with `target: "user"`. All other durable knowledge goes to '
-            "`nachos_memory_put`; recall with `nachos_memory_recall`, remove with "
+            "`nachos_memory_put` (pass `supersedes` with the old key when replacing "
+            "an outdated fact; if the response lists a `possible_updates` entry "
+            "that is an older version of the same fact, call `nachos_memory_put` "
+            "again with `supersedes=[key]`; `suggested_links` names entries sharing "
+            "entities with the new one, add `[[key]]` to the body to link them); "
+            "recall with `nachos_memory_recall`"
+            f"{recall_hint}, remove with "
             "`nachos_memory_remove`. Never use the built-in `memory` tool with "
             '`target: "memory"`: it is disabled and not shown to you. Persona and '
             "identity belong to SOUL.md and are not memory. Earlier conversation that was "
@@ -280,12 +295,19 @@ class NachosMemoryProvider(MemoryProvider):
             )
         try:
             entries = self._service.manifest_entries()
+            hidden = self._service.superseded_count()
+            link_counts = self._service.link_counts()
         except Exception as e:
             logger.debug("Nachos manifest list failed: %s", e)
             return contract
-        if not entries:
+        if not entries and not hidden:
             return contract
-        manifest = render_toc(entries, char_budget=self._cfg["manifest_char_budget"])
+        manifest = render_toc(
+            entries,
+            char_budget=self._cfg["manifest_char_budget"],
+            superseded_count=hidden,
+            link_counts=link_counts,
+        )
         return f"{contract}\n\n{manifest}" if manifest else contract
 
     # -- checkpoints -------------------------------------------------------
@@ -363,10 +385,15 @@ class NachosMemoryProvider(MemoryProvider):
                 service,
                 llm or self._capture_llm,
                 capture_adapter.read_user_profile(self._hermes_home),
+                self._locate_quote,
             )
         except Exception as e:
             logger.debug("Nachos capture processing failed: %s", e)
             return dict(capture_adapter.IDLE_STATS)
+
+    def _locate_quote(self, session_id: str, quote: str) -> tuple[str, int] | None:
+        root = self._checkpoint_root
+        return locate_quote(root, session_id, quote) if root else None
 
     def _start_capture_thread(self) -> None:
         """Start the daemon worker if jobs are pending and none is running."""
@@ -419,7 +446,7 @@ class NachosMemoryProvider(MemoryProvider):
         parent_session_id: str = "",
         reset: bool = False,
         rewound: bool = False,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         """Track the logical conversation across session id rotations."""
         if not new_session_id:
@@ -441,7 +468,7 @@ class NachosMemoryProvider(MemoryProvider):
     # -- delegation --------------------------------------------------------
 
     def on_delegation(
-        self, task: str, result: str, *, child_session_id: str = "", **kwargs
+        self, task: str, result: str, *, child_session_id: str = "", **kwargs: Any
     ) -> None:
         """Record a finished subagent task/result so history search can find it. Never raises."""
         try:
@@ -469,96 +496,46 @@ class NachosMemoryProvider(MemoryProvider):
 
     def get_tool_schemas(self) -> list[dict[str, Any]]:
         shared = bool(self._service and SHARED in self._service.scopes)
-        schemas = [RECALL_SCHEMA, PUT_SCHEMA, REMOVE_SCHEMA]
+        recall_schema = (
+            RECALL_SCHEMA if self._cfg.get("abstention", "hint") == "on" else RECALL_SCHEMA_HINT
+        )
+        schemas = [recall_schema, PUT_SCHEMA, REMOVE_SCHEMA]
         if shared:
             schemas = [with_scope(s) for s in schemas]
-        return [*schemas, HISTORY_SCHEMA]
+        return [*schemas, HISTORY_SCHEMA, RECONCILE_SCHEMA]
 
-    def handle_tool_call(self, tool_name: str, args: dict[str, Any], **kwargs) -> str:
+    def handle_tool_call(self, tool_name: str, args: dict[str, Any], **kwargs: Any) -> str:
         if tool_name == "nachos_history_search":
-            return self._history(args)
+            return memory_tools.history(
+                args,
+                checkpoint_root=self._checkpoint_root,
+                cfg=self._cfg,
+                session_ids=list(self._lineage) or ([self._session_id] if self._session_id else []),
+                redact=self._redact,
+            )
         service = self._service
         if not service:
             return json.dumps({"error": "Nachos memory store not available"})
-        handler = {
-            "nachos_memory_recall": self._recall,
-            "nachos_memory_put": self._put,
-            "nachos_memory_remove": self._remove,
-        }.get(tool_name)
+        if tool_name == "nachos_memory_reconcile" and self._hermes_home is not None:
+            return handle_reconcile(
+                service, self._hermes_home, self._cfg["store"], self._primary, args
+            )
+        handlers: dict[str, Callable[[], str]] = {
+            "nachos_memory_recall": lambda: memory_tools.recall(
+                service, args, abstain_mode=self._cfg.get("abstention", "hint")
+            ),
+            "nachos_memory_put": lambda: memory_tools.put(service, args, primary=self._primary),
+            "nachos_memory_remove": lambda: memory_tools.remove(
+                service, args, primary=self._primary
+            ),
+        }
+        handler = handlers.get(tool_name)
         if handler is None:
             return json.dumps({"error": f"Unknown tool: {tool_name}"})
         try:
-            return handler(service, args)
+            return handler()
         except KeyError as e:
             return json.dumps({"error": f"Unknown or disabled scope {e}"})
-
-    def _recall(self, service: MemoryService, args: dict[str, Any]) -> str:
-        key = (args.get("key") or "").strip()
-        query = (args.get("query") or "").strip()
-        scope = (args.get("scope") or "").strip() or None
-        if key:
-            found = service.get(key, scope)
-            if found is None:
-                return json.dumps({"error": f"No entry with key {key!r}"})
-            return json.dumps({"key": key, "scope": found[0], "body": found[1]})
-        if query:
-            limit = clamp_int(args.get("limit"), 10, 1, 25)
-            results = service.search(query, limit=limit, scope=scope)
-            return json.dumps({"query": query, "count": len(results), "results": results})
-        return json.dumps({"error": "Provide 'key' or 'query'."})
-
-    def _put(self, service: MemoryService, args: dict[str, Any]) -> str:
-        if not self._primary:
-            return json.dumps({"skipped": "non-primary agent context"})
-        try:
-            result = service.put(
-                title=args.get("title") or "",
-                body=args.get("body") or "",
-                summary=args.get("summary") or "",
-                category=args.get("category") or "general",
-                scope=(args.get("scope") or PROFILE).strip(),
-            )
-        except Exception as e:
-            result = {"error": str(e)}
-        return json.dumps(result)
-
-    def _remove(self, service: MemoryService, args: dict[str, Any]) -> str:
-        if not self._primary:
-            return json.dumps({"skipped": "non-primary agent context"})
-        key = (args.get("key") or "").strip()
-        if not key and args.get("title"):
-            key = slugify(args["title"].strip())
-        if not key:
-            return json.dumps({"error": "Provide 'key' or 'title'."})
-        scope = (args.get("scope") or "").strip() or None
-        try:
-            removed_from = service.remove(key, scope)
-        except KeyError:
-            raise
-        except Exception as e:
-            return json.dumps({"error": str(e)})
-        if removed_from is None:
-            return json.dumps({"error": f"No entry with key {key!r}"})
-        return json.dumps({"removed": key, "scope": removed_from})
-
-    def _history(self, args: dict[str, Any]) -> str:
-        query = (args.get("query") or "").strip()
-        if not query:
-            return json.dumps({"error": "query is required"})
-        if not self._checkpoint_root:
-            return json.dumps({"error": "Nachos checkpoint store is not initialized"})
-        sessions = None
-        if (args.get("scope") or "conversation") != "all":
-            sessions = list(self._lineage) or ([self._session_id] if self._session_id else [])
-        results = search_history(
-            self._checkpoint_root,
-            query,
-            limit=clamp_int(args.get("limit"), 8, 1, 25),
-            session_ids=sessions,
-        )
-        for row in results:
-            row["excerpt"] = self._redact(row["excerpt"])
-        return json.dumps({"query": query, "count": len(results), "results": results})
 
     def shutdown(self) -> None:
         with contextlib.suppress(Exception):
@@ -566,7 +543,7 @@ class NachosMemoryProvider(MemoryProvider):
                 self._service.close()
 
 
-def register(ctx) -> None:
+def register(ctx: Any) -> None:
     provider = NachosMemoryProvider()
     ctx.register_memory_provider(provider)
     commands.register_commands(ctx, provider)

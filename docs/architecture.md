@@ -7,42 +7,58 @@ Hermes ── nachos_hermes (provider, tools, slash commands, capture worker)
               │
           nachos_core.MemoryService ── scope: profile [+ shared]
               ├─ Store (sqlite | flatfile)       source of truth
-              ├─ Index memory.index.db           vectors, usage, change log, inbox
+              ├─ Index memory.index.db           vectors, usage, change log, inbox, provenance
               └─ $HERMES_HOME/nachos/snapshots/  checkpoints; inbox/ capture jobs
 ```
 
 ## Where Nachos sits
 
-Hermes has three memory layers; Nachos replaces only the last.
-
-| Layer | Lives in | Holds | Managed by |
-| --- | --- | --- | --- |
-| Soul | `SOUL.md` | Persona, tone | You |
-| User | `USER.md` (built-in `memory` tool, `target: "user"`) | Facts about the user | Hermes (stays on) |
-| Memory | Nachos store (was `MEMORY.md`) | Projects, environment, decisions, procedures, history | Nachos |
-
-The injected contract tells the agent to route user facts to the user profile and everything else durable to `nachos_memory_put`. Session capture reads `USER.md` through an injected parameter (nachos_core stays Hermes-free) and tells the extraction model not to propose user or persona facts.
+Hermes has three memory layers (soul, user, memory); Nachos replaces only the memory layer. See the table in the [README](../README.md). The injected contract tells the agent to route user facts to the user profile and everything else durable to `nachos_memory_put`. Session capture reads `USER.md` through an injected parameter (`nachos_core` stays Hermes-free) and tells the extraction model not to propose user or persona facts.
 
 ## Components
 
 - **MemoryService** is the API the adapter calls. It owns one or two **scopes**: `profile` (always) and an optional `shared` scope used by every Hermes profile on the machine.
-- **Store**: SQLite (default) or a flat file. It is the source of truth and holds title, summary, category and body only.
-- **Sidecar index**: `memory.index.db` next to the store, holding embedding vectors and usage counts. It is derived data; deleting it loses nothing but counts.
-- **Manifest**: a `title - summary` table of contents in the system prompt. It never omits an entry; over budget, summaries shorten and titles stay.
+- **Store**: SQLite (default) or a flat file. It is the source of truth and holds title, summary, category, body, plus per-entry `created_at`, `updated_at`, and optional `superseded_by` metadata (stored as columns in SQLite and as a backward-compatible `<!-- created: ... | updated: ... | superseded_by: ... -->` comment line under `## Title` in flatfile markdown; legacy entries backfill timestamps from the change log, `usage.first_seen`, or migration time and are marked approximate in status).
+- **Sidecar index**: `memory.index.db` next to the store, holding embedding vectors, calibration, usage counts, `[[key]]` link edges (`links`), provenance, the change log and the capture inbox. Entries never live only here: deleting it loses the change log, usage counts and provenance, not entries.
+- **Manifest**: a `title - summary` table of contents in the system prompt. It never omits an active entry; over budget, summaries shorten and titles stay. Superseded entries are hidden and summarised as a count footer (`N superseded entries hidden.`).
 
 Why a sidecar: flat-file memory stays human-editable, and a hand edit can never leave the store inconsistent.
 
 ## Recall
 
-The agent calls `nachos_memory_recall` when the manifest shows something relevant. Recall is hybrid: a lexical pass weights query terms by IDF (title and summary count more than body), and with an embedder a vector pass ranks by cosine similarity. The lists are fused with reciprocal-rank fusion, which needs no score calibration between a term weight and a similarity. Without an embedder, or after an embedder error, recall is lexical only. The `nachos` backend's fast `serve` worker needs nachos-embeddings 0.6.0 or newer (`npm i -g @nacho-labs/nachos-embeddings`); older versions fall back automatically to one process per call.
+The agent calls `nachos_memory_recall` when the manifest shows something relevant. Recall is hybrid: a lexical pass weights query terms by IDF (title and summary count more than body), and with an embedder a vector pass ranks by cosine similarity. The lists are fused with reciprocal-rank fusion, which needs no score calibration between a term weight and a similarity. Without an embedder, or after an embedder error, recall is lexical only. The `nachos` backend keeps one `nachos-embeddings serve` worker alive and needs version 0.7.0 or newer for input types, reranking and overrides; see [models](models.md).
 
-Vectors are stored with their model id and content hash and reconciled lazily on the next query, so hand edits and model changes need no rebuild step or background process.
+Each entry gets a head vector (`chunk_no = 0`: title, summary and body head). Entries whose body exceeds one chunk (`CHUNK_SIZE = 1200` chars) also get overlapping body-chunk vectors (`~1200`-char chunks with `~200`-char overlap snapped to paragraph/line/sentence boundaries, each prefixed with the title), capped at `MAX_CHUNKS_PER_ENTRY = 16` vectors per entry (1 head + up to 15 body chunks). Vectors are stored under `(key, chunk_no, model)` with their content hash and reconciled lazily on the next query (existing `vectors` tables migrate in place automatically: pre-chunking ones rebuild on sync, `(key, chunk_no)`-keyed ones are copied into the per-model key), so hand edits and model changes need no rebuild command. A model change is handled by `nachos_core/reindex.py`: old vectors are kept until the new model covers every entry, a bulk re-embed (more than 24 stale entries) advances in time-bounded steps (`reindex_budget_ms`) while recall is lexical-only, and on completion the old vectors are dropped and the new model's calibration is recomputed. `python -m nachos_hermes.models status|reindex` reports and finishes it (details: [models](models.md#switching-models)). Recall scores each entry by the maximum cosine similarity across its vectors, while duplicate detection (`find_similar`, `duplicate_pairs`) compares head vectors (`chunk_no = 0`) only.
+
+Ranking, in order, on every recall:
+
+1. **Chunk penalty.** An entry's vector score is its head score, or its best body-chunk score minus `0.05` when that is higher (`MemoryService.chunk_penalty`). Chunks are narrower evidence than the head, and without the penalty a chunk matching on one sentence outranks a head that matches the whole topic (paraphrase queries lost hit@1 to this).
+2. **Calibrated floor (optional, `similarity_floor: auto`).** Cosine ranges differ between models (random pairs sit near 0.1 for MiniLM and 0.5 for bge), so no absolute cutoff is portable. The index measures each model's own spread, a fixed-seed sample of random head-vector pairs, caches it in the sidecar `calibration` table keyed by `model_id`, and resamples when the head count drifts by more than 20%. Semantic hits below the 75th percentile of that spread are dropped. Below 30 entries the spread comes from offline per-model priors (`nachos_core/calibration.py`); from 30 to 100 entries it blends linearly into the store's own sample.
+3. **Fusion.** Lexical hits (only those covering at least 40% of the IDF-weighted query terms when embeddings are on) and semantic hits are merged with reciprocal-rank fusion.
+4. **Rerank (optional, `rerank: nachos`).** The top `rerank_candidates` fused results go to a cross-encoder served by the same `nachos-embeddings serve` worker (`{"op": "rerank"}`; the ready line announces `"rerank": {"model": ...}`). Each candidate is read as title, summary and its best-matching body chunk (the head's body start for lexical-only hits). The final order blends the rerank rank with the fused rank. If the CLI predates reranking, the worker is started without the flags and the setting is ignored with one logged warning; a rerank error disables it for the session and keeps the fused order.
+
+`duplicate_threshold` is calibrated the same way: with `duplicate_calibration: auto` the effective threshold is `max(duplicate_threshold, model p99 of random-pair head similarity)`, so a model whose unrelated entries already score 0.7 does not flag half of the store. A threshold other than the 0.65 default is never overridden.
+
+## Confidence and multi-query
+
+`MemoryService.search_with_confidence` turns cheap signals into a 0-1 `confidence_score` (`nachos_core/calibration.py`). With embeddings, the score is the larger of a semantic path (the top hit's similarity as a z-score against the model's random-pair spread) and a lexical path (query-term coverage, plus a small bonus for margin and for lexical/semantic agreement), so a strong keyword match is not dragged down by a moderate similarity. Lexical-only mode uses coverage and margin. The query is `confident` when the score reaches 0.48 (with embeddings) or 0.38 (lexical only); otherwise `no_confident_match` is set and the candidates stay listed. `abstention` controls whether this is only reported (`hint`), also paired with retry guidance for the agent (`on`), or omitted (`off`). With `rerank: borderline`, a query scoring within 0.12 of its threshold is re-scored by the cross-encoder over the top 5 candidates.
+
+`queries` (up to 4 rephrasings) are embedded in one batched call, searched separately and fused with reciprocal-rank fusion, keeping each hit's best similarity and confidence.
+
+## Links and entities
+
+`nachos_core/links.py` (pure functions), `graph.py` (`ScopeGraph`, one per scope) and `linked.py` (recall helpers) add a small graph on top of the store without an LLM.
+
+- **Links.** `[[key]]`/`[[Title]]` references are parsed from bodies (code skipped) into the sidecar `links(src, dst, pos)` table. `ScopeGraph.ensure()` reconciles it with the store fingerprint (hand edits, other writers); `MemoryService` writes update one entry's rows after put/remove/revert. Superseded targets resolve to their active successor at read time (cycle-safe), so a supersede needs no edge rewrite; missing targets are broken links.
+- **Related.** `attach_related` walks the ranked results in order and gives each up to `related_per_hit` neighbours (links in body order, then backlinks by key), skipping entries already in the result list and entries claimed by a better-ranked hit.
+- **Entities.** `EntityIndex` maps entity to entries incrementally (one entry's text is re-scanned per put). Kinds are strong (identifier, machine host, path, `@handle`, project name) or weak (CamelCase, multiword, mid-sentence capitalised word, bare domain). Suggestions need one strong shared entity or two independent weak ones, or a similarity outlier: `lexical_similarities` (IDF-weighted word-overlap cosine against every other active entry, from the cached lexical index) and, with embeddings, the head-vector cosine, each turned into a z-score over the entry's own similarities; the scores are added, and an entry is linked on its own at z >= 4.75 (words) or a summed 6.5 (words plus embedding), or at 3.5 / 4.5 together with any shared non-generic entity. Thresholds are on z-scores, not cosines, because cosine ranges differ between models; fewer than 20 active entries gives no suggestions from this path (a z-score over a handful of points means nothing). At most 3 suggestions, each with a `reason`. Cost: one pass over every active entry's word set and head vector per put. An entity present in more than `max(4, 6%)` of the active entries is generic and ignored. A project name is a title's first word when it is capitalised, unique to that title, at least five letters and never seen in lowercase in any entry (so `Staging` is not a name, `Nimbus` is), is not a common capitalised noun (`Incident`, `Meeting`, `Service`, ... are in a stoplist), and, for an entry that owns the name, is used by at least one other entry; entries whose titles share such a leading name are suggested as peers.
+- **Cost.** Link reads are indexed SQL; the entity index is cached by store fingerprint and updated per write. A store with no links pays one fingerprint check per recall.
 
 There is no speculative prefetch: it adds a fixed per-turn cost for a weak title-only signal, and a better summary fixes a missed recall.
 
 ## Writes
 
-Every write (title, summary, body) goes through an injected `redact` function; the adapter supplies Hermes' own redactor, so patterns stay in step. A quality gate (`nachos_core/quality.py`) rejects empty, placeholder or too-short summaries and bodies. Duplicate flagging compares embedding similarity against `duplicate_threshold`, or token overlap without an embedder, and returns `possible_duplicates`. It flags instead of blocking because the agent knows whether two similar entries are the same fact.
+Every write (title, summary, body) goes through an injected `redact` function; the adapter supplies Hermes' own redactor, so patterns stay in step. A quality gate (`nachos_core/quality.py`) rejects empty, placeholder or too-short summaries and bodies. Duplicate flagging compares embedding similarity against `duplicate_threshold`, or token overlap without an embedder, and returns `possible_duplicates`. When a similar entry looks like an outdated version of the new one (similarity-ranked candidates, with reasons such as changed numbers, versions, dates or paths, or an explicit update cue), the response lists it under `possible_updates` (alias `suggested_supersedes`) without applying anything automatically. Passing `supersedes` (key or list of keys) marks the old entries with `superseded_by` without deleting them; superseded entries leave the manifest and default search (still fetchable by exact key with a pointer note, or via `include_superseded=true`), and near-equal fused recall scores break ties in favour of the newer `updated_at`. Both the new write and each `supersede` transition are logged in `changes` so `revert` undoes them. It flags instead of blocking because the agent knows whether two similar entries are the same fact.
 
 Nothing is copied from other providers automatically, so memory never changes without the user asking; `tools/import_memories.py` imports explicitly through this same `put()` path (session id `import:<source>`).
 
@@ -50,7 +66,7 @@ Each mutation first records the entry's previous title, summary, category and bo
 
 ## Checkpoints and history
 
-Before each Hermes compression pass the provider saves the full transcript as a gzipped checkpoint (`on_pre_compress`). `nachos_history_search` finds messages containing all query words, de-duplicates across overlapping checkpoints and returns excerpts. Checkpoints stay out of memory entries so generated text never reaches the manifest. They are raw transcripts, so they can contain anything said in the conversation.
+Before each Hermes compression pass the provider saves the full transcript as a gzipped checkpoint (`on_pre_compress`). `nachos_history_search` scans the newest `max_snapshots` (200) checkpoints once, de-duplicates identical messages across overlapping checkpoints, scores each message with BM25 whose IDF comes from the scanned messages themselves (stdlib only; stopwords dropped, suffixes stripped, substring matching so identifiers and error codes still match), keeps hits covering at least 40% of the query's IDF weight so one common word cannot satisfy a multi-word query, and breaks ties by checkpoint recency. Each hit is expanded to a window of neighbouring turns (closed over tool call/result pairs, merged when windows of one checkpoint overlap, capped by total characters) and carries a stable ref `<session>@<checkpoint>#<index>`; only the surviving top hits' checkpoints are re-read for context, so latency stays bounded by one pass over `max_snapshots`. Checkpoints stay out of memory entries so generated text never reaches the manifest. They are raw transcripts, so they can contain anything said in the conversation.
 
 The provider tracks a session lineage (`on_session_switch`): compression, `/resume` and `/branch` append the new session id, `/new` and `/reset` start over. `nachos_history_search` defaults to `scope="conversation"` (the lineage), the gap Hermes' own `session_search` leaves, since that tool covers past sessions but not the current one; `scope="all"` also searches older Nachos checkpoints. `on_pre_compress` returns a note naming the checkpoint id and pointing the summary at `nachos_history_search`. `on_delegation` saves each subagent task and result as a `delegation` snapshot, so they are searchable too. `backup_paths` reports the shared-store directory when it lies outside the Hermes home.
 
@@ -58,8 +74,36 @@ Retention is by age (`checkpoint_max_age_days`), not count: the oldest checkpoin
 
 ## Session capture
 
-`on_session_end` only writes a gzipped, trimmed transcript (user/assistant text, newest ~60k chars) to `inbox/pending/`, because the process is often exiting and no LLM call belongs there. `nachos_core/capture.py` later claims each job by atomic rename into `inbox/processing/` (so two Hermes processes never take the same job), asks an injected `llm(messages) -> str` for at most 5 candidates, and parses defensively: a malformed answer gets one retry, then the job is dropped. Candidates pass the quality gate and redaction, are annotated with duplicates (or marked as updates when the key exists) and land in the profile index's `inbox` table. Candidates wait for review rather than auto-writing because an extractor LLM will invent or over-generalise facts, and only a person should decide what becomes permanent. Approval goes through `MemoryService.put`, so the change log records it; decided rows are trimmed after 30 days. The Hermes adapter supplies the callable via `call_llm(task="nachos_capture")`.
+`on_session_end` only writes a gzipped, trimmed transcript (user/assistant text, newest ~60k chars) to `inbox/pending/`, because the process is often exiting and no LLM call belongs there. `nachos_core/capture.py` later claims each job by atomic rename into `inbox/processing/` (so two Hermes processes never take the same job), asks an injected `llm(messages) -> str` for at most 5 candidates, and parses defensively: a malformed answer gets one retry, then the job is dropped. Candidates pass the quality gate and redaction, are annotated with duplicates (or marked as updates when the key exists) and land in the profile index's `inbox` table. Candidates wait for review rather than auto-writing because an extractor LLM will invent or over-generalise facts, and only a person should decide what becomes permanent. Each candidate also carries a verbatim `quote` the extractor must copy from the transcript. `ground_quote` verifies it (whitespace/case/curly-quote normalised, `...` elisions allowed, fragments in order within one message, at least 12 verbatim characters); a failing candidate is flagged `grounded = 0` rather than dropped, because the review inbox is human and models often paraphrase a quote of a real fact, while `approve all` refuses ungrounded items so they only enter memory by explicit id. Grounded quotes are located in the session's checkpoints (`locate_quote`) to attach a history ref when one exists. Approval goes through `MemoryService.put`, so the change log records it and the `provenance` row (session, `captured_at`, quote, ref; a manual save writes session and time only) is written beside it; the table lives in the index so it works for both store backends, is created or added in place for older files, is dropped with its entry, and is cleared on revert because the earlier content's origin is unknown; decided rows are trimmed after 30 days. The Hermes adapter supplies the callable via `call_llm(task="nachos_capture")`.
 
 ## Usage telemetry
 
 The index counts first-seen time, exact-key recalls and query hits per entry. Nothing reads it on the hot path; it feeds `/nachos-memory-audit` and `tools/memory_audit.py` to surface never-recalled entries and near-duplicates. Deleting is left to a person or the agent.
+
+To keep recall latency low, `memory.index.db` opens in SQLite WAL mode with `PRAGMA synchronous=NORMAL` for usage telemetry (avoiding a per-query `fsync`) and checkpoints on normal close. On an abrupt crash or power loss before a WAL checkpoint, the last few seconds of usage counts may be lost, while `changes` undo-log writes stay committed immediately under `PRAGMA synchronous=FULL`.
+
+## Maintenance and reconciliation
+
+`nachos-maintain` ([memory maintenance](memory-maintenance.md)) reads the store and index read-only and reports findings. `nachos-reconcile` and `nachos_memory_reconcile` ([reconciliation](reconciliation.md)) turn the same signals into proposals that are applied only after approval, through `MemoryService`, so redaction, the quality gate, the change log and links stay consistent. Measured behaviour of each ranking stage: [benchmark](benchmark.md).
+
+## Module map
+
+`nachos_core` is harness-agnostic (stdlib only; it never imports `nachos_hermes` or Hermes). `nachos_hermes` is the Hermes adapter.
+
+| Module | Responsibility |
+| --- | --- |
+| `memory.py` | `MemoryService`: the public API (scopes, manifest, writes, revert, supersedes, hygiene, status). Delegates reads to `recall.py` and embedding state to `reindex.SemanticRuntime`. |
+| `recall.py` | `Recall`: hybrid search, confidence/abstention, similar-entry and duplicate-pair lookups; live tunables arrive as a `RecallTuning`. |
+| `scope.py` | `Scope` (store + index) and `ScopeCaches`, the fingerprint-keyed lexical and metadata caches. |
+| `writes.py` | `Draft`/`prepare_draft` (redaction, summary defaulting, key derivation, quality gate) and change-log snapshots. |
+| `reindex.py` | `SemanticRuntime` (embedder, failure state, per-scope re-embed progress) and the bounded re-embed after a model change. |
+| `index.py`, `index_schema.py`, `index_records.py`, `sqlite_util.py` | Sidecar SQLite index: vectors, links and calibration (`index.py`); DDL and migrations; usage, change log, inbox and provenance tables; read-only SQLite opener. |
+| `ranking.py`, `validity.py`, `calibration.py` | Fusion, rerank and confidence scoring; supersedes/recency/hygiene queries; per-model similarity priors. |
+| `links.py`, `entities.py`, `graph.py`, `linked.py` | `[[links]]` and link suggestions; entity extraction and index; per-scope link graph; recall-side link helpers. |
+| `lexical.py`, `chunking.py`, `quality.py`, `toc.py` | Lexical index, body chunking, write quality gate, manifest rendering. |
+| `embeddings.py` | Embedder backends (nachos-embeddings CLI, OpenAI-compatible, sentence-transformers). |
+| `capture.py`, `history.py`, `snapshots.py`, `provenance.py` | Session capture and inbox, checkpoint history, checkpoint store, provenance views. |
+| `store/` | `MemoryStore` interface with the SQLite and flat-file drivers. |
+| `reconciliation/` | Reconciliation: inventory, findings, packets, validation, approval-gated apply, offline viewer. |
+| `nachos_hermes/memory_provider.py` | Hermes `MemoryProvider`: lifecycle, config, manifest block, dispatch. Tool handlers live in `memory_tools.py`, slash-command text in `commands.py`, config parsing in `config.py`. |
+| `bench/` | `recall.py` (recall benchmark and CLI), `link_eval.py` (suggestion and link evals), `multi_query.py`, `history.py`, `diagnose.py`. |

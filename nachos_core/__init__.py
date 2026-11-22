@@ -11,6 +11,8 @@ from .snapshots import (
 from .store import Entry, MDStore, MemoryStore, SqliteStore, get_store
 from .toc import build_toc, render_toc
 
+__version__ = "0.7.0"
+
 __all__ = [
     "Entry",
     "MDStore",
@@ -21,6 +23,7 @@ __all__ = [
     "SnapshotMeta",
     "SnapshotStore",
     "SqliteStore",
+    "__version__",
     # manifest
     "build_toc",
     "get_store",

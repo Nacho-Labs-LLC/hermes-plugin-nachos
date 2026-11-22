@@ -1,0 +1,380 @@
+[
+ {
+  "title": "Postgres primary host",
+  "summary": "Primary Postgres server hostname and version",
+  "category": "environment",
+  "body": "The primary database is db-prim-01.internal running Postgres 15.4 on port 5432. Applications connect directly; there is no pooler in front of it yet."
+ },
+ {
+  "title": "Postgres read replica",
+  "summary": "Read replica used for reporting queries",
+  "category": "environment",
+  "body": "Reporting reads go to db-repl-01.internal. Alert fires when replication lag exceeds 30s. Never run migrations against it."
+ },
+ {
+  "title": "Redis session cache",
+  "summary": "Where web sessions are stored",
+  "category": "environment",
+  "body": "Sessions live in redis-sess.internal:6379 with maxmemory 2gb and allkeys-lru eviction. Nothing else should write to this instance."
+ },
+ {
+  "title": "CI runner pool",
+  "summary": "Self-hosted GitHub Actions runners",
+  "category": "environment",
+  "body": "Self-hosted GitHub Actions runners: 8 machines labelled lf-linux, hosted on Hetzner. Jobs that need Docker must use the lf-linux label."
+ },
+ {
+  "title": "Incident on-call rotation",
+  "summary": "Who is on call and when handoff happens",
+  "category": "process",
+  "body": "Weekly handoff on Monday at 10:00 CET. Primary on-call is Ines, secondary is Tomas. Swaps are agreed in #oncall and noted in PagerDuty."
+ },
+ {
+  "title": "Release freeze policy",
+  "summary": "When deploys are not allowed",
+  "category": "process",
+  "body": "No production deploys on Friday after 14:00 local time. Hotfixes need approval from the engineering manager."
+ },
+ {
+  "title": "Frontend build tooling",
+  "summary": "Bundler, package manager and node version for web",
+  "category": "projects",
+  "body": "The web frontend builds with Vite 5, uses pnpm 9 as package manager and node 20. Lockfile is pnpm-lock.yaml and must be committed."
+ },
+ {
+  "title": "Design tokens repo",
+  "summary": "Where design tokens live and how they ship",
+  "category": "projects",
+  "body": "Tokens live at github.com/lumenfold/tokens and are published to npm as @lumenfold/tokens. Designers edit them in Figma and a bot opens the PR."
+ },
+ {
+  "title": "Terraform state backend",
+  "summary": "Remote state location and locking",
+  "category": "environment",
+  "body": "Terraform state is in the S3 bucket lf-tfstate with a DynamoDB lock table named lf-tflock. Never run apply from a laptop."
+ },
+ {
+  "title": "VPN access",
+  "summary": "How to reach internal services remotely",
+  "category": "process",
+  "body": "Remote access uses WireGuard. The config is generated at vpn.lumenfold.io after you file an IT ticket. Keys rotate every 90 days."
+ },
+ {
+  "title": "Staging environment URL",
+  "summary": "Address of the staging web app",
+  "category": "environment",
+  "body": "Staging is at https://stg.lumenfold.io behind basic auth. The shared credentials are in the 1Password vault Eng."
+ },
+ {
+  "title": "Production environment URL",
+  "summary": "Address of the production web app",
+  "category": "environment",
+  "body": "Production is at https://app.lumenfold.io. Status page is status.lumenfold.io."
+ },
+ {
+  "title": "Customer support SLA",
+  "summary": "First-response targets by plan",
+  "category": "process",
+  "body": "First response within 4 business hours for Pro customers and within 1 business day for Free customers. Breaches are reported weekly."
+ },
+ {
+  "title": "Data retention policy",
+  "summary": "How long each data class is kept",
+  "category": "process",
+  "body": "Application logs are kept 30 days, analytics events 13 months and database backups 35 days. Deletion jobs run nightly."
+ },
+ {
+  "title": "Feature flag service",
+  "summary": "Where feature flags are managed",
+  "category": "environment",
+  "body": "Unleash is self-hosted at flags.lumenfold.io. Each environment has its own SDK key; frontends use the proxy endpoint."
+ },
+ {
+  "title": "Error tracking",
+  "summary": "Where application errors are reported",
+  "category": "environment",
+  "body": "Errors go to Sentry, organisation lumenfold, with projects web, api and mobile. Alerts post to #alerts-eng."
+ },
+ {
+  "title": "Metrics dashboards",
+  "summary": "Grafana location and main folder",
+  "category": "environment",
+  "body": "Grafana is at grafana.lumenfold.io. The important dashboards are in the folder Core SLOs: latency, error rate, saturation."
+ },
+ {
+  "title": "Email provider",
+  "summary": "Transactional email sender",
+  "category": "environment",
+  "body": "Transactional email is sent through Postmark. The from address is no-reply@lumenfold.io; marketing mail uses a different tool."
+ },
+ {
+  "title": "Payment processor",
+  "summary": "Card payments integration details",
+  "category": "projects",
+  "body": "Payments run on Stripe. The webhook endpoint is /hooks/stripe and the pinned API version is 2023-10-16. Refunds are issued from the dashboard."
+ },
+ {
+  "title": "Auth service",
+  "summary": "Identity provider setup",
+  "category": "projects",
+  "body": "Keycloak 23 at auth.lumenfold.io, realm lumenfold. Access token lifetime is 15 minutes, refresh tokens last 8 hours."
+ },
+ {
+  "title": "Coding style: Python",
+  "summary": "Formatting and typing rules for Python",
+  "category": "conventions",
+  "body": "Use ruff with line length 100 and format with black. Type hints are required in new modules. Docstrings only where behaviour is not obvious."
+ },
+ {
+  "title": "Coding style: TypeScript",
+  "summary": "Rules for TypeScript code",
+  "category": "conventions",
+  "body": "Strict mode everywhere, no default exports, and the shared eslint config package must be used. Avoid enums; prefer union types."
+ },
+ {
+  "title": "Git branching convention",
+  "summary": "Branch and merge workflow",
+  "category": "conventions",
+  "body": "Trunk-based development. Branches are short-lived and named feat/<ticket>-slug. Pull requests are squash merged into main."
+ },
+ {
+  "title": "Sprint cadence",
+  "summary": "Sprint length and ceremonies",
+  "category": "process",
+  "body": "Two-week sprints starting on Wednesday. Planning is Wednesday 11:00 and the retro happens on the last Tuesday of the sprint."
+ },
+ {
+  "title": "Team standup",
+  "summary": "Daily standup time and place",
+  "category": "process",
+  "body": "Daily standup at 09:45 on Google Meet. Written notes go to #eng-standup for people who cannot attend."
+ },
+ {
+  "title": "Office wifi",
+  "summary": "Wifi network at the HQ",
+  "category": "environment",
+  "body": "The HQ network is lumenfold-hq. The guest network password changes every month and IT posts it in #office on the first working day."
+ },
+ {
+  "title": "Laptop policy",
+  "summary": "Approved laptops and security settings",
+  "category": "process",
+  "body": "New hires get a MacBook Pro 14. FileVault must be on and devices are enrolled in Kandji MDM. Lost devices are reported to IT within an hour."
+ },
+ {
+  "title": "Berlin office address",
+  "summary": "Where the Berlin office is",
+  "category": "environment",
+  "body": "Rosenthaler Str. 40, 10178 Berlin, 3rd floor. The door code is given at reception on the first day."
+ },
+ {
+  "title": "Cloud cost budget",
+  "summary": "Monthly AWS spend limit",
+  "category": "process",
+  "body": "The monthly AWS budget is 18k USD. A budget alert goes to #finops at 80 percent of the limit."
+ },
+ {
+  "title": "Docker base images",
+  "summary": "Approved base images and rebuild policy",
+  "category": "conventions",
+  "body": "Use python:3.12-slim and node:20-alpine as bases. Images are pinned by digest and rebuilt weekly by the base-images workflow."
+ },
+ {
+  "title": "Kubernetes cluster prod",
+  "summary": "Production cluster facts",
+  "category": "environment",
+  "body": "EKS cluster lf-prod in eu-central-1 on Kubernetes 1.29 with 12 m6i.large nodes. Ingress is nginx; cert-manager issues certificates."
+ },
+ {
+  "title": "Kubernetes cluster staging",
+  "summary": "Staging cluster facts",
+  "category": "environment",
+  "body": "EKS cluster lf-stg in eu-central-1 on Kubernetes 1.29 with 3 nodes. It is scaled to zero on weekends."
+ },
+ {
+  "title": "Load test results",
+  "summary": "Latest checkout load test outcome",
+  "category": "history",
+  "body": "The checkout API sustained 1200 rps with a p95 of 180 ms in the March run, using 6 pods and a warm cache."
+ },
+ {
+  "title": "Q3 roadmap",
+  "summary": "Priorities for the third quarter",
+  "category": "projects",
+  "body": "Q3 priorities in order: self-serve onboarding, SSO for Business customers, then usage-based billing. Mobile redesign is out of scope."
+ },
+ {
+  "title": "Pricing tiers",
+  "summary": "Plans and monthly prices",
+  "category": "projects",
+  "body": "Plans are Free, Pro at 29 EUR per month and Business at 99 EUR per month. Annual billing gives two months free."
+ },
+ {
+  "title": "Alertmanager routing",
+  "summary": "Where alerts are routed",
+  "category": "environment",
+  "body": "Critical alerts page the PagerDuty service LF-Core. Warning alerts go to a Slack channel only and never page anyone."
+ },
+ {
+  "title": "PagerDuty escalation",
+  "summary": "Escalation timing",
+  "category": "process",
+  "body": "If the primary does not acknowledge within 15 minutes the page goes to the secondary, then to the engineering manager after 30 minutes."
+ },
+ {
+  "title": "Backup restore drill",
+  "summary": "Disaster recovery exercise results",
+  "category": "history",
+  "body": "The restore drill runs quarterly. The last drill was in August and a full restore took 42 minutes."
+ },
+ {
+  "title": "Notification service",
+  "summary": "Push notification service design",
+  "category": "projects",
+  "body": "A Go service that sends push through FCM and APNs. Work is queued in the SQS queue notif-q and failed sends are retried 5 times."
+ },
+ {
+  "title": "Image resizer lambda",
+  "summary": "Image resize service",
+  "category": "projects",
+  "body": "An AWS Lambda on arm64 using sharp. Max input is 25 MB and output is webp. Triggered by S3 uploads in the media bucket."
+ },
+ {
+  "title": "Search relevance tuning",
+  "summary": "Ranking settings for product search",
+  "category": "projects",
+  "body": "Product search uses BM25 with a title boost of 3 and a recency decay over 30 days. Tuning changes need an offline eval run first."
+ },
+ {
+  "title": "Onboarding checklist",
+  "summary": "New hire first days",
+  "category": "process",
+  "body": "Day one: accounts and laptop. Day two: repository access and local setup. Day three: ship a first small pull request."
+ },
+ {
+  "title": "Editor preferences",
+  "summary": "How the user likes their editor set up",
+  "category": "user",
+  "body": "Prefers 2-space indentation, vim keybindings and a dark theme. Dislikes auto-format on save for Markdown files."
+ },
+ {
+  "title": "Kundendienst Zeiten",
+  "summary": "Erreichbarkeit des Supports",
+  "category": "process",
+  "body": "Der Kundendienst ist Montag bis Freitag von 8 bis 17 Uhr erreichbar. Ausserhalb dieser Zeiten laeuft nur der Notfallkontakt."
+ },
+ {
+  "title": "Rechnungsstellung Konfiguration",
+  "summary": "Einstellungen fuer Rechnungen",
+  "category": "projects",
+  "body": "Rechnungen werden als RE-2024-xxxxx nummeriert, die Mehrwertsteuer betraegt 19 Prozent und das Zahlungsziel ist 30 Tage."
+ },
+ {
+  "title": "Deploiement Lyon",
+  "summary": "Serveur et horaire de deploiement a Lyon",
+  "category": "environment",
+  "body": "Le serveur lyon-app-02 heberge l'application pour le bureau de Lyon. Le deploiement a lieu le jeudi a 18h."
+ },
+ {
+  "title": "Analytics warehouse",
+  "summary": "Where product analytics data lives",
+  "category": "environment",
+  "body": "Analytics runs on BigQuery, project lf-analytics, dataset prod_events. Access is granted through the analysts Google group."
+ },
+ {
+  "title": "dbt project",
+  "summary": "Transformation repo and schedule",
+  "category": "projects",
+  "body": "Models live in lumenfold/dbt-models and run hourly through the Airflow DAG dbt_hourly. Failures post to #data-alerts."
+ },
+ {
+  "title": "Airflow deployment",
+  "summary": "Airflow setup",
+  "category": "environment",
+  "body": "Airflow 2.8 on Kubernetes with DAGs synced from git. The web UI is at airflow.lumenfold.io behind SSO."
+ },
+ {
+  "title": "Security contact",
+  "summary": "How to report a vulnerability",
+  "category": "process",
+  "body": "Report issues to security@lumenfold.io. The disclosure policy is published at /.well-known/security.txt. PGP key id is 0xA1B2C3D4."
+ },
+ {
+  "title": "API client SDKs",
+  "summary": "Published client libraries",
+  "category": "projects",
+  "body": "Python SDK lumenfold-py version 1.4.2 on PyPI and the JavaScript SDK @lumenfold/sdk version 2.0.1 on npm."
+ },
+ {
+  "title": "Nimbus billing API",
+  "summary": "Billing API endpoint and auth",
+  "category": "projects",
+  "body": "Base URL is https://billing.lumenfold.io/v2. Authentication uses a bearer token read from Vault path secret/billing. Default request timeout is 10 seconds."
+ },
+ {
+  "title": "Nimbus billing API rate limits",
+  "summary": "Rate limiting of the billing API",
+  "category": "projects",
+  "body": "The billing API allows 600 requests per minute per key. Exceeding it returns 429 with a Retry-After header."
+ },
+ {
+  "title": "Sundial cron scheduler",
+  "summary": "Nightly job schedule",
+  "category": "environment",
+  "body": "Sundial runs the nightly database backup at 02:30 UTC and ships the dump to the lf-backups bucket."
+ },
+ {
+  "title": "Marrow search cluster",
+  "summary": "Elasticsearch cluster description",
+  "category": "environment",
+  "body": "Elasticsearch 8.11 with three nodes named mrw-es-1 to mrw-es-3. Index lifecycle policy rolls over weekly."
+ },
+ {
+  "title": "Orchard mobile app",
+  "summary": "Mobile app stack",
+  "category": "projects",
+  "body": "Orchard is built with React Native 0.74. The iOS bundle id is com.lumenfold.orchard and releases go through TestFlight first."
+ },
+ {
+  "title": "Gantry deploy tool",
+  "summary": "Internal rollout CLI",
+  "category": "projects",
+  "body": "Gantry is the internal CLI used to roll out services. Config sits in gantry.toml and the default region is eu-west-1."
+ },
+ {
+  "title": "Quillbot Slack assistant",
+  "summary": "Internal Slack bot",
+  "category": "projects",
+  "body": "A Python bot on Fly.io exposing the /quill slash command. Marit owns it; it summarises threads and looks up runbooks."
+ },
+ {
+  "title": "Tidewater ingest pipeline",
+  "summary": "Event ingestion service",
+  "category": "projects",
+  "body": "A Rust Kafka consumer that reads topic ingest.raw and writes parquet files to the S3 bucket tw-lake-prod. Owned by data-platform."
+ },
+ {
+  "title": "Repository housekeeping",
+  "summary": "Stale branch and dependency chores",
+  "category": "process",
+  "body": "Dependabot runs on Monday. Branches older than 60 days are deleted by a scheduled workflow, except those labelled keep."
+ },
+ {
+  "title": "Accessibility standard",
+  "summary": "Accessibility target for the web app",
+  "category": "conventions",
+  "body": "The web app targets WCAG 2.1 AA. New components need keyboard navigation tests and an axe check in CI."
+ },
+ {
+  "title": "Localization workflow",
+  "summary": "How translations are managed",
+  "category": "process",
+  "body": "Strings are extracted with i18next-parser and translated in Lokalise. English and German ship first; French follows one sprint later."
+ },
+ {
+  "title": "API documentation",
+  "summary": "Where API docs are published",
+  "category": "projects",
+  "body": "OpenAPI specs are generated from the code and rendered with Redoc at docs.lumenfold.io/api. The spec is checked in CI for breaking changes."
+ }
+]

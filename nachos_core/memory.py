@@ -32,59 +32,67 @@ from __future__ import annotations
 
 import contextlib
 import logging
-import time
 from collections import OrderedDict
-from collections.abc import Iterator
-from dataclasses import dataclass
+from collections.abc import Sequence
 from typing import Any, Callable
 
+from .chunking import (
+    CHUNK_OVERLAP,
+    CHUNK_SIZE,
+    MAX_CHUNKS_PER_ENTRY,
+    chunk_body,
+    embed_chunks,
+    embed_text,
+)
 from .embeddings import Embedder
-from .index import MemoryIndex, dot
-from .lexical import idf_weights, jaccard, query_terms, score_document, tokens
-from .quality import low_signal_reason
-from .store.base import Entry, MemoryStore
-from .store.md_store import slugify
+from .graph import ScopeGraph
+from .lexical import LexicalIndex
+from .linked import (
+    link_fields,
+    link_hints,
+    link_report,
+    merged_link_counts,
+)
+from .links import resolve_successor
+from .provenance import MANUAL, MAX_QUOTE_CHARS, source_view
+from .ranking import (
+    DEFAULT_BLEND,
+    update_threshold_for,
+)
+from .recall import CHUNK_PENALTY, Recall, RecallTuning
+from .reindex import DEFAULT_BUDGET_S, SemanticRuntime
+from .scope import PROFILE, SHARED, Scope, ScopeCaches, select_scopes
+from .store.base import Entry, EntryMeta
+from .validity import (
+    backfill_scope_timestamps,
+    entry_payload,
+    format_put_result,
+    history_rows,
+    normalize_supersedes,
+    possible_updates_for,
+    restore_from_change,
+    scope_status,
+    superseded_entries,
+    suspicious_supersedes,
+    unused_entries,
+)
+from .writes import Draft, prepare_draft, same_content, snapshot
+
+__all__ = [
+    "CHUNK_OVERLAP",
+    "CHUNK_SIZE",
+    "MAX_CHUNKS_PER_ENTRY",
+    "PROFILE",
+    "SHARED",
+    "Draft",
+    "MemoryService",
+    "Scope",
+    "chunk_body",
+    "embed_chunks",
+    "embed_text",
+]
 
 logger = logging.getLogger(__name__)
-
-PROFILE = "profile"
-SHARED = "shared"
-
-_RRF_K = 60
-_MIN_VECTOR_SCORE = 0.30
-_LEXICAL_DUP_THRESHOLD = 0.6
-
-
-def embed_text(title: str, summary: str, body: str) -> str:
-    """What gets embedded for an entry: label, summary, then the body head."""
-    return f"{title}\n{summary}\n{body}"
-
-
-@dataclass
-class Draft:
-    """A normalised, gated prospective write (see ``MemoryService.prepare``)."""
-
-    title: str
-    summary: str
-    category: str
-    body: str
-    key: str
-    scope: str
-    error: str | None = None
-
-
-@dataclass
-class Scope:
-    name: str
-    store: MemoryStore
-    index: MemoryIndex
-
-    def close(self) -> None:
-        for part in (self.store, self.index):
-            close = getattr(part, "close", None)
-            if callable(close):
-                with contextlib.suppress(Exception):
-                    close()
 
 
 class MemoryService:
@@ -95,22 +103,66 @@ class MemoryService:
         embedder: Embedder | None = None,
         duplicate_threshold: float = 0.65,
         redact: Callable[[str], str] | None = None,
+        chunk_penalty: float = CHUNK_PENALTY,
+        similarity_floor: float | str | None = None,
+        calibrate_duplicates: bool = False,
+        calibrate_updates: bool = True,
+        rerank_candidates: int = 25,
+        rerank_mode: str = DEFAULT_BLEND,
+        reindex_budget_s: float = DEFAULT_BUDGET_S,
+        rerank_borderline: bool = False,
+        related_per_hit: int = 3,
+        related_max: int = 8,
     ):
         if PROFILE not in scopes:
             raise ValueError("a 'profile' scope is required")
         self.scopes = scopes
-        self.embedder = embedder
         self.duplicate_threshold = duplicate_threshold
         self.redact = redact or (lambda text: text)
-        self.embedder_error: str | None = None
+        #: Subtracted from body-chunk similarities so a chunk must beat the head by this much.
+        self.chunk_penalty = chunk_penalty
+        #: None = no floor; a float = absolute cosine; a profile key such as "p95" = that
+        #: percentile of the model's own random-pair cosine (see MemoryIndex.similarity_profile).
+        self.similarity_floor = similarity_floor
+        #: Raise ``duplicate_threshold`` to the model's random-pair ``DUP_PERCENTILE`` when higher.
+        #: Off by default so an explicitly configured threshold is used exactly as given.
+        self.calibrate_duplicates = calibrate_duplicates
+        #: Raise the semantic ``possible_updates`` floor to the model's calibrated percentile.
+        self.calibrate_updates = calibrate_updates
+        #: Fused results sent to the cross-encoder, when the embedder offers one.
+        self.rerank_candidates = rerank_candidates
+        self.rerank_mode = rerank_mode
+        #: When True (rerank="borderline"), skip full reranking and only verify borderline queries.
+        self.rerank_borderline = rerank_borderline
+        #: ``related`` entries attached to each result (0 disables), and over the whole result list.
+        self.related_per_hit = related_per_hit
+        self.related_max = related_max
+        self._caches = ScopeCaches()
+        self._semantic = SemanticRuntime(embedder, reindex_budget_s)
+        self._graphs = {
+            name: ScopeGraph(
+                name,
+                s.store,
+                s.index,
+                lambda s=s: self._caches.meta(s),  # type: ignore[misc]
+                lambda s=s: self._caches.titles(s),  # type: ignore[misc]
+                lambda s=s: self._caches.lexical(s),  # type: ignore[misc]
+            )
+            for name, s in scopes.items()
+        }
+        self._recall = Recall(self.scopes, self._graphs, self._caches, self._semantic, self._tuning)
         self.session_id: str = ""
         self._seen_keys: dict[str, frozenset] = {}
+        for scope in self.scopes.values():
+            backfill_scope_timestamps(scope.store, scope.index)
 
     @property
     def profile(self) -> Scope:
         return self.scopes[PROFILE]
 
     def close(self) -> None:
+        self._caches.clear()
+        self._graphs.clear()
         for scope in self.scopes.values():
             scope.close()
         if self.embedder is not None:
@@ -120,56 +172,59 @@ class MemoryService:
     # -- embeddings --------------------------------------------------------
 
     @property
+    def embedder(self) -> Embedder | None:
+        return self._semantic.embedder
+
+    @embedder.setter
+    def embedder(self, embedder: Embedder | None) -> None:
+        self._semantic.embedder = embedder
+
+    @property
+    def embedder_error(self) -> str | None:
+        return self._semantic.error
+
+    @property
     def semantic_enabled(self) -> bool:
-        return self.embedder is not None and self.embedder_error is None
+        return self._semantic.enabled
 
-    def _active_embedder(self) -> Embedder | None:
-        """The embedder when semantic search is usable right now, else None."""
-        return self.embedder if self.semantic_enabled else None
+    @property
+    def reindexing(self) -> bool:
+        """True while a model switch is still re-embedding entries (recall is lexical meanwhile)."""
+        return self._semantic.reindexing
 
-    def _embed(self, texts: list[str]) -> list[list[float]] | None:
-        embedder = self._active_embedder()
-        if embedder is None or not texts:
-            return None
-        try:
-            return embedder.embed(texts)
-        except Exception as e:  # any backend failure degrades to lexical
-            self.embedder_error = f"{type(e).__name__}: {e}"[:300]
-            logger.warning(
-                "Nachos embeddings disabled for this session (%s); recall falls "
-                "back to lexical matching.",
-                self.embedder_error,
-            )
-            return None
+    @property
+    def reindex_budget_s(self) -> float:
+        return self._semantic.reindex_budget_s
 
-    def sync_index(self, scope: Scope) -> int:
-        """Embed entries that are new, edited, or embedded with another model."""
-        entries = scope.store.list()
-        scope.index.retain(key for key, *_ in entries)
-        embedder = self._active_embedder()
-        if embedder is None:
-            return 0
-        bodies = scope.store.bodies()
-        docs = {
-            key: embed_text(title, summary, bodies.get(key, ""))
-            for key, title, summary, _category in entries
-        }
-        stale = scope.index.stale_keys(docs, embedder.model_id)
-        if not stale:
-            return 0
-        vectors = self._embed([docs[k] for k in stale])
-        if vectors is None:
-            return 0
-        for key, vec in zip(stale, vectors):
-            scope.index.upsert(key, docs[key], embedder.model_id, vec)
-        return len(stale)
+    def sync_index(self, scope: Scope, *, budget_s: float | None = None) -> int:
+        """Embed entries that are new, edited, or embedded with another model (see ``reindex``)."""
+        return self._semantic.sync(scope, budget_s=budget_s)
+
+    def reindex(self, *, scope: str | None = None) -> dict[str, Any]:
+        """Re-embed every stale entry now (no time budget); returns the model status.
+
+        For the explicit ``python -m nachos_hermes.models reindex`` command; normal recall
+        advances the work in bounded steps instead.
+        """
+        for s in select_scopes(self.scopes, scope):
+            self._semantic.sync(s, budget_s=float("inf"))
+        return self.model_status()
+
+    def model_status(self) -> dict[str, Any]:
+        """Configured embedding model, per-scope coverage, kept old models and calibration."""
+        return self._semantic.status(self.scopes)
 
     # -- manifest ----------------------------------------------------------
 
-    def manifest_entries(self) -> list[Entry]:
+    def manifest_entries(self, *, include_superseded: bool = False) -> list[Entry]:
         rows: list[Entry] = []
         for scope in self.scopes.values():
             entries = scope.store.list()
+            metas = self._caches.meta(scope)
+            if not include_superseded:
+                entries = [
+                    e for e in entries if not (metas.get(e[0]) and metas[e[0]].superseded_by)
+                ]
             keys = frozenset(e[0] for e in entries)
             if self._seen_keys.get(scope.name) != keys:
                 scope.index.record_seen(keys)
@@ -180,116 +235,92 @@ class MemoryService:
                 rows.extend((k, t, s, f"{scope.name}/{c}") for k, t, s, c in entries)
         return rows
 
+    def superseded_count(self) -> int:
+        """Total number of superseded entries hidden from the default manifest."""
+        return sum(
+            1
+            for scope in self.scopes.values()
+            for meta in self._caches.meta(scope).values()
+            if meta.superseded_by
+        )
+
     # -- recall ------------------------------------------------------------
 
-    def _scopes_for(self, scope: str | None) -> list[Scope]:
-        if scope:
-            if scope not in self.scopes:
-                raise KeyError(scope)
-            return [self.scopes[scope]]
-        return list(self.scopes.values())
+    @property
+    def _lexical_cache(self) -> dict[str, tuple[object, LexicalIndex]]:
+        return self._caches.lexical_cache
+
+    def _scopes(self, scope: str | None) -> list[Scope]:
+        return select_scopes(self.scopes, scope)
 
     def get(self, key: str, scope: str | None = None) -> tuple[str, str] | None:
         """Return (scope_name, body) for an exact key, profile scope first."""
-        for s in self._scopes_for(scope):
+        for s in self._scopes(scope):
             body = s.store.get(key)
             if body is not None:
                 s.index.record_recall(key)
                 return s.name, body
         return None
 
-    def _lexical(self, scope: Scope, query: str) -> list[str]:
-        raw, terms = query_terms(query)
-        candidates = set(scope.store.search(query))
-        for term in sorted(raw | set(terms)):
-            candidates.update(scope.store.search(term))
-        if not candidates:
-            return []
-        labels = {k: (t, s) for k, t, s, _c in scope.store.list()}
-        bodies = scope.store.bodies()
-        label_words = {k: tokens(f"{t} {sm}") for k, (t, sm) in labels.items()}
-        doc_words = {k: label_words[k] | tokens(bodies.get(k) or "") for k in labels}
-        weights = idf_weights(terms, doc_words)
-        needle = query.lower()
-        scored = []
-        for key in candidates & doc_words.keys():
-            haystack = f"{labels[key][0]}\n{labels[key][1]}\n{bodies.get(key) or ''}".lower()
-            score = score_document(weights, doc_words[key], label_words[key], needle in haystack)
-            if score > 0:
-                scored.append((score, key))
-        scored.sort(key=lambda item: (-item[0], item[1]))
-        return [key for _score, key in scored]
-
-    def search(
-        self, query: str, *, limit: int = 10, scope: str | None = None
-    ) -> list[dict[str, Any]]:
-        query = (query or "").strip()
-        if not query:
-            return []
-        targets = self._scopes_for(scope)
-        qvec = self._query_vector(targets, query)
-        fused: dict[tuple[str, str], dict[str, Any]] = {}
-        for s in targets:
-            for key, rank, how, similarity in self._ranked_hits(s, query, qvec, limit):
-                row = fused.setdefault((s.name, key), {"score": 0.0, "match": []})
-                row["score"] += 1.0 / (_RRF_K + rank)
-                row["match"].append(how)
-                if similarity is not None:
-                    row["similarity"] = round(similarity, 3)
-
-        # Ties go to entries matched by both lexical and semantic.
-        ranked = sorted(
-            fused.items(), key=lambda item: (-item[1]["score"], -len(item[1]["match"]))
-        )[:limit]
-        return self._hydrate(ranked)
-
-    def _query_vector(self, targets: list[Scope], query: str) -> list[float] | None:
-        """Embedding of ``query`` (after syncing the target indexes), or None if lexical-only."""
-        if not self.semantic_enabled:
-            return None
-        for s in targets:
-            self.sync_index(s)
-        vectors = self._embed([query])
-        return vectors[0] if vectors else None
-
-    def _ranked_hits(
-        self, s: Scope, query: str, qvec: list[float] | None, limit: int
-    ) -> Iterator[tuple[str, int, str, float | None]]:
-        """(key, rank, how, similarity) hits for one scope, lexical then semantic."""
-        # With an embedder, lexical sits half a step below semantic so a
-        # lexical-only rank-0 hit does not tie a semantic-only rank-0 hit.
-        offset = 1 if qvec is not None else 0
-        for rank, key in enumerate(self._lexical(s, query)[: limit * 3]):
-            yield key, rank + offset, "lexical", None
-        embedder = self._active_embedder()
-        if qvec is not None and embedder is not None:
-            hits = s.index.search(qvec, embedder.model_id, top_k=limit * 3)
-            for rank, (key, sim) in enumerate(h for h in hits if h[1] >= _MIN_VECTOR_SCORE):
-                yield key, rank, "semantic", sim
-
-    def _hydrate(
-        self, ranked: list[tuple[tuple[str, str], dict[str, Any]]]
-    ) -> list[dict[str, Any]]:
-        """Turn fused ranking rows into result dicts, recording a hit per returned entry."""
-        results = []
-        for (scope_name, key), row in ranked:
-            s = self.scopes[scope_name]
+    def get_entry(self, key: str, scope: str | None = None) -> dict[str, Any] | None:
+        """Return full dict for an exact key, including a superseded_by pointer when superseded."""
+        for s in self._scopes(scope):
             body = s.store.get(key)
             if body is None:
                 continue
-            s.index.record_hits([key])
-            result = {
-                "key": key,
-                "scope": scope_name,
-                "body": body,
-                "match": "+".join(row["match"]),
-            }
-            if "similarity" in row:
-                result["similarity"] = row["similarity"]
-            results.append(result)
-        return results
+            s.index.record_recall(key)
+            payload = entry_payload(key, s.name, body, s.store.get_meta(key) or EntryMeta())
+            source = source_view(s.provenance([key]).get(key), evidence=True)
+            if source:
+                payload["source"] = source
+            payload.update(link_fields(self._graphs[s.name], key))
+            return payload
+        return None
 
-    # -- duplicates --------------------------------------------------------
+    def _lexical(self, scope: Scope, query: str, min_coverage: float = 0.0) -> list[str]:
+        return self._caches.lexical(scope).search(query, min_coverage=min_coverage)
+
+    def search(
+        self,
+        query: str = "",
+        *,
+        queries: Sequence[str] | None = None,
+        limit: int = 10,
+        scope: str | None = None,
+        include_superseded: bool = False,
+        entity: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Hybrid recall; ``entity`` keeps only entries that mention it (query may be empty)."""
+        return self._recall.search(
+            query,
+            queries=queries,
+            limit=limit,
+            scope=scope,
+            include_superseded=include_superseded,
+            entity=entity,
+        )
+
+    def search_with_confidence(
+        self,
+        query: str = "",
+        *,
+        queries: Sequence[str] | None = None,
+        limit: int = 10,
+        scope: str | None = None,
+        include_superseded: bool = False,
+        entity: str | None = None,
+        mode: str = "on",
+    ) -> dict[str, Any]:
+        """Search and attach a per-query confidence assessment + explicit abstention signal."""
+        return self._recall.search_with_confidence(
+            query,
+            queries=queries,
+            limit=limit,
+            scope=scope,
+            include_superseded=include_superseded,
+            entity=entity,
+            mode=mode,
+        )
 
     def find_similar(
         self,
@@ -301,103 +332,48 @@ class MemoryService:
         limit: int = 3,
     ) -> list[dict[str, Any]]:
         """Existing entries that look like the same memory, most similar first."""
-        found: dict[tuple[str, str], dict[str, Any]] = {}
-        label = f"{title} {summary}"
-        for s in self.scopes.values():
-            titles = {k: (t, sm) for k, t, sm, _c in s.store.list()}
-            for key, (t, sm) in titles.items():
-                if (s.name, key) == exclude:
-                    continue
-                score = jaccard(label, f"{t} {sm}")
-                if score >= _LEXICAL_DUP_THRESHOLD:
-                    found[(s.name, key)] = {
-                        "key": key,
-                        "scope": s.name,
-                        "title": t,
-                        "similarity": round(score, 3),
-                        "match": "lexical",
-                    }
-            embedder = self._active_embedder()
-            if vector is not None and embedder is not None:
-                for key, sim in s.index.search(vector, embedder.model_id, top_k=limit + 1):
-                    if (s.name, key) == exclude or sim < self.duplicate_threshold:
-                        continue
-                    prev = found.get((s.name, key))
-                    if prev is None or sim > prev["similarity"]:
-                        found[(s.name, key)] = {
-                            "key": key,
-                            "scope": s.name,
-                            "title": titles.get(key, (key, ""))[0],
-                            "similarity": round(sim, 3),
-                            "match": "semantic",
-                        }
-        return sorted(found.values(), key=lambda d: -d["similarity"])[:limit]
+        return self._recall.find_similar(
+            title, summary, exclude=exclude, vector=vector, limit=limit
+        )
 
-    def duplicate_pairs(self) -> list[dict[str, Any]]:
-        """Every pair of entries above the duplicate threshold (audit use)."""
-        pairs: list[dict[str, Any]] = []
-        for s in self.scopes.values():
-            self.sync_index(s)
-        flat: list[tuple[str, str, str, str]] = []
-        for s in self.scopes.values():
-            flat.extend((s.name, k, t, sm) for k, t, sm, _c in s.store.list())
-        vecs: dict[tuple[str, str], list[float]] = {}
-        embedder = self._active_embedder()
-        if embedder is not None:
-            for s in self.scopes.values():
-                for key, vec in s.index.vectors(embedder.model_id).items():
-                    vecs[(s.name, key)] = vec
-        for i, (sa, ka, ta, sma) in enumerate(flat):
-            for sb, kb, tb, smb in flat[i + 1 :]:
-                va, vb = vecs.get((sa, ka)), vecs.get((sb, kb))
-                if va is not None and vb is not None:
-                    sim, how = dot(va, vb), "semantic"
-                    if sim < self.duplicate_threshold:
-                        continue
-                else:
-                    sim, how = jaccard(f"{ta} {sma}", f"{tb} {smb}"), "lexical"
-                    if sim < _LEXICAL_DUP_THRESHOLD:
-                        continue
-                pairs.append(
-                    {
-                        "a": {"scope": sa, "key": ka, "title": ta},
-                        "b": {"scope": sb, "key": kb, "title": tb},
-                        "similarity": round(sim, 3),
-                        "match": how,
-                    }
-                )
-        pairs.sort(key=lambda p: -p["similarity"])
-        return pairs
+    def duplicate_pairs(self, *, sync: bool = True) -> list[dict[str, Any]]:
+        """Every pair above the duplicate threshold; ``sync=False`` never updates the index.
+
+        Offline lexical audits use ``sync=False`` with no embedder. Normal callers
+        retain lazy reconciliation of vectors and removed-entry telemetry.
+        """
+        return self._recall.duplicate_pairs(sync=sync)
+
+    def _duplicate_threshold_for(self, scope: Scope, model_id: str) -> float:
+        return self._recall.duplicate_threshold_for_scope(scope, model_id)
+
+    def _tuning(self) -> RecallTuning:
+        return RecallTuning(
+            duplicate_threshold=self.duplicate_threshold,
+            calibrate_duplicates=self.calibrate_duplicates,
+            chunk_penalty=self.chunk_penalty,
+            similarity_floor=self.similarity_floor,
+            rerank_candidates=self.rerank_candidates,
+            rerank_mode=self.rerank_mode,
+            rerank_borderline=self.rerank_borderline,
+            related_per_hit=self.related_per_hit,
+            related_max=self.related_max,
+        )
 
     # -- change log --------------------------------------------------------
 
-    @staticmethod
-    def _snapshot(scope: Scope, key: str) -> tuple[str, str, str, str] | None:
-        """(title, summary, category, body) for ``key``, or None if absent."""
-        body = scope.store.get(key)
-        if body is None:
-            return None
-        for k, title, summary, category in scope.store.list():
-            if k == key:
-                return title, summary, category, body
-        return None
-
-    @staticmethod
-    def _same(prev: tuple[str, str, str, str] | None, new: tuple[str, str, str, str]) -> bool:
-        if prev is None:
-            return False
-        if prev == new:
-            return True
-        # The flat-file store stores the summary as the first line of the body.
-        title, summary, category, body = new
-        led = summary + ("\n\n" + body if body else "")
-        return prev == (title, summary, category, led)
-
     def _log(
-        self, scope: Scope, key: str, action: str, prev: tuple[str, str, str, str] | None
+        self,
+        scope: Scope,
+        key: str,
+        action: str,
+        prev: tuple[str, str, str, str] | None,
+        prev_superseded_by: str | None = None,
     ) -> None:
         try:
-            scope.index.record_change(key, action, self.session_id, prev)
+            scope.index.record_change(
+                key, action, self.session_id, prev, prev_superseded_by=prev_superseded_by
+            )
         except Exception as e:  # the log must never block a write
             logger.warning("Nachos change log write failed: %s", e)
 
@@ -405,25 +381,7 @@ class MemoryService:
         self, key: str | None = None, scope: str | None = None, limit: int = 20
     ) -> list[dict[str, Any]]:
         """Recent memory changes across scopes, newest first."""
-        rows: list[dict[str, Any]] = []
-        for s in self._scopes_for(scope):
-            for c in s.index.changes(key=key, limit=limit):
-                preview = " ".join(str(c["prev_summary"] or "").split())
-                if len(preview) > 60:
-                    preview = preview[:59] + "…"
-                rows.append(
-                    {
-                        "scope": s.name,
-                        "id": c["id"],
-                        "ts": c["ts"],
-                        "key": c["key"],
-                        "action": c["action"],
-                        "session_id": c["session_id"],
-                        "preview": preview,
-                    }
-                )
-        rows.sort(key=lambda r: r["ts"], reverse=True)
-        return rows[:limit]
+        return history_rows({s.name: s.index for s in self._scopes(scope)}, key=key, limit=limit)
 
     def revert(self, change_id: int, scope: str = PROFILE) -> dict[str, Any]:
         """Restore the state an entry had before change ``change_id``."""
@@ -437,25 +395,14 @@ class MemoryService:
         if change is None:
             return {"error": f"No change {change_id!r} in scope {scope!r}."}
         key = change["key"]
-        current = self._snapshot(target, key)
-        if change["prev_title"] is None:
-            # Entry did not exist before the change: undoing means removing it.
-            if current is not None:
-                target.store.remove(key)
-            target.index.delete_vector(key)
-            restored = "removed"
-        else:
-            target.store.put(
-                key,
-                title=change["prev_title"],
-                summary=change["prev_summary"] or "",
-                category=change["prev_category"] or "general",
-                body=change["prev_body"] or "",
-            )
-            target.index.delete_vector(key)
-            target.index.record_seen([key])
-            restored = "restored"
-        self._log(target, key, "revert", current)
+        current = snapshot(target.store, key)
+        cur_meta = target.store.get_meta(key)
+        cur_superseded = cur_meta.superseded_by if cur_meta is not None else None
+        fp_before = target.store.fingerprint()
+        restored = restore_from_change(target.store, target.index, change, current is not None)
+        self._caches.invalidate(target.name)
+        self._graphs[target.name].after_write(fp_before, key)
+        self._log(target, key, "revert", current, prev_superseded_by=cur_superseded)
         return {
             "reverted": change["id"],
             "key": key,
@@ -475,50 +422,34 @@ class MemoryService:
         summary: str = "",
         category: str = "general",
         scope: str = PROFILE,
+        key: str | None = None,
     ) -> Draft:
-        """Normalise and gate a prospective write without touching any store.
+        """Normalise and gate a prospective write without touching any store (see ``writes``)."""
+        return prepare_draft(
+            self.scopes,
+            self.redact,
+            title=title,
+            body=body,
+            summary=summary,
+            category=category,
+            scope=scope,
+            key=key,
+        )
 
-        The single source of truth for what ``put`` accepts: redaction, summary
-        defaulting, key derivation and the low-signal gates all live here, so
-        dry-runs (``tools/import_memories.py``) cannot drift from real writes.
-        ``Draft.error`` is set when the write would be rejected.
-        """
-        if scope not in self.scopes:
-            return Draft(
-                "",
-                "",
-                "",
-                "",
-                "",
-                scope,
-                f"Unknown or disabled scope {scope!r}; available: {list(self.scopes)}",
-            )
-        title = self.redact((title or "").strip())
-        body = self.redact((body or "").strip())
-        summary = self.redact((summary or "").strip())
-        if not summary:
-            summary = next((ln.strip() for ln in body.splitlines() if ln.strip()), "")
-        category = (category or "general").strip() or "general"
-        draft = Draft(title, summary, category, body, slugify(title) if title else "", scope)
-        draft.error = self._gate(draft)
-        return draft
-
-    @staticmethod
-    def _gate(draft: Draft) -> str | None:
-        if not draft.title:
-            return "title is required"
-        reason = low_signal_reason(draft.body)
-        if reason:
-            return f"body is low-signal ({reason}); write real content, not a placeholder."
-        reason = low_signal_reason(draft.summary)
-        if reason:
-            return (
-                f"summary is low-signal ({reason}); this is the ONLY "
-                "text the agent sees in the manifest for this entry "
-                "without recalling it — write a real, keyword-dense "
-                "summary."
-            )
-        return None
+    def _apply_supersedes(self, scope: Scope, new_key: str, targets: list[str]) -> list[str]:
+        applied: list[str] = []
+        for old_key in targets:
+            prev = snapshot(scope.store, old_key)
+            if prev is None:
+                continue
+            old_meta = scope.store.get_meta(old_key)
+            old_sup = old_meta.superseded_by if old_meta is not None else None
+            self._log(scope, old_key, "supersede", prev, prev_superseded_by=old_sup)
+            if scope.store.set_superseded_by(old_key, new_key):
+                applied.append(old_key)
+        if applied:
+            self._caches.invalidate(scope.name)
+        return applied
 
     def put(
         self,
@@ -528,9 +459,13 @@ class MemoryService:
         summary: str = "",
         category: str = "general",
         scope: str = PROFILE,
+        supersedes: str | list[str] | None = None,
+        provenance: dict[str, Any] | None = None,
+        key: str | None = None,
     ) -> dict[str, Any]:
+        """Write an entry; ``key`` updates an existing key and ``provenance`` overrides manual."""
         draft = self.prepare(
-            title=title, body=body, summary=summary, category=category, scope=scope
+            title=title, body=body, summary=summary, category=category, scope=scope, key=key
         )
         if draft.error:
             return {"error": draft.error}
@@ -544,96 +479,206 @@ class MemoryService:
         target = self.scopes[scope]
         is_update = target.store.get(key) is not None
 
-        text = embed_text(title, summary, body)
-        vector = None
+        chunks = embed_chunks(title, summary, body)
+        chunk_vectors: list[list[float]] | None = None
+        vector: list[float] | None = None
         if self.semantic_enabled:
             for s in self.scopes.values():
                 self.sync_index(s)
-            vectors = self._embed([text])
-            vector = vectors[0] if vectors else None
+            if not self.reindexing:  # mid-switch writes are picked up by the re-embed
+                chunk_vectors = self._semantic.embed(chunks)
+                vector = chunk_vectors[0] if chunk_vectors else None
         similar = self.find_similar(title, summary, exclude=(scope, key), vector=vector)
 
-        prev = self._snapshot(target, key)
-        if not self._same(prev, (title, summary, category, body)):
-            self._log(target, key, "update" if prev else "create", prev)
-        target.store.put(key, title=title, summary=summary, category=category, body=body)
-        embedder = self._active_embedder()
-        if vector is not None and embedder is not None:
-            target.index.upsert(key, text, embedder.model_id, vector)
-        target.index.record_seen([key])
-
-        result: dict[str, Any] = {
-            "stored": key,
-            "title": title,
-            "category": category,
-            "scope": scope,
-            "updated": is_update,
-        }
-        if similar:
-            result["possible_duplicates"] = similar
-            result["note"] = (
-                "Similar entries already exist. If this is the same memory, merge "
-                "the content into one entry (put with the existing title) and "
-                "remove the other."
+        prev = snapshot(target.store, key)
+        prev_meta = target.store.get_meta(key)
+        unchanged = prev is not None and same_content(prev, (title, summary, category, body))
+        if not unchanged:
+            self._log(
+                target,
+                key,
+                "update" if prev else "create",
+                prev,
+                prev_superseded_by=prev_meta.superseded_by if prev_meta else None,
             )
-        return result
+        fp_before = target.store.fingerprint()
+        target.store.put(key, title=title, summary=summary, category=category, body=body)
+        self._caches.refresh_after_put(
+            target, fp_before, key, title=title, summary=summary, category=category
+        )
+        self._graphs[scope].after_write(fp_before, key, summary)
+        embedder = self._semantic.active()
+        if chunk_vectors is not None and embedder is not None:
+            target.index.upsert_chunks(key, chunks, embedder.model_id, chunk_vectors)
+        target.index.record_seen([key])
+        self._record_provenance(target, key, provenance, unchanged=unchanged)
+
+        applied = self._apply_supersedes(target, key, normalize_supersedes(supersedes, key))
+        base_update_threshold = max(0.45, self.duplicate_threshold - 0.17)
+        sem_threshold = (
+            update_threshold_for(
+                target.index,
+                embedder.model_id,
+                base_update_threshold,
+                calibrate=self.calibrate_updates,
+                similarity_floor=self.similarity_floor,
+            )
+            if vector is not None and embedder is not None
+            else base_update_threshold
+        )
+        possible = possible_updates_for(
+            target.store,
+            self._caches.lexical(target),
+            target.index,
+            self._caches.meta(target),
+            model_id=embedder.model_id if (vector is not None and embedder is not None) else None,
+            vector=vector,
+            self_key=key,
+            title=title,
+            summary=summary,
+            body=body,
+            already_superseded=set(applied),
+            semantic_threshold=sem_threshold,
+        )
+
+        return format_put_result(
+            key=key,
+            title=title,
+            category=category,
+            scope=scope,
+            is_update=is_update,
+            applied_supersedes=applied,
+            similar=similar,
+            possible_updates=possible,
+            **link_hints(
+                self._graphs[target.name],
+                key,
+                title,
+                summary,
+                body,
+                skip=set(applied),
+                vector=vector,
+                model_id=embedder.model_id if embedder is not None else None,
+            ),
+        )
+
+    def _record_provenance(
+        self, scope: Scope, key: str, provenance: dict[str, Any] | None, *, unchanged: bool
+    ) -> None:
+        """Store where ``key`` came from; never blocks a write.
+
+        A manual re-save of identical content keeps the existing record (it may hold a capture
+        quote); any other save replaces it, since the content it described has changed.
+        """
+        try:
+            if provenance is None:
+                if unchanged and scope.index.get_provenance(key) is not None:
+                    return
+                provenance = {"source": MANUAL, "session_id": self.session_id}
+            row = dict(provenance)
+            row["quote"] = self.redact(str(row.get("quote") or ""))[:MAX_QUOTE_CHARS]
+            scope.index.set_provenance(key, **row)
+        except Exception as e:
+            logger.warning("Nachos provenance write failed: %s", e)
 
     def remove(self, key: str, scope: str | None = None) -> str | None:
         """Remove ``key``; returns the scope it was removed from, or None."""
-        for s in self._scopes_for(scope):
+        for s in self._scopes(scope):
             if s.store.get(key) is not None:
-                self._log(s, key, "remove", self._snapshot(s, key))
+                meta = s.store.get_meta(key)
+                self._log(
+                    s,
+                    key,
+                    "remove",
+                    snapshot(s.store, key),
+                    prev_superseded_by=meta.superseded_by if meta else None,
+                )
+                fp_before = s.store.fingerprint()
                 s.store.remove(key)
+                self._caches.invalidate(s.name)
                 s.index.delete(key)
+                self._graphs[s.name].after_write(fp_before, key)
                 return s.name
         return None
+
+    # -- links -------------------------------------------------------------
+
+    def link_counts(self) -> dict[str, int]:
+        """Linked-neighbour counts per active entry (only entries that have any)."""
+        return merged_link_counts(self._graphs)
+
+    def link_report(self, scope: str = PROFILE) -> dict[str, Any]:
+        """Broken links, orphan hubs and unlinked entries sharing entities (read-only, offline).
+
+        Computed straight from the store, so it works on a read-only index and ignores the
+        sidecar ``links`` table.
+        """
+        return link_report(self._graphs[scope])
+
+    def link_supersede(self, old_key: str, new_key: str, scope: str = PROFILE) -> dict[str, Any]:
+        """Mark ``old_key`` superseded by ``new_key`` (logged, so ``revert`` undoes it)."""
+        target = self.scopes[scope]
+        old_meta = target.store.get_meta(old_key)
+        error = None
+        if old_key == new_key:
+            error = "an entry cannot supersede itself"
+        elif target.store.get(old_key) is None or target.store.get(new_key) is None:
+            error = "both entries must exist"
+        elif old_meta is not None and old_meta.superseded_by:
+            error = f"{old_key!r} is already superseded by {old_meta.superseded_by!r}"
+        elif resolve_successor(new_key, self._caches.meta(target)) in (None, old_key):
+            # new_key's chain must end at an active entry that is not old_key (no cycles)
+            error = f"{new_key!r} is superseded back to {old_key!r} or has no active successor"
+        if error:
+            return {"error": error}
+        return {"superseded": self._apply_supersedes(target, new_key, [old_key])}
+
+    def unlink_supersede(
+        self, key: str, expect: str | None = None, scope: str = PROFILE
+    ) -> dict[str, Any]:
+        """Clear ``key``'s supersede link (optionally only if it points at ``expect``)."""
+        target = self.scopes[scope]
+        meta = target.store.get_meta(key)
+        current = meta.superseded_by if meta is not None else None
+        if not current:
+            return {"error": f"{key!r} is not superseded"}
+        if expect is not None and current != expect:
+            return {"error": f"{key!r} is superseded by {current!r}, not {expect!r}"}
+        prev = snapshot(target.store, key)
+        self._log(target, key, "supersede", prev, prev_superseded_by=current)
+        fp_before = target.store.fingerprint()
+        target.store.set_superseded_by(key, None)
+        self._caches.invalidate(target.name)
+        self._graphs[target.name].after_write(fp_before, key)
+        return {"unlinked": key, "was": current}
 
     # -- hygiene -----------------------------------------------------------
 
     def unused(self, older_than_days: float, now: float | None = None) -> list[dict[str, Any]]:
         """Entries older than N days (first seen) never recalled or returned."""
-        now = now if now is not None else time.time()
-        cutoff = now - older_than_days * 86400
-        rows: list[dict[str, Any]] = []
-        for s in self.scopes.values():
-            usage = s.index.usage()
-            for key, title, _summary, category in s.store.list():
-                u = usage.get(key)
-                if u is None or u["first_seen"] > cutoff:
-                    continue
-                if u["recall_count"] or u["hit_count"]:
-                    continue
-                rows.append(
-                    {
-                        "scope": s.name,
-                        "key": key,
-                        "title": title,
-                        "category": category,
-                        "age_days": round((now - u["first_seen"]) / 86400, 1),
-                    }
-                )
-        rows.sort(key=lambda r: -r["age_days"])
-        return rows
+        scope_map = {s.name: (s.store, s.index, self._caches.meta(s)) for s in self.scopes.values()}
+        return unused_entries(scope_map, older_than_days=older_than_days, now=now)
+
+    def superseded(
+        self, older_than_days: float = 30, now: float | None = None
+    ) -> list[dict[str, Any]]:
+        """Superseded entries older than N days (candidates for removal)."""
+        scope_map = {s.name: (s.store, self._caches.meta(s)) for s in self.scopes.values()}
+        return superseded_entries(scope_map, older_than_days=older_than_days, now=now)
+
+    def suspicious_supersedes(self) -> list[dict[str, Any]]:
+        """Superseded links whose old and new entries differ in a facet qualifier."""
+        scope_map = {s.name: (s.store, self._caches.meta(s)) for s in self.scopes.values()}
+        return suspicious_supersedes(scope_map)
 
     def status(self) -> dict[str, Any]:
-        out: dict[str, Any] = {
-            "embeddings": self.embedder.model_id if self.embedder else "off",
-            "embeddings_error": self.embedder_error,
-            "scopes": {},
+        model_id = self.embedder.model_id if self.embedder else None
+        return {
+            "embeddings": model_id or "off",
+            "embeddings_error": self._semantic.error,
+            "model_state": self.model_status()["state"],
+            "scopes": {
+                s.name: scope_status(s.store, s.index, self._caches.meta(s), model_id)
+                for s in self.scopes.values()
+            },
         }
-        for s in self.scopes.values():
-            entries = s.store.list()
-            usage = s.index.usage()
-            out["scopes"][s.name] = {
-                "entries": len(entries),
-                "changes": s.index.count_changes(),
-                "indexed": s.index.count(self.embedder.model_id) if self.embedder else 0,
-                "never_used": sum(
-                    1
-                    for k, *_ in entries
-                    if not (
-                        usage.get(k, {}).get("recall_count") or usage.get(k, {}).get("hit_count")
-                    )
-                ),
-            }
-        return out

@@ -1,0 +1,50 @@
+[
+ {
+  "id": "h01",
+  "category": "keyword",
+  "query": "storefront vercel preview",
+  "expect": [
+   "storefront-hosting"
+  ]
+ },
+ {
+  "id": "h02",
+  "category": "keyword",
+  "query": "payments webhook mollie",
+  "expect": [
+   "payments-service"
+  ]
+ },
+ {
+  "id": "h03",
+  "category": "keyword",
+  "query": "restore drill minutes",
+  "expect": [
+   "restore-drill"
+  ]
+ },
+ {
+  "id": "h04",
+  "category": "keyword",
+  "query": "pick list printer",
+  "expect": [
+   "warehouse-printers"
+  ]
+ },
+ {
+  "id": "h05",
+  "category": "keyword",
+  "query": "event tracking rudderstack",
+  "expect": [
+   "event-tracking-plan"
+  ]
+ },
+ {
+  "id": "h06",
+  "category": "keyword",
+  "query": "holiday days",
+  "expect": [
+   "holiday-policy"
+  ]
+ }
+]

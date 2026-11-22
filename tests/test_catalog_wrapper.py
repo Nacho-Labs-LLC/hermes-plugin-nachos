@@ -70,4 +70,4 @@ def test_dev_dependency_group_allows_hermes_pytest_major():
     """Catalog dependency preparation remains compatible with Hermes' pytest 9."""
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
 
-    assert '"pytest>=8,<10"' in pyproject
+    assert '"pytest>=9.0.3,<10"' in pyproject

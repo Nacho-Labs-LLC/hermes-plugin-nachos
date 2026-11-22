@@ -17,8 +17,10 @@ Usage:
     memory_audit.py --store flatfile --path ~/.hermes/nachos/memory.md unused
 
 Embeddings are off by default (duplicates fall back to lexical overlap). Pass
---embeddings auto|nachos|openai|sentence-transformers, with --embedding-model
-and --embedding-base-url as needed, to use semantic similarity.
+--embeddings auto|nachos|openai|sentence-transformers, with --embedding-model,
+--embedding-base-url, --embedding-dtype and --embedding-query-prefix /
+--embedding-document-prefix as needed (match your Nachos config, or the stored
+vectors will not be found), to use semantic similarity.
 """
 
 from __future__ import annotations
@@ -27,11 +29,12 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 from _common import default_store_path, open_service
 
 from nachos_core.embeddings import make_embedder
-from nachos_core.memory import PROFILE
+from nachos_core.memory import PROFILE, MemoryService
 from nachos_hermes.config import hermes_credential
 
 
@@ -49,6 +52,9 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     ap.add_argument("--embedding-model", default="")
     ap.add_argument("--embedding-base-url", default="")
+    ap.add_argument("--embedding-dtype", default="", help="nachos backend precision, e.g. q8")
+    ap.add_argument("--embedding-query-prefix", default="", help="openai/sentence-transformers")
+    ap.add_argument("--embedding-document-prefix", default="", help="openai/sentence-transformers")
     ap.add_argument(
         "--embedding-api-key-env",
         default="",
@@ -81,14 +87,14 @@ def _build_parser() -> argparse.ArgumentParser:
     return ap
 
 
-def _emit(args, payload: dict, lines: list[str]) -> None:
+def _emit(args: argparse.Namespace, payload: dict[str, Any], lines: list[str]) -> None:
     if args.json:
         print(json.dumps(payload, indent=2))
     else:
         print("\n".join(lines))
 
 
-def _cmd_duplicates(args, service) -> int:
+def _cmd_duplicates(args: argparse.Namespace, service: MemoryService) -> int:
     pairs = service.duplicate_pairs()
     lines = [f"Likely duplicates: {len(pairs)}"]
     lines += [
@@ -99,7 +105,7 @@ def _cmd_duplicates(args, service) -> int:
     return 0
 
 
-def _cmd_unused(args, service) -> int:
+def _cmd_unused(args: argparse.Namespace, service: MemoryService) -> int:
     rows = service.unused(args.days)
     lines = [f"Never recalled, first seen > {args.days:g} days ago: {len(rows)}"]
     lines += [f"  {r['age_days']:>6}d  {r['category']}/{r['key']}" for r in rows]
@@ -107,7 +113,7 @@ def _cmd_unused(args, service) -> int:
     return 0
 
 
-def _cmd_history(args, service) -> int:
+def _cmd_history(args: argparse.Namespace, service: MemoryService) -> int:
     rows = service.history(key=args.key, limit=args.limit)
     lines = [f"Recent changes: {len(rows)}"]
     lines += [
@@ -119,7 +125,7 @@ def _cmd_history(args, service) -> int:
     return 0
 
 
-def _cmd_revert(args, service) -> int:
+def _cmd_revert(args: argparse.Namespace, service: MemoryService) -> int:
     change = service.profile.index.get_change(args.id)
     if change is None:
         print(f"ERROR: no change {args.id}", file=sys.stderr)
@@ -140,7 +146,7 @@ def _cmd_revert(args, service) -> int:
     return 0
 
 
-def _cmd_remove_category(args, service) -> int:
+def _cmd_remove_category(args: argparse.Namespace, service: MemoryService) -> int:
     matches = [
         {"key": key, "title": title, "category": category}
         for key, title, _summary, category in service.profile.store.list()
@@ -185,6 +191,9 @@ def main(argv: list[str] | None = None) -> int:
         args.embeddings,
         model=args.embedding_model,
         base_url=args.embedding_base_url,
+        dtype=args.embedding_dtype,
+        query_prefix=args.embedding_query_prefix,
+        document_prefix=args.embedding_document_prefix,
         api_key_env=args.embedding_api_key_env,
         credential_resolver=hermes_credential,
     )

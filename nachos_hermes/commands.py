@@ -12,10 +12,25 @@ from pathlib import Path
 from typing import Any, Callable
 
 from nachos_core.history import checkpoint_stats
+from nachos_core.index import MemoryIndex
 from nachos_core.memory import PROFILE, MemoryService
 
 UNAVAILABLE = "Nachos memory store unavailable."
 INBOX_USAGE = "Usage: /nachos-memory-inbox [show <id> | approve <id|all> | reject <id|all>]"
+
+
+def _model_lines(models: dict[str, Any]) -> list[str]:
+    """Model-switch progress, kept old vectors and calibration, only when there is something to say."""
+    lines: list[str] = []
+    for name, s in models["scopes"].items():
+        if s["reindexing"]:
+            lines.append(
+                f"  re-embedding: {name} {s['embedded']}/{s['entries']} with the configured model; "
+                "recall is lexical until done (python -m nachos_hermes.models reindex finishes it)"
+            )
+        elif s["other_models"]:
+            lines.append(f"  old vectors : {name} {sorted(s['other_models'])} (dropped once done)")
+    return lines
 
 
 def status_text(
@@ -34,10 +49,17 @@ def status_text(
     if status["embeddings_error"]:
         emb += f" (disabled: {status['embeddings_error']})"
     lines.append(f"  embeddings  : {emb}")
+    if service.embedder:
+        lines.extend(_model_lines(service.model_status()))
     for name, s in status["scopes"].items():
         indexed = f", {s['indexed']} embedded" if service.embedder else ""
+        sup = f", {s['superseded']} superseded" if s.get("superseded") else ""
+        approx = (
+            f", {s['approx_timestamps']} approx timestamps" if s.get("approx_timestamps") else ""
+        )
         lines.append(
-            f"  {name:<11} : {s['entries']} entries{indexed}, {s['never_used']} never recalled"
+            f"  {name:<11} : {s['entries']} entries{indexed}{sup}, "
+            f"{s['never_used']} never recalled{approx}"
         )
     if checkpoint_root:
         cp = checkpoint_stats(checkpoint_root)
@@ -67,7 +89,7 @@ def changes_text(service: MemoryService | None, key: str = "") -> str:
         when = time.strftime("%m-%d %H:%M", time.localtime(r["ts"]))
         sess = f" [{r['session_id'][:8]}]" if r["session_id"] else ""
         prev = f" (was: {r['preview']})" if r["preview"] else ""
-        lines.append(f"  {r['scope']}:{r['id']} {when} {r['action']:<6} {r['key']}{sess}{prev}")
+        lines.append(f"  {r['scope']}:{r['id']} {when} {r['action']:<9} {r['key']}{sess}{prev}")
     return "\n".join(lines)
 
 
@@ -88,6 +110,8 @@ def audit_text(service: MemoryService | None, older_than_days: float = 30) -> st
         return UNAVAILABLE
     pairs = service.duplicate_pairs()
     unused = service.unused(older_than_days)
+    superseded = service.superseded(older_than_days)
+    suspicious = service.suspicious_supersedes()
     lines = [f"Likely duplicates: {len(pairs)}"]
     lines.extend(
         f"  {p['similarity']:.2f} {p['match']:<8} {p['a']['scope']}:{p['a']['key']}"
@@ -97,27 +121,48 @@ def audit_text(service: MemoryService | None, older_than_days: float = 30) -> st
     lines.append("")
     lines.append(f"Never recalled, first seen > {older_than_days:g} days ago: {len(unused)}")
     lines.extend(f"  {row['age_days']:>6}d  {row['scope']}:{row['key']}" for row in unused[:15])
+    lines.append("")
+    lines.append(
+        f"Superseded > {older_than_days:g} days ago (candidates for removal): {len(superseded)}"
+    )
+    lines.extend(
+        f"  {row['age_days']:>6}d  {row['scope']}:{row['key']}  ->  {row['superseded_by']}"
+        for row in superseded[:15]
+    )
+    lines.append("")
+    lines.append(f"Suspicious supersedes: {len(suspicious)}")
+    lines.extend(
+        f"  {row['scope']}:{row['old_key']}  ->  {row['new_key']}  ({row['reason']})"
+        for row in suspicious[:15]
+    )
     return "\n".join(lines)
 
 
 # -- review inbox ------------------------------------------------------------
 
 
-def _inbox_item(index, target: str) -> dict[str, Any] | None:
+def _inbox_item(index: MemoryIndex, target: str) -> dict[str, Any] | None:
     ident = target.lstrip("#")
     return index.get_inbox(int(ident)) if ident.isdigit() else None
 
 
-def _inbox_hint(dups: list[dict[str, Any]]) -> str:
+def _inbox_hint(dups: list[dict[str, Any]], grounded: bool | None = True) -> str:
+    flag = " [ungrounded]" if grounded is False else ""
     if not dups:
-        return ""
+        return flag
     top = dups[0]
-    return (
+    note = (
         f" [updates {top['key']}]" if top.get("match") == "update" else f" [similar: {top['key']}]"
     )
+    return note + flag
 
 
-def _inbox_list(index, queued: int) -> str:
+def _is_grounded(row: dict[str, Any]) -> bool | None:
+    """False only for a candidate whose quote failed verification (None = captured before grounding)."""
+    return row.get("grounded")
+
+
+def _inbox_list(index: MemoryIndex, queued: int) -> str:
     note = (
         f"\nProcessing {queued} captured session(s) in the background -- run again shortly."
         if queued
@@ -128,22 +173,30 @@ def _inbox_list(index, queued: int) -> str:
         return "No suggested memories awaiting review." + note
     lines = [f"{len(rows)} suggested memories (/nachos-memory-inbox show|approve|reject <id|all>)"]
     lines.extend(
-        f"  #{r['id']} {r['title']}{_inbox_hint(r['duplicates'])}\n      {r['summary']}"
+        f"  #{r['id']} {r['title']}{_inbox_hint(r['duplicates'], _is_grounded(r))}"
+        f"\n      {r['summary']}"
         f"\n      why: {r['reason'] or '-'}"
         for r in rows
     )
     return "\n".join(lines) + note
 
 
-def _inbox_show(index, target: str) -> str:
+def _inbox_show(index: MemoryIndex, target: str) -> str:
     row = _inbox_item(index, target)
     if not row:
         return f"No inbox item {target}."
     dups = ", ".join(f"{d['key']} ({d['match']} {d['similarity']})" for d in row["duplicates"])
+    if row.get("grounded") is None:
+        evidence = "-"
+    elif row["grounded"]:
+        evidence = f'"{row["quote"]}"'
+    else:
+        evidence = f"UNGROUNDED (not found in the transcript): {row['quote'] or 'no quote given'}"
     return (
         f"#{row['id']} [{row['status']}] {row['title']}\n"
         f"category: {row['category']}\nsummary: {row['summary']}\n"
-        f"why: {row['reason'] or '-'}\nsimilar: {dups or '-'}\n\n{row['body']}"
+        f"why: {row['reason'] or '-'}\nevidence: {evidence}\nsimilar: {dups or '-'}\n\n"
+        f"{row['body']}"
     )
 
 
@@ -158,6 +211,16 @@ def _inbox_decide(service: MemoryService, action: str, target: str) -> str:
             return f"No pending inbox item {target}."
     if not rows:
         return "No suggested memories awaiting review."
+    if action == "approve" and target.lower() == "all":
+        # An ungrounded suggestion may be invented: it needs an explicit, per-item approval.
+        skipped = [r for r in rows if _is_grounded(r) is False]
+        rows = [r for r in rows if _is_grounded(r) is not False]
+        lines = [_inbox_apply(service, action, r) for r in rows]
+        lines.extend(
+            f"Skipped #{r['id']} {r['title']} (ungrounded: approve it by id after reading it)"
+            for r in skipped
+        )
+        return "\n".join(lines)
     return "\n".join(_inbox_apply(service, action, r) for r in rows)
 
 
@@ -172,6 +235,15 @@ def _inbox_apply(service: MemoryService, action: str, r: dict[str, Any]) -> str:
         summary=r["summary"],
         category=r["category"],
         scope=PROFILE,
+        provenance={
+            "source": "capture",
+            "session_id": r.get("session_id") or "",
+            "captured_at": r.get("created_ts"),
+            "checkpoint_id": r.get("checkpoint_id"),
+            "message_index": r.get("message_index"),
+            "quote": r.get("quote") if r.get("grounded") else "",
+            "grounded": r.get("grounded"),
+        },
     )
     if "error" in res:
         return f"Could not approve #{r['id']} {r['title']}: {res['error']}"
@@ -209,7 +281,7 @@ def _audit_days(raw_args: str) -> float:
         return 30.0
 
 
-def register_commands(ctx, provider) -> None:
+def register_commands(ctx: Any, provider: Any) -> None:
     """Register the ``/nachos-memory-*`` slash commands for ``provider`` on a plugin context."""
     ctx.register_command(
         "nachos-memory-status",

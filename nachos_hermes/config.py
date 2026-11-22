@@ -13,7 +13,7 @@ import logging
 from pathlib import Path
 from typing import Any, Callable
 
-from nachos_core.embeddings import EMBEDDING_BACKENDS
+from nachos_core.embeddings import EMBEDDING_BACKENDS, Embedder, make_embedder
 
 logger = logging.getLogger(__name__)
 
@@ -23,15 +23,43 @@ DEFAULTS: dict[str, Any] = {
     "embeddings": "auto",
     "embedding_model": "",
     "embedding_dtype": "",
+    "embedding_pooling": "",
+    "embedding_max_length": 0,
     "embedding_base_url": "",
     "embedding_api_key_env": "",
+    "embedding_query_prefix": "",
+    "embedding_document_prefix": "",
     # MiniLM: paraphrases score 0.68-0.73, distinct entries <=0.22; flagging is non-blocking, so false positives are cheap.
     "duplicate_threshold": 0.65,
+    "duplicate_calibration": "auto",
+    "similarity_floor": "off",
+    "abstention": "hint",
+    "rerank": "off",
+    "rerank_model": "",
+    "rerank_dtype": "",
+    "rerank_max_length": 0,
+    "rerank_candidates": 25,
+    "reindex_budget_ms": 250,
+    "related_per_hit": 3,
     "shared_store": "off",
     "shared_store_path": "",
     "redact_secrets": "on",
     "checkpoint_max_age_days": 30,
+    "history_context_before": 1,
+    "history_context_after": 1,
+    "history_max_chars": 6000,
     "capture": "review",
+}
+
+_VERBATIM_KEYS = frozenset({"embedding_query_prefix", "embedding_document_prefix"})
+# String settings with a closed set of values; anything else is ignored.
+_CHOICES: dict[str, tuple[str, ...]] = {
+    "capture": ("review", "off"),
+    "embedding_pooling": ("", "mean", "cls"),
+    "rerank": ("off", "nachos", "borderline"),
+    "similarity_floor": ("off", "auto"),
+    "duplicate_calibration": ("auto", "off"),
+    "abstention": ("hint", "on", "off"),
 }
 
 CONFIG_SCHEMA: list[dict[str, Any]] = [
@@ -53,11 +81,24 @@ CONFIG_SCHEMA: list[dict[str, Any]] = [
     },
     {
         "key": "embedding_model",
-        "description": "Embedding model id (backend-specific; blank = backend default).",
+        "description": "Embedding model id (backend-specific; blank = backend default, MiniLM for nachos-embeddings). "
+        "For the nachos backend any Hugging Face ONNX encoder or a local directory path works.",
     },
     {
         "key": "embedding_dtype",
         "description": "Model precision for the nachos backend, e.g. q8 (about 3x faster, cosine ~0.99 vs fp32). Blank = backend default. Changing it re-embeds.",
+    },
+    {
+        "key": "embedding_pooling",
+        "choices": ["", "mean", "cls"],
+        "description": "Override the nachos model's pooling (blank = the model's built-in profile; "
+        "bge, arctic and gte-modernbert use cls). Changing it re-embeds.",
+    },
+    {
+        "key": "embedding_max_length",
+        "type": "int",
+        "description": "Truncate inputs to this many tokens for the nachos backend (0 = model default; "
+        "can only lower the tokenizer limit). Changing it re-embeds.",
     },
     {
         "key": "embedding_base_url",
@@ -68,9 +109,84 @@ CONFIG_SCHEMA: list[dict[str, Any]] = [
         "description": "Name of the environment variable holding the embeddings API key (the key itself is never stored).",
     },
     {
+        "key": "embedding_query_prefix",
+        "description": "Text prepended to search queries before embedding (e.g. 'query: ' for E5, "
+        "'search_query: ' for nomic). Leading/trailing spaces are kept. For the nachos backend "
+        "blank keeps the model's built-in prefix and the word 'none' disables it; openai and "
+        "sentence-transformers have no built-ins (blank = no prefix).",
+    },
+    {
+        "key": "embedding_document_prefix",
+        "description": "Text prepended to stored entries before embedding (e.g. 'passage: ' for E5, "
+        "'search_document: ' for nomic); same blank / 'none' rules as the query prefix. "
+        "Changing it re-embeds.",
+    },
+    {
         "key": "duplicate_threshold",
         "type": "float",
         "description": "Embedding similarity (0-1) at which a new entry is flagged as a likely duplicate.",
+    },
+    {
+        "key": "duplicate_calibration",
+        "choices": ["auto", "off"],
+        "description": "auto raises duplicate_threshold to the embedding model's own 99th "
+        "percentile of random-pair similarity when that is higher (cosine ranges differ a lot "
+        "between models). A duplicate_threshold other than the default 0.65 is always used "
+        "as given; off uses duplicate_threshold exactly for every model.",
+    },
+    {
+        "key": "similarity_floor",
+        "choices": ["off", "auto"],
+        "description": "auto drops semantic hits below the model's own 75th percentile of "
+        "random-pair similarity (calibrated from the stored vectors).",
+    },
+    {
+        "key": "abstention",
+        "choices": ["hint", "on", "off"],
+        "description": "hint (default) attaches confidence and no_confident_match fields as an "
+        "informational signal without instructing automatic retries; on adds retry-with-rephrasings "
+        "guidance to the recall tool; off omits confidence fields.",
+    },
+    {
+        "key": "rerank",
+        "choices": ["off", "nachos", "borderline"],
+        "description": "nachos = re-score the top fused results on every recall with a "
+        "cross-encoder served by nachos-embeddings; borderline = re-score only borderline "
+        "confidence queries (top 5 candidates) to verify abstention at low average latency; "
+        "off = disabled.",
+    },
+    {
+        "key": "rerank_model",
+        "description": "Cross-encoder model id (blank = jinaai/jina-reranker-v1-tiny-en).",
+    },
+    {
+        "key": "rerank_dtype",
+        "description": "Cross-encoder precision, e.g. q8 (blank = CLI default).",
+    },
+    {
+        "key": "rerank_max_length",
+        "type": "int",
+        "description": "Cross-encoder input length in tokens (0 = the model's default: 1024 for "
+        "the jina reranker, 512 otherwise).",
+    },
+    {
+        "key": "rerank_candidates",
+        "type": "int",
+        "description": "How many top fused results the reranker re-scores.",
+    },
+    {
+        "key": "reindex_budget_ms",
+        "type": "int",
+        "description": "After an embedding model change, how long one recall or write may spend "
+        "re-embedding entries (milliseconds; at least one small batch always runs). Recall is "
+        "lexical until every entry is re-embedded; `python -m nachos_hermes.models reindex` "
+        "finishes it at once.",
+    },
+    {
+        "key": "related_per_hit",
+        "type": "int",
+        "description": "Linked entries (one hop, via [[key]] links) attached as `related` to each "
+        "recall result, at most 8 per query; 0 turns related expansion off.",
     },
     {
         "key": "shared_store",
@@ -90,6 +206,21 @@ CONFIG_SCHEMA: list[dict[str, Any]] = [
         "key": "checkpoint_max_age_days",
         "type": "int",
         "description": "Delete pre-compression transcript checkpoints older than this (0 = keep forever).",
+    },
+    {
+        "key": "history_context_before",
+        "type": "int",
+        "description": "nachos_history_search: turns returned before each matched message (tool call/result pairs are kept whole).",
+    },
+    {
+        "key": "history_context_after",
+        "type": "int",
+        "description": "nachos_history_search: turns returned after each matched message.",
+    },
+    {
+        "key": "history_max_chars",
+        "type": "int",
+        "description": "nachos_history_search: cap on the total characters of text returned per call.",
     },
     {
         "key": "capture",
@@ -171,8 +302,9 @@ def apply_config(cfg: dict[str, Any], values: dict[str, Any]) -> None:
         elif isinstance(default, int) and isinstance(value, (int, float)):
             cfg[key] = int(value)
         elif isinstance(default, str) and isinstance(value, str):
-            value = value.strip()
-            if key == "capture" and value not in ("review", "off"):
+            if key not in _VERBATIM_KEYS:  # prefixes keep their meaningful spaces
+                value = value.strip()
+            if key in _CHOICES and value not in _CHOICES[key]:
                 continue
             cfg[key] = value
 
@@ -227,3 +359,55 @@ def backup_paths() -> list[str]:
     except Exception as e:
         logger.debug("Nachos backup_paths failed: %s", e)
         return []
+
+
+#: Hermes ``auxiliary.<task>.model`` LLM settings Nachos reads (Hermes semantics, unchanged).
+AUXILIARY_TASKS: dict[str, str] = {
+    "nachos_capture": "session-end memory suggestions (capture: review)",
+    "nachos_summary": "replacement summaries (tools/correct_summaries.py)",
+}
+
+
+def make_embedder_from_config(cfg: dict[str, Any]) -> Embedder | None:
+    """The embedder a resolved config asks for (``None`` = lexical only); may raise."""
+    return make_embedder(
+        cfg["embeddings"],
+        model=cfg["embedding_model"],
+        dtype=cfg["embedding_dtype"],
+        base_url=cfg["embedding_base_url"],
+        api_key_env=cfg["embedding_api_key_env"],
+        query_prefix=cfg["embedding_query_prefix"],
+        document_prefix=cfg["embedding_document_prefix"],
+        rerank=cfg["rerank"] in ("nachos", "borderline"),
+        rerank_model=cfg["rerank_model"],
+        rerank_dtype=cfg["rerank_dtype"],
+        pooling=cfg["embedding_pooling"],
+        max_length=max(0, int(cfg["embedding_max_length"])),
+        rerank_max_length=max(0, int(cfg["rerank_max_length"])),
+        credential_resolver=hermes_credential,
+    )
+
+
+def profile_config(hermes_home: Path) -> dict[str, Any]:
+    """Defaults overlaid with ``<home>/nachos/config.json`` (what ``hermes memory setup`` wrote)."""
+    cfg: dict[str, Any] = dict(DEFAULTS)
+    with contextlib.suppress(OSError, ValueError):
+        values = json.loads((hermes_home / "nachos" / "config.json").read_text(encoding="utf-8"))
+        if isinstance(values, dict):
+            apply_config(cfg, values)
+    return cfg
+
+
+def auxiliary_models() -> dict[str, str | None]:
+    """Configured auxiliary LLM per Nachos task, when Hermes' config is readable (else ``None``)."""
+    models: dict[str, str | None] = dict.fromkeys(AUXILIARY_TASKS)
+    try:
+        from hermes_cli.config import cfg_get, load_config
+
+        loaded = load_config()
+        for task in AUXILIARY_TASKS:
+            value = cfg_get(loaded, "auxiliary", task, "model")
+            models[task] = value if isinstance(value, str) and value else None
+    except Exception:
+        logger.debug("Hermes config unavailable for auxiliary models", exc_info=True)
+    return models

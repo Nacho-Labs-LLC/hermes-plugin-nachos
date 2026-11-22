@@ -33,17 +33,15 @@ import argparse
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from nachos_core.quality import (
-    is_redundant_summary,
-    low_signal_reason,
-    shares_vocabulary,
-)
+from nachos_core.quality import flag_reason
 from nachos_core.store import get_store
+from nachos_core.store.base import Entry, MemoryStore
 
 _API_DELAY_SECONDS = 1.5
 _EXPENSIVE_HINTS = ("opus", "gpt-4o", "gemini-ultra")
@@ -56,24 +54,6 @@ _SYSTEM = (
 )
 
 
-def flag_reason(title: str, summary: str, body: str) -> str | None:
-    """Why this entry needs LLM re-summarization, or None if it's fine.
-
-    Shared logic with the write-time gate (nachos_core.quality) plus two
-    audit-only checks that are too strict to enforce at write time
-    (redundant-with-title, zero-vocabulary-overlap-with-body) but are
-    still worth fixing on a periodic sweep.
-    """
-    reason = low_signal_reason(summary)
-    if reason:
-        return f"low-signal ({reason})"
-    if is_redundant_summary(summary, title):
-        return "redundant (just restates the title)"
-    if not shares_vocabulary(summary, body):
-        return "no shared vocabulary with body (likely stale)"
-    return None
-
-
 def _default_path(store_kind: str) -> Path:
     from hermes_constants import get_hermes_home
 
@@ -81,13 +61,16 @@ def _default_path(store_kind: str) -> Path:
     return base / ("memory.md" if store_kind == "flatfile" else "memory.db")
 
 
-def _resolve_client():
+_Flagged = tuple[str, str, str, str, str, str]  # key, title, summary, category, body, reason
+
+
+def _resolve_client() -> Any:
     from agent.auxiliary_client import get_text_auxiliary_client
 
     return get_text_auxiliary_client(task="nachos_summary")
 
 
-def _regen_summary(client, model: str, title: str, body: str) -> str:
+def _regen_summary(client: Any, model: str, title: str, body: str) -> str:
     user = f"Title: {title}\n\nBody:\n{body}\n\nOne-line summary:"
     kwargs = dict(
         model=model,
@@ -101,7 +84,7 @@ def _regen_summary(client, model: str, title: str, body: str) -> str:
     return (resp.choices[0].message.content or "").strip().splitlines()[0].strip()
 
 
-def _flag_entries(store, entries) -> list[tuple]:
+def _flag_entries(store: MemoryStore, entries: list[Entry]) -> list[_Flagged]:
     """Entries whose summary fails the quality bar, as (key, title, summary, category, body, reason)."""
     flagged = []
     for key, title, summary, category in entries:
@@ -114,7 +97,7 @@ def _flag_entries(store, entries) -> list[tuple]:
     return flagged
 
 
-def _report_no_client(flagged) -> int:
+def _report_no_client(flagged: list[_Flagged]) -> int:
     print("ERROR: no auxiliary client configured (auxiliary.nachos_summary).")
     print("Flagged entries (no LLM available to fix them):")
     for key, _title, summary, _category, _body, reason in flagged:
@@ -123,7 +106,9 @@ def _report_no_client(flagged) -> int:
     return 2
 
 
-def _correct(store, flagged, client, model, *, run: bool) -> int:
+def _correct(
+    store: MemoryStore, flagged: list[_Flagged], client: Any, model: str, *, run: bool
+) -> int:
     """Regenerate each flagged summary; write it back when ``run``. Returns how many changed."""
     changed = 0
     for key, title, summary, category, body, reason in flagged:

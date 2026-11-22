@@ -23,11 +23,11 @@ from __future__ import annotations
 
 import os
 
-from .base import Entry, MemoryStore
+from .base import Entry, EntryMeta, MemoryStore
 from .md_store import MDStore
 from .sqlite_store import SqliteStore
 
-__all__ = ["Entry", "MDStore", "MemoryStore", "SqliteStore", "get_store"]
+__all__ = ["Entry", "EntryMeta", "MDStore", "MemoryStore", "SqliteStore", "get_store"]
 
 
 def get_store(kind: str, path: str | os.PathLike[str]) -> MemoryStore:

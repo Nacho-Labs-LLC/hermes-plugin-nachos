@@ -13,19 +13,19 @@ jobs:
   catalog-discovery:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Check out minimum supported Hermes (v0.21.6, pinned)
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: NousResearch/hermes-agent
           ref: 818c13be1dc4fd28987e1e881a9408224afd4535
           path: .hermes-source
           persist-credentials: false
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.11"
       - name: Install discovery-test dependencies (not the Hermes runtime)
-        run: python -m pip install pytest==8.4.2 PyYAML==6.0.3 python-dotenv==1.2.4 ruamel.yaml==0.19.1
+        run: python -m pip install pytest==9.2.0 PyYAML==6.0.3 python-dotenv==1.2.4 ruamel.yaml==0.19.1
       - name: Test catalog loading and profile-scoped embedding credentials
         env:
           HERMES_SOURCE: ${{ github.workspace }}/.hermes-source
@@ -34,13 +34,13 @@ jobs:
   test-and-package:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.11"
       - name: Install release-gate tooling
         run: >-
-          python -m pip install build==1.6.1 pytest==8.4.2 ruff==0.16.8
+          python -m pip install build==1.6.1 pytest==9.2.0 ruff==0.17.4
           vulture==2.16 radon==6.0.1 xenon==0.9.3 pylint==4.1.3 mypy==1.19.1
       # Install before the checks: test_memory_entry_point_loads_a_callable reads the
       # installed package's entry points, so it only passes after `pip install .`.
@@ -56,3 +56,28 @@ jobs:
           python -m venv .wheel-venv
           .wheel-venv/bin/python -m pip install dist/*.whl
           .wheel-venv/bin/python -c "import importlib.metadata as m; memory = next(x for x in m.entry_points(group='hermes_agent.memory_providers') if x.name == 'nachos'); assert callable(memory.load())"
+
+  browser-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.11"
+      # playwright and its transitive deps (pyee, greenlet, typing-extensions) come from uv.lock via
+      # `uv export`; pytest is pinned to the lock's version. setuptools is not in the lock: it is
+      # for the offline installed-wheel loop test (pip wheel --no-build-isolation --no-index).
+      - name: Install browser-gate tooling
+        run: |
+          python -m pip install uv==0.13.8 pytest==9.2.0 "setuptools>=68"
+          uv export --frozen --no-hashes --no-emit-project --only-group browser -o "$RUNNER_TEMP/browser-reqs.txt"
+          python -m pip install -r "$RUNNER_TEMP/browser-reqs.txt"
+      - name: Install chromium
+        run: python -m playwright install --with-deps chromium
+      - name: Real-browser viewer gate (never skips)
+        env:
+          NACHOS_REQUIRE_BROWSER: "1"
+          NACHOS_BROWSER_PYTHON: python
+        run: bash scripts/browser_gate.sh

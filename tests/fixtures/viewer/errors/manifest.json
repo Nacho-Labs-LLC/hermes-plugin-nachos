@@ -1,0 +1,107 @@
+{
+  "errors": [
+    {
+      "category": "digest_mismatch",
+      "expected": "reject",
+      "file": "tampered-digest.json"
+    },
+    {
+      "category": "duplicate_key",
+      "expected": "reject",
+      "file": "duplicate-key.json"
+    },
+    {
+      "category": "float",
+      "expected": "reject",
+      "file": "float.json"
+    },
+    {
+      "category": "float",
+      "expected": "reject",
+      "file": "exponent-number.json"
+    },
+    {
+      "category": "nan",
+      "expected": "reject",
+      "file": "nan.json"
+    },
+    {
+      "category": "integer_range",
+      "expected": "reject",
+      "file": "big-integer.json"
+    },
+    {
+      "category": "lone_surrogate",
+      "expected": "reject",
+      "file": "lone-surrogate.json"
+    },
+    {
+      "category": "truncated",
+      "expected": "reject",
+      "file": "truncated.json"
+    },
+    {
+      "category": "empty",
+      "expected": "reject",
+      "file": "empty.json"
+    },
+    {
+      "category": "not_json",
+      "expected": "reject",
+      "file": "not-json.json"
+    },
+    {
+      "category": "bom",
+      "expected": "reject",
+      "file": "bom-prefixed.json"
+    },
+    {
+      "category": "invalid_utf8",
+      "expected": "reject",
+      "file": "invalid-utf8.bin"
+    },
+    {
+      "category": "depth_limit",
+      "expected": "reject",
+      "file": "huge-nesting.json"
+    },
+    {
+      "category": "unsupported_schema",
+      "expected": "reject",
+      "file": "unknown-schema.json"
+    },
+    {
+      "category": "extra_key",
+      "expected": "reject",
+      "file": "extra-key-resealed.json"
+    },
+    {
+      "category": "profile_mismatch",
+      "expected": "reject",
+      "expected_profile": {
+        "id": "synthetic-viewer",
+        "root": "/inert/synthetic-profile"
+      },
+      "file": "wrong-profile-session.json",
+      "valid_standalone": true
+    },
+    {
+      "category": "wrong_artifact_kind",
+      "expected": "reject",
+      "expected_kind": "session",
+      "file": "plan-as-session.json",
+      "valid_standalone": true
+    },
+    {
+      "category": "wrong_artifact_kind",
+      "expected": "reject",
+      "expected_kind": "packet",
+      "file": "session-as-packet.json",
+      "valid_standalone": true
+    }
+  ],
+  "profile": {
+    "id": "synthetic-viewer",
+    "root": "/inert/synthetic-profile"
+  }
+}

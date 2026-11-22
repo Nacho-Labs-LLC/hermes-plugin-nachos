@@ -155,3 +155,33 @@ def test_revert_unknown_id_errors(store):
     kind, path = store
     code = memory_audit.main(["--store", kind, "--path", str(path), "revert", "99"])
     assert code == 2
+
+
+def test_embedding_settings_reach_the_embedder_factory(store, capsys, monkeypatch):
+    seen = {}
+
+    def fake_make_embedder(backend, **kwargs):
+        seen.update(backend=backend, **kwargs)
+
+    monkeypatch.setattr(memory_audit, "make_embedder", fake_make_embedder)
+    kind, path = store
+    code, _out = _run(
+        capsys,
+        kind,
+        path,
+        "--embeddings",
+        "openai",
+        "--embedding-model",
+        "m",
+        "--embedding-dtype",
+        "q8",
+        "--embedding-query-prefix",
+        "query: ",
+        "--embedding-document-prefix",
+        "passage: ",
+        "duplicates",
+    )
+    assert code == 0
+    assert seen["dtype"] == "q8"
+    assert seen["query_prefix"] == "query: "
+    assert seen["document_prefix"] == "passage: "

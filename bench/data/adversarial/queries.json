@@ -1,0 +1,845 @@
+[
+ {
+  "id": "a001",
+  "category": "current",
+  "query": "pgbouncer port primary database",
+  "expect": [
+   "primary-database-server-postgres-17"
+  ]
+ },
+ {
+  "id": "a002",
+  "category": "current",
+  "query": "Postgres 17 upgrade",
+  "expect": [
+   "primary-database-server-postgres-17"
+  ]
+ },
+ {
+  "id": "a003",
+  "category": "current",
+  "query": "nightly backup time UTC",
+  "expect": [
+   "nightly-backup-job"
+  ]
+ },
+ {
+  "id": "a004",
+  "category": "current",
+  "query": "daily meeting on Zoom",
+  "expect": [
+   "daily-sync-meeting"
+  ]
+ },
+ {
+  "id": "a005",
+  "category": "current",
+  "query": "Business plan price per month",
+  "expect": [
+   "plans-and-prices-v3"
+  ]
+ },
+ {
+  "id": "a006",
+  "category": "current",
+  "query": "is there an Enterprise plan",
+  "expect": [
+   "plans-and-prices-v3"
+  ]
+ },
+ {
+  "id": "a007",
+  "category": "current",
+  "query": "deploy windows weekend",
+  "expect": [
+   "deploy-windows"
+  ]
+ },
+ {
+  "id": "a008",
+  "category": "current",
+  "query": "session store eviction lfu",
+  "expect": [
+   "session-store"
+  ]
+ },
+ {
+  "id": "a009",
+  "category": "current",
+  "query": "enterprise first response time",
+  "expect": [
+   "support-response-targets-for-enterprise"
+  ]
+ },
+ {
+  "id": "a010",
+  "category": "current",
+  "query": "Business support response around the clock",
+  "expect": [
+   "support-response-targets"
+  ]
+ },
+ {
+  "id": "a011",
+  "category": "current",
+  "query": "design-tokens npm package name",
+  "expect": [
+   "design-tokens-package"
+  ]
+ },
+ {
+  "id": "a012",
+  "category": "current",
+  "query": "toggles.lumenfold.io",
+  "expect": [
+   "feature-flags"
+  ]
+ },
+ {
+  "id": "a013",
+  "category": "current",
+  "query": "who is primary on call",
+  "expect": [
+   "on-call-roster"
+  ]
+ },
+ {
+  "id": "a014",
+  "category": "current",
+  "query": "sender address hello@lumenfold.io",
+  "expect": [
+   "transactional-email-sender"
+  ]
+ },
+ {
+  "id": "a015",
+  "category": "current",
+  "query": "where do application errors go now",
+  "expect": [
+   "sentry-retired"
+  ]
+ },
+ {
+  "id": "a016",
+  "category": "current",
+  "query": "Adyen webhook endpoint",
+  "expect": [
+   "payments-checkout-provider"
+  ]
+ },
+ {
+  "id": "a017",
+  "category": "current",
+  "query": "Bun monorepo",
+  "expect": [
+   "frontend-tooling-note"
+  ]
+ },
+ {
+  "id": "a018",
+  "category": "current",
+  "query": "how do I get remote access Tailscale",
+  "expect": [
+   "remote-access"
+  ]
+ },
+ {
+  "id": "a019",
+  "category": "current",
+  "query": "why am I logged out so fast",
+  "expect": [
+   "why-do-we-get-logged-out-after-5-minutes"
+  ]
+ },
+ {
+  "id": "a020",
+  "category": "current",
+  "query": "what Kubernetes version is prod on",
+  "expect": [
+   "2024-06-12-prod-cluster-upgrade"
+  ]
+ },
+ {
+  "id": "a021",
+  "category": "current",
+  "query": "python base image version",
+  "expect": [
+   "changelog-base-images"
+  ]
+ },
+ {
+  "id": "a022",
+  "category": "current",
+  "query": "how long are sprints",
+  "expect": [
+   "did-sprint-length-change"
+  ]
+ },
+ {
+  "id": "a023",
+  "category": "current",
+  "query": "log retention days",
+  "expect": [
+   "retention-rules"
+  ]
+ },
+ {
+  "id": "a024",
+  "category": "current",
+  "query": "billing API v3 base URL",
+  "expect": [
+   "nimbus-billing-api-endpoints"
+  ]
+ },
+ {
+  "id": "a025",
+  "category": "current",
+  "query": "push queue retries notif-q-v2",
+  "expect": [
+   "push-notification-worker"
+  ]
+ },
+ {
+  "id": "a026",
+  "category": "current",
+  "query": "device management Jamf screen lock",
+  "expect": [
+   "hardware-and-device-management"
+  ]
+ },
+ {
+  "id": "a027",
+  "category": "current",
+  "query": "thumbnail service Fargate avif",
+  "expect": [
+   "thumbnail-service"
+  ]
+ },
+ {
+  "id": "a028",
+  "category": "current",
+  "query": "who gets paged for critical alerts Opsgenie",
+  "expect": [
+   "where-alerts-go"
+  ]
+ },
+ {
+  "id": "a029",
+  "category": "current",
+  "query": "Snowflake PROD_EVENTS access",
+  "expect": [
+   "where-product-events-land"
+  ]
+ },
+ {
+  "id": "a030",
+  "category": "current",
+  "query": "how long did the last restore exercise take",
+  "expect": [
+   "dr-exercise"
+  ]
+ },
+ {
+  "id": "a031",
+  "category": "current",
+  "query": "Supportzeiten Samstag",
+  "expect": [
+   "supportzeiten"
+  ]
+ },
+ {
+  "id": "a032",
+  "category": "current",
+  "query": "Rechnungsnummern Zahlungsziel",
+  "expect": [
+   "rechnungsnummern"
+  ]
+ },
+ {
+  "id": "a033",
+  "category": "current",
+  "query": "mise en production Lyon mardi",
+  "expect": [
+   "mise-en-production-lyon"
+  ]
+ },
+ {
+  "id": "a034",
+  "category": "current",
+  "query": "ruff line length",
+  "expect": [
+   "python-lint-config"
+  ]
+ },
+ {
+  "id": "a035",
+  "category": "current",
+  "query": "feature branch naming and merge style",
+  "expect": [
+   "branch-naming"
+  ]
+ },
+ {
+  "id": "a036",
+  "category": "current",
+  "query": "terraform lock table bucket",
+  "expect": [
+   "terraform-remote-state"
+  ]
+ },
+ {
+  "id": "a037",
+  "category": "current",
+  "query": "SSO moved to Q4",
+  "expect": [
+   "meeting-2024-06-18-roadmap-sync"
+  ]
+ },
+ {
+  "id": "a038",
+  "category": "outdated",
+  "query": "db-prim-01 host",
+  "expect": [
+   "primary-database-server-postgres-17"
+  ]
+ },
+ {
+  "id": "a039",
+  "category": "outdated",
+  "query": "Postgres 15.4",
+  "expect": [
+   "primary-database-server-postgres-17"
+  ]
+ },
+ {
+  "id": "a040",
+  "category": "outdated",
+  "query": "backup at 02:30 UTC",
+  "expect": [
+   "nightly-backup-job"
+  ]
+ },
+ {
+  "id": "a041",
+  "category": "outdated",
+  "query": "standup 09:45 Google Meet",
+  "expect": [
+   "daily-sync-meeting"
+  ]
+ },
+ {
+  "id": "a042",
+  "category": "outdated",
+  "query": "Pro plan 29 EUR per month",
+  "expect": [
+   "plans-and-prices-v3"
+  ]
+ },
+ {
+  "id": "a043",
+  "category": "outdated",
+  "query": "no deploys Friday after 14:00",
+  "expect": [
+   "deploy-windows"
+  ]
+ },
+ {
+  "id": "a044",
+  "category": "outdated",
+  "query": "redis-sess.internal 6379 allkeys-lru",
+  "expect": [
+   "session-store"
+  ]
+ },
+ {
+  "id": "a045",
+  "category": "outdated",
+  "query": "Pro first response 4 business hours",
+  "expect": [
+   "support-response-targets"
+  ]
+ },
+ {
+  "id": "a046",
+  "category": "outdated",
+  "query": "Sentry projects web api mobile",
+  "expect": [
+   "sentry-retired"
+  ]
+ },
+ {
+  "id": "a047",
+  "category": "outdated",
+  "query": "Stripe API version 2023-10-16",
+  "expect": [
+   "payments-checkout-provider"
+  ]
+ },
+ {
+  "id": "a048",
+  "category": "outdated",
+  "query": "WireGuard config vpn.lumenfold.io",
+  "expect": [
+   "remote-access"
+  ]
+ },
+ {
+  "id": "a049",
+  "category": "outdated",
+  "query": "Kandji MDM enrollment",
+  "expect": [
+   "hardware-and-device-management"
+  ]
+ },
+ {
+  "id": "a050",
+  "category": "outdated",
+  "query": "Lambda arm64 sharp webp resize",
+  "expect": [
+   "thumbnail-service"
+  ]
+ },
+ {
+  "id": "a051",
+  "category": "outdated",
+  "query": "PagerDuty service LF-Core critical alerts",
+  "expect": [
+   "where-alerts-go"
+  ]
+ },
+ {
+  "id": "a052",
+  "category": "outdated",
+  "query": "BigQuery dataset prod_events",
+  "expect": [
+   "where-product-events-land"
+  ]
+ },
+ {
+  "id": "a053",
+  "category": "outdated",
+  "query": "Kundendienst Mo-Fr 8 bis 17 Uhr",
+  "expect": [
+   "supportzeiten"
+  ]
+ },
+ {
+  "id": "a054",
+  "category": "outdated",
+  "query": "Mehrwertsteuer Rechnung RE-2024",
+  "expect": [
+   "rechnungsnummern"
+  ]
+ },
+ {
+  "id": "a055",
+  "category": "outdated",
+  "query": "pnpm 9 package manager",
+  "expect": [
+   "frontend-tooling-note"
+  ]
+ },
+ {
+  "id": "a056",
+  "category": "outdated",
+  "query": "Q3 priorities self-serve onboarding SSO usage-based billing",
+  "expect": [
+   "meeting-2024-06-18-roadmap-sync"
+  ]
+ },
+ {
+  "id": "a057",
+  "category": "outdated",
+  "query": "sprint planning Wednesday 11:00",
+  "expect": [
+   "did-sprint-length-change"
+  ]
+ },
+ {
+  "id": "a058",
+  "category": "outdated",
+  "query": "keycloak access token 15 minutes",
+  "expect": [
+   "why-do-we-get-logged-out-after-5-minutes"
+  ]
+ },
+ {
+  "id": "a059",
+  "category": "outdated",
+  "query": "lyon-app-02 deploiement jeudi",
+  "expect": [
+   "mise-en-production-lyon"
+  ]
+ },
+ {
+  "id": "a060",
+  "category": "outdated",
+  "query": "Kubernetes 1.29 lf-prod 12 nodes",
+  "expect": [
+   "2024-06-12-prod-cluster-upgrade"
+  ]
+ },
+ {
+  "id": "a061",
+  "category": "outdated",
+  "query": "Grafana grafana.lumenfold.io",
+  "expect": [
+   "grafana-dashboards"
+  ]
+ },
+ {
+  "id": "a062",
+  "category": "sibling",
+  "query": "read replica for analytics jobs lag",
+  "expect": [
+   "postgres-read-replica-for-analytics"
+  ]
+ },
+ {
+  "id": "a063",
+  "category": "sibling",
+  "query": "dev cluster EKS",
+  "expect": [
+   "kubernetes-cluster-dev"
+  ]
+ },
+ {
+  "id": "a064",
+  "category": "sibling",
+  "query": "admin console URL",
+  "expect": [
+   "admin-console-url"
+  ]
+ },
+ {
+  "id": "a065",
+  "category": "sibling",
+  "query": "redis job queue noeviction",
+  "expect": [
+   "redis-job-queue"
+  ]
+ },
+ {
+  "id": "a066",
+  "category": "sibling",
+  "query": "macOS CI runners",
+  "expect": [
+   "ci-runner-pool-for-macos"
+  ]
+ },
+ {
+  "id": "a067",
+  "category": "sibling",
+  "query": "design team sprint length",
+  "expect": [
+   "sprint-cadence-for-the-design-team"
+  ]
+ },
+ {
+  "id": "a068",
+  "category": "sibling",
+  "query": "staging on-call primary",
+  "expect": [
+   "staging-on-call-rotation"
+  ]
+ },
+ {
+  "id": "a069",
+  "category": "sibling",
+  "query": "staging database host",
+  "expect": [
+   "staging-database-host"
+  ]
+ },
+ {
+  "id": "a070",
+  "category": "sibling",
+  "query": "dev environment URL",
+  "expect": [
+   "dev-environment-url"
+  ]
+ },
+ {
+  "id": "a071",
+  "category": "sibling",
+  "query": "staging web app URL basic auth",
+  "expect": [
+   "staging-environment-url"
+  ]
+ },
+ {
+  "id": "a072",
+  "category": "sibling",
+  "query": "production web app URL",
+  "expect": [
+   "production-environment-url"
+  ]
+ },
+ {
+  "id": "a073",
+  "category": "sibling",
+  "query": "staging cluster node count",
+  "expect": [
+   "kubernetes-cluster-staging"
+  ]
+ },
+ {
+  "id": "a074",
+  "category": "sibling",
+  "query": "db-repl-01 reporting replica",
+  "expect": [
+   "postgres-read-replica"
+  ]
+ },
+ {
+  "id": "a075",
+  "category": "sibling",
+  "query": "peak connections of 500 maximum",
+  "expect": [
+   "postgres-connection-usage"
+  ]
+ },
+ {
+  "id": "a076",
+  "category": "sibling",
+  "query": "Adyen fees per card transaction",
+  "expect": [
+   "payment-processing-fees"
+  ]
+ },
+ {
+  "id": "a077",
+  "category": "sibling",
+  "query": "nightly dump size 480 GB",
+  "expect": [
+   "backup-size"
+  ]
+ },
+ {
+  "id": "a078",
+  "category": "sibling",
+  "query": "Marrow outage disk full",
+  "expect": [
+   "2024-05-03-search-outage"
+  ]
+ },
+ {
+  "id": "a079",
+  "category": "sibling",
+  "query": "is Orchard built with Expo",
+  "expect": [
+   "orchard-does-not-use-expo"
+  ]
+ },
+ {
+  "id": "a080",
+  "category": "sibling",
+  "query": "does the search cluster have Kibana",
+  "expect": [
+   "marrow-has-no-kibana"
+  ]
+ },
+ {
+  "id": "a081",
+  "category": "sibling",
+  "query": "how are Python SDK releases published",
+  "expect": [
+   "python-sdk-release-process"
+  ]
+ },
+ {
+  "id": "a082",
+  "category": "no-answer",
+  "query": "Terraform Cloud workspace names",
+  "expect": []
+ },
+ {
+  "id": "a083",
+  "category": "no-answer",
+  "query": "office address in London",
+  "expect": []
+ },
+ {
+  "id": "a084",
+  "category": "no-answer",
+  "query": "GraphQL schema location",
+  "expect": []
+ },
+ {
+  "id": "a085",
+  "category": "no-answer",
+  "query": "iOS TestFlight beta group",
+  "expect": []
+ },
+ {
+  "id": "a086",
+  "category": "no-answer",
+  "query": "company holiday calendar",
+  "expect": []
+ },
+ {
+  "id": "a087",
+  "category": "no-answer",
+  "query": "Datadog API key rotation",
+  "expect": []
+ },
+ {
+  "id": "a088",
+  "category": "no-answer",
+  "query": "SOC 2 audit date",
+  "expect": []
+ },
+ {
+  "id": "a089",
+  "category": "no-answer",
+  "query": "MongoDB connection string",
+  "expect": []
+ },
+ {
+  "id": "a090",
+  "category": "no-answer",
+  "query": "Slack channel for design reviews",
+  "expect": []
+ },
+ {
+  "id": "a091",
+  "category": "no-answer",
+  "query": "expense report policy",
+  "expect": []
+ },
+ {
+  "id": "a092",
+  "category": "no-answer",
+  "query": "gRPC proto repository",
+  "expect": []
+ },
+ {
+  "id": "a093",
+  "category": "no-answer",
+  "query": "Cloudflare WAF rules",
+  "expect": []
+ },
+ {
+  "id": "a094",
+  "category": "no-answer",
+  "query": "parental leave policy",
+  "expect": []
+ },
+ {
+  "id": "a095",
+  "category": "no-answer",
+  "query": "Windows laptop options",
+  "expect": []
+ },
+ {
+  "id": "a096",
+  "category": "no-answer",
+  "query": "how do we handle GDPR deletion requests",
+  "expect": []
+ },
+ {
+  "id": "a097",
+  "category": "no-answer",
+  "kind": "near-miss",
+  "query": "Postgres statement_timeout and idle transaction timeout",
+  "expect": []
+ },
+ {
+  "id": "a098",
+  "category": "no-answer",
+  "kind": "near-miss",
+  "query": "Redis TLS certificate expiry and cipher suite",
+  "expect": []
+ },
+ {
+  "id": "a099",
+  "category": "no-answer",
+  "kind": "near-miss",
+  "query": "Adyen 3DS2 challenge flow webhook retry schedule",
+  "expect": []
+ },
+ {
+  "id": "a100",
+  "category": "no-answer",
+  "kind": "near-miss",
+  "query": "Keycloak LDAP user federation sync interval",
+  "expect": []
+ },
+ {
+  "id": "a101",
+  "category": "no-answer",
+  "kind": "near-miss",
+  "query": "Grafana Prometheus remote write retention limit",
+  "expect": []
+ },
+ {
+  "id": "a102",
+  "category": "no-answer",
+  "kind": "near-miss",
+  "query": "Kubernetes prod HPA target CPU utilization percentage",
+  "expect": []
+ },
+ {
+  "id": "a103",
+  "category": "no-answer",
+  "kind": "near-miss",
+  "query": "Berlin office bicycle storage locker combination",
+  "expect": []
+ },
+ {
+  "id": "a104",
+  "category": "no-answer",
+  "kind": "near-miss",
+  "query": "Airflow Celery worker concurrency and task soft time limit",
+  "expect": []
+ },
+ {
+  "id": "a105",
+  "category": "no-answer",
+  "kind": "near-miss",
+  "query": "Marrow Elasticsearch primary shard count per index",
+  "expect": []
+ },
+ {
+  "id": "a106",
+  "category": "no-answer",
+  "kind": "near-miss",
+  "query": "Orchard Android Play Store upload keystore alias",
+  "expect": []
+ },
+ {
+  "id": "a107",
+  "category": "no-answer",
+  "kind": "near-miss",
+  "query": "Gantry deploy canary traffic split percentages",
+  "expect": []
+ },
+ {
+  "id": "a108",
+  "category": "no-answer",
+  "kind": "near-miss",
+  "query": "Sundial backup S3 SSE-KMS encryption key alias",
+  "expect": []
+ },
+ {
+  "id": "a109",
+  "category": "no-answer",
+  "kind": "near-miss",
+  "query": "Tidewater Kafka consumer group lag alert threshold",
+  "expect": []
+ },
+ {
+  "id": "a110",
+  "category": "no-answer",
+  "kind": "near-miss",
+  "query": "PagerDuty planned maintenance window schedule",
+  "expect": []
+ },
+ {
+  "id": "a111",
+  "category": "no-answer",
+  "kind": "near-miss",
+  "query": "Business tier SSO SAML certificate rotation runbook",
+  "expect": []
+ }
+]

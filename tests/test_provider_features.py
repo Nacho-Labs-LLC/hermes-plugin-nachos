@@ -32,11 +32,12 @@ def test_tool_surface_without_shared_scope(tmp_path):
         "nachos_memory_put",
         "nachos_memory_remove",
         "nachos_history_search",
+        "nachos_memory_reconcile",
     ]
     assert all(
         "scope" not in s["parameters"]["properties"]
         for s in p.get_tool_schemas()
-        if s["name"] != "nachos_history_search"
+        if s["name"] not in ("nachos_history_search", "nachos_memory_reconcile")
     )
 
 
