@@ -38,7 +38,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from .embeddings import Embedder
+from .embeddings import DOCUMENT, QUERY, Embedder
 from .index import MemoryIndex, dot
 from .lexical import idf_weights, jaccard, query_terms, score_document, tokens
 from .quality import low_signal_reason
@@ -127,12 +127,12 @@ class MemoryService:
         """The embedder when semantic search is usable right now, else None."""
         return self.embedder if self.semantic_enabled else None
 
-    def _embed(self, texts: list[str]) -> list[list[float]] | None:
+    def _embed(self, texts: list[str], input_type: str = DOCUMENT) -> list[list[float]] | None:
         embedder = self._active_embedder()
         if embedder is None or not texts:
             return None
         try:
-            return embedder.embed(texts)
+            return embedder.embed(texts, input_type)
         except Exception as e:  # any backend failure degrades to lexical
             self.embedder_error = f"{type(e).__name__}: {e}"[:300]
             logger.warning(
@@ -249,7 +249,7 @@ class MemoryService:
             return None
         for s in targets:
             self.sync_index(s)
-        vectors = self._embed([query])
+        vectors = self._embed([query], QUERY)
         return vectors[0] if vectors else None
 
     def _ranked_hits(

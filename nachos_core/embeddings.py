@@ -9,10 +9,17 @@ Backends:
 * ``nachos``  — the ``nachos-embeddings`` CLI (local Transformers.js model by
   default). A persistent ``serve`` worker (JSON lines over a pipe) keeps the
   model loaded; older CLIs without ``serve`` get one subprocess per batch.
+  CLIs that support input types (the ready line carries ``pooling`` /
+  prefix fields) are told whether a text is a query or a document, so
+  retrieval models apply their own prefixes; older CLIs are never sent a type.
 * ``openai``  — any OpenAI-compatible ``/embeddings`` endpoint over plain
   HTTP: Ollama, LM Studio, llama.cpp server, vLLM, or OpenAI itself. The API
   key is read from an environment variable at call time and never stored.
 * ``sentence-transformers`` — in-process model, if the package is installed.
+
+``openai`` and ``sentence-transformers`` have no query/document concept, so
+the configured ``embedding_query_prefix`` / ``embedding_document_prefix`` are
+prepended client-side (e.g. ``query: `` / ``passage: `` for E5 models).
 * ``auto`` (default) — the first of nachos CLI on PATH, sentence-transformers
   importable, or an OpenAI-compatible base URL if one is configured.
 * ``off`` — lexical only.
@@ -39,6 +46,8 @@ EMBEDDING_BACKENDS = ("auto", "nachos", "openai", "sentence-transformers", "off"
 
 _BATCH = 64
 _MAX_TEXT_CHARS = 2000
+QUERY = "query"
+DOCUMENT = "document"
 
 
 class Embedder(ABC):
@@ -48,20 +57,32 @@ class Embedder(ABC):
     model_id: str = ""
     #: Vector length when the backend reports it (checked on every embed).
     dimension: int | None = None
+    #: Client-side prefixes for backends without a native input type.
+    query_prefix: str = ""
+    document_prefix: str = ""
 
     @abstractmethod
     def _embed_batch(self, texts: list[str]) -> list[list[float]]:
         """Embed one batch; must return exactly one vector per text."""
 
+    def _embed_typed(self, texts: list[str], input_type: str) -> list[list[float]]:
+        """Embed one batch for ``input_type``; backends with a native type override this."""
+        del input_type  # no native type: prefixes were applied by embed()
+        return self._embed_batch(texts)
+
     def close(self) -> None:  # noqa: B027 - optional hook, deliberately not abstract
         """Release any resources (worker processes). No-op by default."""
 
-    def embed(self, texts: list[str]) -> list[list[float]]:
-        cleaned = [(t or "").replace("\n", " ")[:_MAX_TEXT_CHARS] for t in texts]
+    def embed(self, texts: list[str], input_type: str = DOCUMENT) -> list[list[float]]:
+        """Vectors for ``texts``; ``input_type`` is ``"document"`` (default) or ``"query"``."""
+        if input_type not in (QUERY, DOCUMENT):
+            raise ValueError(f"input_type must be {QUERY!r} or {DOCUMENT!r}, got {input_type!r}")
+        prefix = self.query_prefix if input_type == QUERY else self.document_prefix
+        cleaned = [prefix + (t or "").replace("\n", " ")[:_MAX_TEXT_CHARS] for t in texts]
         out: list[list[float]] = []
         for start in range(0, len(cleaned), _BATCH):
             batch = cleaned[start : start + _BATCH]
-            vectors = self._embed_batch(batch)
+            vectors = self._embed_typed(batch, input_type)
             if len(vectors) != len(batch):
                 raise RuntimeError(
                     f"{self.model_id}: expected {len(batch)} vectors, got {len(vectors)}"
@@ -167,6 +188,10 @@ class CliEmbedder(Embedder):
         self._lock = threading.Lock()
         self._worker: _Worker | None = None
         self._serve_disabled = False
+        #: True once a ready line shows the CLI understands input types.
+        self.supports_type = False
+        #: Set False to keep legacy behaviour (never send a type) even if supported.
+        self.send_type = True
         self._restarts = 0
         self._next_id = 0
         atexit.register(_close_ref, weakref.ref(self))
@@ -193,7 +218,7 @@ class CliEmbedder(Embedder):
         return worker
 
     def _adopt_ready(self, msg: dict[str, Any]) -> None:
-        """Take the dimension from the ready line (absent on older CLIs).
+        """Take the dimension and type support from the ready line (absent on older CLIs).
 
         ``model_id`` stays the deterministic ``nachos:<model>[:<dtype>]`` because
         the memory service reads it before the worker has started; adopting the
@@ -202,6 +227,8 @@ class CliEmbedder(Embedder):
         dim = msg.get("dimension")
         if isinstance(dim, int) and not isinstance(dim, bool) and dim > 0:
             self.dimension = dim
+        # Type support shipped together with these fields; older CLIs lack all of them.
+        self.supports_type = any(k in msg for k in ("pooling", "queryPrefix", "documentPrefix"))
 
     def _drop_worker(self) -> None:
         worker, self._worker = self._worker, None
@@ -213,10 +240,13 @@ class CliEmbedder(Embedder):
             self._drop_worker()
 
     # -- embedding --------------------------------------------------------
-    def _request(self, worker: _Worker, texts: list[str]) -> list[list[float]]:
+    def _request(self, worker: _Worker, texts: list[str], input_type: str) -> list[list[float]]:
         self._next_id += 1
         rid = self._next_id
-        worker.send({"id": rid, "texts": texts})
+        payload: dict[str, Any] = {"id": rid, "texts": texts}
+        if self._type_enabled():
+            payload["type"] = input_type
+        worker.send(payload)
         while True:
             msg = worker.read(self.request_timeout)
             if msg.get("id") != rid:
@@ -228,13 +258,16 @@ class CliEmbedder(Embedder):
                 raise _WorkerError("reply without vectors")
             return vectors
 
-    def _serve_batch(self, texts: list[str]) -> list[list[float]] | None:
+    def _type_enabled(self) -> bool:
+        return self.supports_type and self.send_type
+
+    def _serve_batch(self, texts: list[str], input_type: str) -> list[list[float]] | None:
         """Vectors from the worker, or None if serve mode is unusable."""
         while not self._serve_disabled:
             try:
                 if self._worker is None:
                     self._worker = self._start_worker()
-                return self._request(self._worker, texts)
+                return self._request(self._worker, texts, input_type)
             except (_WorkerError, OSError):  # noqa: PERF203 - retry loop: the try IS the loop body
                 was_running = self._worker is not None
                 self._drop_worker()
@@ -245,14 +278,19 @@ class CliEmbedder(Embedder):
         return None
 
     def _embed_batch(self, texts: list[str]) -> list[list[float]]:
+        return self._embed_typed(texts, DOCUMENT)
+
+    def _embed_typed(self, texts: list[str], input_type: str) -> list[list[float]]:
         with self._lock:
-            vectors = self._serve_batch(texts)
+            vectors = self._serve_batch(texts, input_type)
         if vectors is not None:
             return vectors
-        return self._embed_oneshot(texts)
+        return self._embed_oneshot(texts, input_type)
 
-    def _embed_oneshot(self, texts: list[str]) -> list[list[float]]:
+    def _embed_oneshot(self, texts: list[str], input_type: str = DOCUMENT) -> list[list[float]]:
         cmd = [self.command, "embed", "--stdin", "--json"]
+        if self._type_enabled():
+            cmd += ["--type", input_type]
         if self.model:
             cmd += ["--model", self.model]
         if self.dtype:
@@ -281,14 +319,26 @@ def _close_ref(ref: weakref.ReferenceType[CliEmbedder]) -> None:
 class OpenAICompatEmbedder(Embedder):
     """POST ``{base_url}/embeddings`` — works with Ollama, LM Studio, OpenAI, ..."""
 
-    def __init__(self, base_url: str, model: str, api_key_env: str = "", timeout: float = 60.0):
+    def __init__(
+        self,
+        base_url: str,
+        model: str,
+        api_key_env: str = "",
+        timeout: float = 60.0,
+        query_prefix: str = "",
+        document_prefix: str = "",
+    ):
         if not base_url or not model:
             raise ValueError("openai embeddings need embedding_base_url and embedding_model")
+        self.query_prefix = query_prefix
+        self.document_prefix = document_prefix
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.api_key_env = api_key_env
         self.timeout = timeout
-        self.model_id = f"openai:{self.base_url}:{model}"
+        self.model_id = f"openai:{self.base_url}:{model}" + _prefix_suffix(
+            query_prefix, document_prefix
+        )
 
     def _embed_batch(self, texts: list[str]) -> list[list[float]]:
         headers = {"Content-Type": "application/json"}
@@ -309,10 +359,22 @@ class OpenAICompatEmbedder(Embedder):
         return [row["embedding"] for row in rows]
 
 
+def _prefix_suffix(query_prefix: str, document_prefix: str) -> str:
+    """Model-id suffix for client-side prefixes, so changing them re-embeds."""
+    out = ""
+    if query_prefix:
+        out += f":qp={query_prefix!r}"
+    if document_prefix:
+        out += f":dp={document_prefix!r}"
+    return out
+
+
 class SentenceTransformersEmbedder(Embedder):
-    def __init__(self, model: str = "") -> None:
+    def __init__(self, model: str = "", query_prefix: str = "", document_prefix: str = "") -> None:
         self.model = model or "all-MiniLM-L6-v2"
-        self.model_id = f"st:{self.model}"
+        self.query_prefix = query_prefix
+        self.document_prefix = document_prefix
+        self.model_id = f"st:{self.model}" + _prefix_suffix(query_prefix, document_prefix)
         self._model: Any = None
 
     def _embed_batch(self, texts: list[str]) -> list[list[float]]:
@@ -332,30 +394,46 @@ def make_embedder(
     api_key_env: str = "",
     command: str = "nachos-embeddings",
     dtype: str = "",
+    query_prefix: str = "",
+    document_prefix: str = "",
 ) -> Embedder | None:
-    """Resolve a configured backend name to an Embedder, or None for lexical-only."""
+    """Resolve a configured backend name to an Embedder, or None for lexical-only.
+
+    ``query_prefix`` / ``document_prefix`` apply to ``openai`` and
+    ``sentence-transformers`` only; the ``nachos`` CLI has its own per-model prefixes.
+    """
     kind = (backend or "auto").strip().lower()
     if kind == "off":
         return None
+    prefixes = (query_prefix, document_prefix)
     if kind == "auto":
-        return _auto_embedder(model, base_url, api_key_env, command, dtype)
+        return _auto_embedder(model, base_url, api_key_env, command, dtype, prefixes)
     if kind == "nachos":
         return CliEmbedder(command, model, dtype=dtype)
     if kind == "openai":
-        return OpenAICompatEmbedder(base_url, model, api_key_env)
+        return OpenAICompatEmbedder(
+            base_url, model, api_key_env, query_prefix=prefixes[0], document_prefix=prefixes[1]
+        )
     if kind == "sentence-transformers":
-        return SentenceTransformersEmbedder(model)
+        return SentenceTransformersEmbedder(model, *prefixes)
     raise ValueError(f"Unknown embeddings backend {backend!r}; use one of {EMBEDDING_BACKENDS}")
 
 
 def _auto_embedder(
-    model: str, base_url: str, api_key_env: str, command: str, dtype: str = ""
+    model: str,
+    base_url: str,
+    api_key_env: str,
+    command: str,
+    dtype: str = "",
+    prefixes: tuple[str, str] = ("", ""),
 ) -> Embedder | None:
     """First available backend: nachos CLI, sentence-transformers, then OpenAI-compatible."""
     if shutil.which(command):
         return CliEmbedder(command, model, dtype=dtype)
     if importlib.util.find_spec("sentence_transformers") is not None:
-        return SentenceTransformersEmbedder(model)
+        return SentenceTransformersEmbedder(model, *prefixes)
     if base_url and model:
-        return OpenAICompatEmbedder(base_url, model, api_key_env)
+        return OpenAICompatEmbedder(
+            base_url, model, api_key_env, query_prefix=prefixes[0], document_prefix=prefixes[1]
+        )
     return None

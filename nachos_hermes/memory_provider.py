@@ -198,6 +198,8 @@ class NachosMemoryProvider(MemoryProvider):
                 dtype=self._cfg["embedding_dtype"],
                 base_url=self._cfg["embedding_base_url"],
                 api_key_env=self._cfg["embedding_api_key_env"],
+                query_prefix=self._cfg["embedding_query_prefix"],
+                document_prefix=self._cfg["embedding_document_prefix"],
             )
         except Exception as e:
             logger.warning("Nachos embeddings unavailable (%s); using lexical recall.", e)

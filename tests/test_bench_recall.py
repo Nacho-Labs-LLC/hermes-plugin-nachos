@@ -27,6 +27,10 @@ def _opts(**kw):
         "base_url": "",
         "api_key_env": "",
         "command": "nachos-embeddings",
+        "query_prefix": "",
+        "document_prefix": "",
+        "no_types": False,
+        "label": "",
         "repeat": 1,
     }
     return argparse.Namespace(**{**base, **kw})

@@ -41,6 +41,8 @@ def test_setup_schema_describes_all_non_secret_provider_settings():
         "embedding_dtype",
         "embedding_base_url",
         "embedding_api_key_env",
+        "embedding_query_prefix",
+        "embedding_document_prefix",
         "duplicate_threshold",
         "shared_store",
         "shared_store_path",

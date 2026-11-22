@@ -50,6 +50,8 @@ Run `hermes memory setup` or edit `$HERMES_HOME/nachos/config.json`. Settings ar
 | `embedding_dtype` | blank | Precision for the `nachos` backend, e.g. `q8` (about 3x faster, cosine about 0.99 vs fp32). Blank = backend default. Changing it re-embeds. |
 | `embedding_base_url` | blank | OpenAI-compatible base URL. |
 | `embedding_api_key_env` | blank | Name of the env var holding the API key. |
+| `embedding_query_prefix` | blank | Prepended to search queries for the `openai` and `sentence-transformers` backends, e.g. `query: ` (E5) or `search_query: ` (nomic). Spaces are kept. The `nachos` backend applies its own per-model prefixes. Changing it re-embeds. |
+| `embedding_document_prefix` | blank | Prepended to stored entries for the same backends, e.g. `passage: ` (E5) or `search_document: ` (nomic). Changing it re-embeds. |
 | `duplicate_threshold` | `0.65` | Similarity (0-1) above which a new entry is flagged as a likely duplicate. |
 | `shared_store` | `off` | `on` adds a memory scope shared by every profile on the machine. |
 | `shared_store_path` | blank | Shared store directory (blank = `<hermes root>/nachos-shared`). |
