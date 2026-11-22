@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.1 (unreleased)
+
+### Fixed
+- Resolve OpenAI-compatible embedding credentials at request time through Hermes' active profile secret scope, including the audit CLI and auto-selected backend. Never fall back to direct process-environment credential reads; a configured missing key prevents the request and recall degrades to lexical matching.
+- Align root and memory-provider manifests with the catalog candidate's verified Hermes minimum, `>=0.21.6`.
+
+### Documentation
+- Disclose all session-capture model inputs: trimmed transcripts, up to 200 memory titles/summaries and up to 100 USER.md entries. Human approval gates memory insertion, not outbound transmission; `capture: off` disables capture.
+- Clarify optional embedding network calls, raw transcript checkpoints, profile-scoped key resolution and the distinction between this unreleased candidate and published v0.6.0.
+
 ## 0.6.0
 
 ### Added

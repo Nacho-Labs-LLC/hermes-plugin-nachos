@@ -205,7 +205,7 @@ def test_unknown_backend_is_rejected():
         make_embedder("word2vec")
 
 
-def test_openai_compatible_endpoint(monkeypatch):
+def test_openai_compatible_endpoint():
     seen = {}
 
     class Handler(BaseHTTPRequestHandler):
@@ -227,11 +227,11 @@ def test_openai_compatible_endpoint(monkeypatch):
     server = HTTPServer(("127.0.0.1", 0), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
-        monkeypatch.setenv("TEST_EMBED_KEY", "secret-token")
         embedder = OpenAICompatEmbedder(
             f"http://127.0.0.1:{server.server_port}/v1",
             "nomic-embed-text",
             api_key_env="TEST_EMBED_KEY",
+            credential_resolver={"TEST_EMBED_KEY": "secret-token"}.get,
         )
         vectors = embedder.embed(["a", "b"])
     finally:

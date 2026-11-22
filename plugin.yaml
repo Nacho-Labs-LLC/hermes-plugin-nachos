@@ -1,10 +1,10 @@
 manifest_version: 2
 name: nachos
-version: 0.6.0
+version: 0.6.1
 description: "Local-first durable memory for Hermes Agent: always-on manifest, semantic recall, duplicate flagging and transcript history search."
 author: "Nacho Labs LLC"
 license: MIT
 homepage: "https://github.com/Nacho-Labs-LLC/hermes-plugin-nachos"
-requires_hermes: ">=0.21"
+requires_hermes: ">=0.21.6"
 provides_tools: []
 provides_hooks: []

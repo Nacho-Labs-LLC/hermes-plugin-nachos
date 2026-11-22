@@ -1,3 +1,4 @@
 name: nachos
-version: 0.6.0
+version: 0.6.1
+requires_hermes: ">=0.21.6"
 description: "Nachos memory: always-on manifest, hybrid lexical and semantic recall, duplicate flagging, review-inbox capture and history search. No LLM in the hot path."
