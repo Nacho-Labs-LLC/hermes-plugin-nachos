@@ -31,6 +31,7 @@ DEFAULTS: dict[str, Any] = {
     "duplicate_threshold": 0.65,
     "duplicate_calibration": "auto",
     "similarity_floor": "off",
+    "abstention": "on",
     "rerank": "off",
     "rerank_model": "",
     "rerank_dtype": "",
@@ -49,6 +50,7 @@ _CHOICES: dict[str, tuple[str, ...]] = {
     "rerank": ("off", "nachos"),
     "similarity_floor": ("off", "auto"),
     "duplicate_calibration": ("auto", "off"),
+    "abstention": ("on", "off"),
 }
 
 CONFIG_SCHEMA: list[dict[str, Any]] = [
@@ -115,6 +117,12 @@ CONFIG_SCHEMA: list[dict[str, Any]] = [
         "choices": ["off", "auto"],
         "description": "auto drops semantic hits below the model's own 75th percentile of "
         "random-pair similarity (calibrated from the stored vectors).",
+    },
+    {
+        "key": "abstention",
+        "choices": ["on", "off"],
+        "description": "on attaches per-query confidence and an explicit no_confident_match "
+        "flag to recall query responses while still listing low-confidence candidates.",
     },
     {
         "key": "rerank",

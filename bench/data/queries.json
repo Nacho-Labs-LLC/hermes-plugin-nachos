@@ -3362,5 +3362,145 @@
   "query": "password rotation policy for shared mailbox",
   "expect": [],
   "id": "q423"
+ },
+ {
+  "category": "negative",
+  "kind": "near-miss",
+  "query": "Harbor billing invoice PDF font licensing",
+  "expect": [],
+  "id": "q424"
+ },
+ {
+  "category": "negative",
+  "kind": "near-miss",
+  "query": "Brindle iOS Crashlytics dSYM upload script",
+  "expect": [],
+  "id": "q425"
+ },
+ {
+  "category": "negative",
+  "kind": "near-miss",
+  "query": "Postgres pg_stat_statements track_planning setting",
+  "expect": [],
+  "id": "q426"
+ },
+ {
+  "category": "negative",
+  "kind": "near-miss",
+  "query": "Redis cluster TLS mutual authentication client cert",
+  "expect": [],
+  "id": "q427"
+ },
+ {
+  "category": "negative",
+  "kind": "near-miss",
+  "query": "Tidepool Airflow Celery worker concurrency setting",
+  "expect": [],
+  "id": "q428"
+ },
+ {
+  "category": "negative",
+  "kind": "near-miss",
+  "query": "Mosaic design system dark mode contrast ratio tokens",
+  "expect": [],
+  "id": "q429"
+ },
+ {
+  "category": "negative",
+  "kind": "near-miss",
+  "query": "Lantern OIDC PKCE code verifier byte length",
+  "expect": [],
+  "id": "q430"
+ },
+ {
+  "category": "negative",
+  "kind": "near-miss",
+  "query": "Ferrule CLI zsh autocompletion install command",
+  "expect": [],
+  "id": "q431"
+ },
+ {
+  "category": "negative",
+  "kind": "near-miss",
+  "query": "Pavilion storefront Apple Pay merchant identifier",
+  "expect": [],
+  "id": "q432"
+ },
+ {
+  "category": "negative",
+  "kind": "near-miss",
+  "query": "Warden Vault audit log retention period",
+  "expect": [],
+  "id": "q433"
+ },
+ {
+  "category": "negative",
+  "kind": "near-miss",
+  "query": "Sieve OpenSearch HNSW vector index ef_construction",
+  "expect": [],
+  "id": "q434"
+ },
+ {
+  "category": "negative",
+  "kind": "near-miss",
+  "query": "Sundial scheduler daylight saving time cron behavior",
+  "expect": [],
+  "id": "q435"
+ },
+ {
+  "category": "negative",
+  "kind": "near-miss",
+  "query": "Orrery feature store Feast online materialization job",
+  "expect": [],
+  "id": "q436"
+ },
+ {
+  "category": "negative",
+  "kind": "near-miss",
+  "query": "Catalog API Apollo Studio schema registry key",
+  "expect": [],
+  "id": "q437"
+ },
+ {
+  "category": "negative",
+  "kind": "near-miss",
+  "query": "Cairn Terraform KMS customer managed key ARN",
+  "expect": [],
+  "id": "q438"
+ },
+ {
+  "category": "negative",
+  "kind": "near-miss",
+  "query": "Quill Astro robots txt crawl delay setting",
+  "expect": [],
+  "id": "q439"
+ },
+ {
+  "category": "negative",
+  "kind": "near-miss",
+  "query": "Lumen analytics dashboard CSV export row limit",
+  "expect": [],
+  "id": "q440"
+ },
+ {
+  "category": "negative",
+  "kind": "near-miss",
+  "query": "Beacon feature flags murmur3 bucketing hash seed",
+  "expect": [],
+  "id": "q441"
+ },
+ {
+  "category": "negative",
+  "kind": "near-miss",
+  "query": "Trellis CI GPU runner instance type",
+  "expect": [],
+  "id": "q442"
+ },
+ {
+  "category": "negative",
+  "kind": "near-miss",
+  "query": "Notifier service Twilio SMS sender short code",
+  "expect": [],
+  "id": "q443"
  }
 ]

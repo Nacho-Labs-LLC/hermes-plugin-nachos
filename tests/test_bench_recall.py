@@ -241,9 +241,13 @@ class TestAlternateDataDir:
 
     def test_no_answer_queries_are_reported_apart(self):
         memories, queries = recall.load_dataset(self.ADV)
-        run = recall.run_backend("off", _opts(), memories, queries[-20:])
-        assert run["no_answer"]["n"] == 15
+        ans = [q for q in queries if q["category"] != "no-answer"][:5]
+        no_ans = [q for q in queries if q["category"] == "no-answer"]
+        run = recall.run_backend("off", _opts(), memories, ans + no_ans)
+        assert run["no_answer"]["n"] == len(no_ans)
+        assert run["no_answer"]["n"] >= 30
         assert run["overall"]["n"] == 5
+        assert "abstention" in run
 
 
 class TestNegativeQueries:

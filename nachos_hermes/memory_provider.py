@@ -270,8 +270,10 @@ class NachosMemoryProvider(MemoryProvider):
             "`nachos_memory_put` (pass `supersedes` with the old key when replacing "
             "an outdated fact; if the response lists a `possible_updates` entry "
             "that is an older version of the same fact, call `nachos_memory_put` "
-            "again with `supersedes=[key]`); recall with `nachos_memory_recall`, "
-            "remove with `nachos_memory_remove`. Never use the built-in `memory` tool with "
+            "again with `supersedes=[key]`); recall with `nachos_memory_recall` "
+            "(if it returns `no_confident_match: true`, treat any listed entries as "
+            "low-confidence candidates rather than confirmed answers), remove with "
+            "`nachos_memory_remove`. Never use the built-in `memory` tool with "
             '`target: "memory"`: it is disabled and not shown to you. Persona and '
             "identity belong to SOUL.md and are not memory. Earlier conversation that was "
             "compressed out of THIS conversation can be recovered with "
@@ -523,6 +525,11 @@ class NachosMemoryProvider(MemoryProvider):
         if query:
             limit = clamp_int(args.get("limit"), 10, 1, 25)
             include_superseded = bool(args.get("include_superseded", False))
+            if self._cfg.get("abstention", "on") == "on":
+                payload = service.search_with_confidence(
+                    query, limit=limit, scope=scope, include_superseded=include_superseded
+                )
+                return json.dumps(payload)
             results = service.search(
                 query, limit=limit, scope=scope, include_superseded=include_superseded
             )

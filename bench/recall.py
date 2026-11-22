@@ -172,6 +172,51 @@ def summarize_negative(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def summarize_abstention(
+    answerable: list[dict[str, Any]], unanswerable: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Abstention precision/recall on unanswerable queries plus answerable false-abstention rate."""
+    tp = sum(1 for r in unanswerable if not r.get("confident", True))
+    fn = len(unanswerable) - tp
+    fp = sum(1 for r in answerable if not r.get("confident", True))
+    non_para = [r for r in answerable if r["category"] != "paraphrase"]
+    fp_non_para = sum(1 for r in non_para if not r.get("confident", True))
+    prec = tp / (tp + fp) if (tp + fp) else 1.0
+    rec = tp / len(unanswerable) if unanswerable else 0.0
+    f1 = 2 * prec * rec / (prec + rec) if (prec + rec) else 0.0
+    near_miss = [r for r in unanswerable if r.get("kind") == "near-miss"]
+    standard = [r for r in unanswerable if r.get("kind") != "near-miss"]
+    out: dict[str, Any] = {
+        "n_unanswerable": len(unanswerable),
+        "abstained_unanswerable": tp,
+        "missed_unanswerable": fn,
+        "n_answerable": len(answerable),
+        "abstained_answerable": fp,
+        "abstained_non_paraphrase": fp_non_para,
+        "n_non_paraphrase": len(non_para),
+        "precision": round(prec, 4),
+        "recall": round(rec, 4),
+        "f1": round(f1, 4),
+        "confident_hit@1": round(
+            sum(1 for r in answerable if r.get("confident", True) and r["rank"] == 1)
+            / len(answerable),
+            4,
+        )
+        if answerable
+        else 0.0,
+    }
+    if near_miss:
+        nm_tp = sum(1 for r in near_miss if not r.get("confident", True))
+        std_tp = sum(1 for r in standard if not r.get("confident", True))
+        out["standard_n"] = len(standard)
+        out["standard_abstained"] = std_tp
+        out["standard_recall"] = round(std_tp / len(standard), 4) if standard else 0.0
+        out["near_miss_n"] = len(near_miss)
+        out["near_miss_abstained"] = nm_tp
+        out["near_miss_recall"] = round(nm_tp / len(near_miss), 4)
+    return out
+
+
 def aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
     """Overall and per-category summaries of per-query ``rows`` (rank, ms, category).
 
@@ -190,6 +235,9 @@ def aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "n": len(blank),
             "returned_results": sum(1 for r in blank if r.get("n_results")),
         }
+    unanswerable = negatives + blank
+    if unanswerable and any("confident" in r for r in rows):
+        out["abstention"] = summarize_abstention(answerable, unanswerable)
     present = {r["category"] for r in answerable}
     if negatives:
         present.add("negative")
@@ -262,20 +310,28 @@ def run_queries(
     rows = []
     for q in queries:
         timings, keys = [], []
+        confident, confidence, conf_score = True, "high", 1.0
         for i in range(max(1, repeat)):
             start = time.perf_counter()
-            results = svc.search(q["query"], limit=SEARCH_LIMIT)
+            payload = svc.search_with_confidence(q["query"], limit=SEARCH_LIMIT)
             timings.append((time.perf_counter() - start) * 1000.0)
             if i == 0:
-                keys = [r["key"] for r in results]
+                keys = [r["key"] for r in payload["results"]]
+                confident = bool(payload["confident"])
+                confidence = str(payload["confidence"])
+                conf_score = float(payload["confidence_score"])
         rows.append(
             {
                 "id": q["id"],
                 "category": q["category"],
+                "kind": q.get("kind", ""),
                 "query": q["query"],
                 "expect": q["expect"],
                 "rank": rank_of(q["expect"], keys, q.get("match", "any")),
                 "n_results": len(keys),
+                "confident": confident,
+                "confidence": confidence,
+                "confidence_score": conf_score,
                 "ms": percentile(timings, 50),
                 "top": keys[:3],
             }
@@ -474,6 +530,22 @@ def format_report(report: dict[str, Any]) -> str:
             na = run["no_answer"]
             lines += [
                 f"no-answer queries: {na['returned_results']}/{na['n']} still returned results",
+                "",
+            ]
+        if "abstention" in run:
+            ab = run["abstention"]
+            detail = (
+                f" [std {ab['standard_abstained']}/{ab['standard_n']}, "
+                f"near-miss {ab['near_miss_abstained']}/{ab['near_miss_n']}]"
+                if "near_miss_n" in ab
+                else ""
+            )
+            lines += [
+                f"abstention: P={ab['precision']:.3f} R={ab['recall']:.3f} F1={ab['f1']:.3f} "
+                f"(unanswerable {ab['abstained_unanswerable']}/{ab['n_unanswerable']}{detail}; "
+                f"answerable abstained {ab['abstained_answerable']}/{ab['n_answerable']}, "
+                f"non-para {ab['abstained_non_paraphrase']}/{ab['n_non_paraphrase']}; "
+                f"confident hit@1={ab['confident_hit@1']:.3f})",
                 "",
             ]
     return "\n".join(lines)

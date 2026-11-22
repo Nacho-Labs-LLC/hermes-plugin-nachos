@@ -21,6 +21,7 @@ import os
 import random
 import shutil
 import sqlite3
+import statistics
 import tempfile
 import time
 from array import array
@@ -28,18 +29,20 @@ from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
+from .calibration import CALIBRATION_MIN_HEADS, blend_profiles, prior_profile
+
 _SQLITE_MAGIC = b"SQLite format 3\x00"
 _SNAPSHOT_ATTEMPTS = 4  # initial attempt + 3 retries
 
 
-_CALIBRATION_MIN_HEADS = 30  # fewer entries than this give a meaningless spread
+_CALIBRATION_MIN_HEADS = CALIBRATION_MIN_HEADS
 _CALIBRATION_DRIFT = 0.2  # re-sample once the head count moves this far from the last sample
 _CALIBRATION_PAIRS = 4000
 _PROFILE_PERCENTILES = (50, 75, 80, 85, 90, 95, 99, 99.5)
 
 
 def _pair_profile(vectors: list[list[float]]) -> dict[str, float]:
-    """Percentiles of cosine similarity over a fixed-seed sample of distinct vector pairs."""
+    """Percentiles, mean and std of cosine similarity over a fixed-seed sample of vector pairs."""
     rnd = random.Random(0)  # noqa: S311 - deterministic sampling, not security
     n = len(vectors)
     seen: set[tuple[int, int]] = set()
@@ -54,7 +57,10 @@ def _pair_profile(vectors: list[list[float]]) -> dict[str, float]:
         sims.append(dot(vectors[a], vectors[b]))
     sims.sort()
     last = len(sims) - 1
-    return {f"p{p:g}": sims[min(last, round(p / 100 * last))] for p in _PROFILE_PERCENTILES}
+    out = {f"p{p:g}": sims[min(last, round(p / 100 * last))] for p in _PROFILE_PERCENTILES}
+    out["mean"] = statistics.fmean(sims)
+    out["std"] = statistics.pstdev(sims)
+    return out
 
 
 def index_path_for(store_path: Path) -> Path:
@@ -474,36 +480,38 @@ class MemoryIndex:
     # -- similarity calibration -------------------------------------------
 
     def similarity_profile(self, model: str) -> dict[str, float] | None:
-        """Random-pair cosine percentiles of ``model``'s head vectors, or None if too few.
+        """Random-pair cosine profile for ``model``, using offline priors during cold start.
 
-        Cosine ranges differ a lot between embedding models (random pairs sit near 0.1 for
-        MiniLM and near 0.5 for bge), so absolute similarity cutoffs are not portable. This
-        measures the model's own spread from the stored vectors: a fixed-seed sample of head
-        pairs, keyed by ``model`` and cached in the index. The cache is recomputed when the
-        number of head vectors drifts more than ``_CALIBRATION_DRIFT`` from the sampled count.
+        Cosine ranges differ a lot between embedding models (random pairs sit near 0.05 for
+        MiniLM and near 0.50 for gte-modernbert), so absolute cutoffs are not portable. Below
+        ``_CALIBRATION_MIN_HEADS`` entries this falls back to the model's offline prior (or None
+        for unknown models); above that it samples the store's own head vectors (cached in the
+        index, resampled after ``_CALIBRATION_DRIFT`` drift) and blends smoothly from the prior
+        to the empirical store distribution.
         """
         heads = self._load_vectors(model)[0]
         count = len(heads)
+        prior = prior_profile(model)
         if count < _CALIBRATION_MIN_HEADS:
-            return None
+            return prior
         row = None
         with contextlib.suppress(sqlite3.OperationalError):  # read-only copy of an old index
             row = self._conn.execute(
                 "SELECT head_count, profile FROM calibration WHERE model = ?", (model,)
             ).fetchone()
         if row is not None and abs(count - int(row[0])) <= _CALIBRATION_DRIFT * int(row[0]):
-            profile: dict[str, float] = json.loads(row[1])
-            return profile
-        profile = _pair_profile(list(heads.values()))
+            empirical: dict[str, float] = json.loads(row[1])
+            return blend_profiles(prior, empirical, count)
+        empirical = _pair_profile(list(heads.values()))
         if not self._read_only:
             self._conn.execute(
                 "INSERT INTO calibration (model, head_count, profile) VALUES (?, ?, ?) "
                 "ON CONFLICT(model) DO UPDATE SET head_count=excluded.head_count, "
                 "profile=excluded.profile",
-                (model, count, json.dumps(profile)),
+                (model, count, json.dumps(empirical)),
             )
             self._conn.commit()
-        return profile
+        return blend_profiles(prior, empirical, count)
 
     # -- usage -------------------------------------------------------------
 

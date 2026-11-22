@@ -364,8 +364,8 @@ class LexicalIndex:
         probes = tuple(dict.fromkeys((*weights, *terms, *raw, stripped)))
         return {k for k in matched if any(p in self.docs[k].haystack for p in probes)}
 
-    def search(self, query: str, min_coverage: float = 0.0) -> list[str]:
-        """Rank matching document keys by IDF-weighted term overlap and phrase bonus."""
+    def search_scored(self, query: str, min_coverage: float = 0.0) -> list[tuple[str, float]]:
+        """Rank matching ``(key, score)`` pairs by IDF-weighted term overlap and phrase bonus."""
         raw, terms = query_terms(query)
         if not terms:
             return []
@@ -386,4 +386,26 @@ class LexicalIndex:
             if score > 0:
                 scored.append((score, key))
         scored.sort(key=lambda item: (-item[0], item[1]))
-        return [key for _score, key in scored]
+        return [(key, score) for score, key in scored]
+
+    def search(self, query: str, min_coverage: float = 0.0) -> list[str]:
+        """Rank matching document keys by IDF-weighted term overlap and phrase bonus."""
+        return [key for key, _score in self.search_scored(query, min_coverage=min_coverage)]
+
+    def oov_coverage(self, query: str, key: str) -> float:
+        """IDF-weighted fraction of ALL query terms (OOV terms weighted at max IDF) present in ``key``."""
+        _raw, terms = query_terms(query)
+        doc = self.docs.get(key)
+        if not terms or doc is None:
+            return 0.0
+        n_docs = len(self.docs) or 1
+        max_idf = math.log(1.0 + n_docs)
+        matched = 0.0
+        total = 0.0
+        for term in terms:
+            df = self.doc_freq.get(term, 0)
+            w = math.log(1.0 + n_docs / df) if df else max_idf
+            total += w
+            if term in doc.doc_words:
+                matched += w
+        return matched / total if total else 0.0

@@ -36,8 +36,10 @@ RECALL_SCHEMA = {
         "entry from the manifest (superseded entries still return their content "
         "plus a superseded_by pointer), or 'query' to search: matches by keywords "
         "and, when embeddings are enabled, by meaning, redirecting superseded hits "
-        "to their current successor unless include_superseded is true. Use when "
-        "the manifest shows a relevant entry or you suspect one exists."
+        "to their current successor unless include_superseded is true. Query "
+        "responses include confident/confidence; when no_confident_match is true, "
+        "any listed results are low-confidence candidates only. Use when the "
+        "manifest shows a relevant entry or you suspect one exists."
     ),
     "parameters": {
         "type": "object",

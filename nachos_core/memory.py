@@ -52,8 +52,11 @@ from .quality import low_signal_reason
 from .ranking import (
     DEFAULT_BLEND,
     duplicate_threshold_for,
+    evaluate_search_confidence,
     find_duplicate_pairs,
     find_similar_entries,
+    fuse_scope_hits,
+    hydrate_ranked,
     rerank_rows,
     scope_ranked_hits,
     update_threshold_for,
@@ -393,29 +396,77 @@ class MemoryService:
         scope: str | None = None,
         include_superseded: bool = False,
     ) -> list[dict[str, Any]]:
+        results, _stats = self._run_search(
+            query, limit=limit, scope=scope, include_superseded=include_superseded
+        )
+        return results
+
+    def search_with_confidence(
+        self,
+        query: str,
+        *,
+        limit: int = 10,
+        scope: str | None = None,
+        include_superseded: bool = False,
+    ) -> dict[str, Any]:
+        """Search and attach a per-query confidence assessment + explicit abstention signal."""
+        cleaned = (query or "").strip()
+        results, stats = self._run_search(
+            cleaned,
+            limit=limit,
+            scope=scope,
+            include_superseded=include_superseded,
+            collect_stats=True,
+        )
+        top_scope = self.scopes[results[0]["scope"]] if results else None
+        embedder = self._active_embedder()
+        return evaluate_search_confidence(
+            cleaned,
+            results,
+            stats,
+            top_lexical=self._lexical_index(top_scope) if top_scope is not None else None,
+            top_index=top_scope.index if top_scope is not None else None,
+            top_metas=self._scope_meta(top_scope) if top_scope is not None else None,
+            model_id=embedder.model_id if embedder is not None else None,
+        )
+
+    def _run_search(
+        self,
+        query: str,
+        *,
+        limit: int = 10,
+        scope: str | None = None,
+        include_superseded: bool = False,
+        collect_stats: bool = False,
+    ) -> tuple[list[dict[str, Any]], dict[str, list[float]]]:
         query = (query or "").strip()
+        stats: dict[str, list[float]] = {"lex": [], "sem": []}
         if not query:
-            return []
+            return [], stats
         targets = self._scopes_for(scope)
         qvec = self._query_vector(targets, query)
         fused: dict[tuple[str, str], dict[str, Any]] = {}
         for s in targets:
-            for key, rank, how, similarity, chunk in self._ranked_hits(
-                s, query, qvec, limit, include_superseded=include_superseded
-            ):
-                row = fused.setdefault((s.name, key), {"score": 0.0, "match": []})
-                row["score"] += 1.0 / (_RRF_K + rank)
-                row["match"].append(how)
-                if similarity is not None:
-                    row["similarity"] = round(similarity, 3)
-                    row["chunk"] = chunk
+            fuse_scope_hits(
+                fused,
+                s.name,
+                self._ranked_hits(
+                    s,
+                    query,
+                    qvec,
+                    limit,
+                    include_superseded=include_superseded,
+                    stats=stats if collect_stats else None,
+                ),
+                rrf_k=_RRF_K,
+            )
 
         reranking = self._reranking()
         pool_limit = max(limit, self.rerank_candidates) if reranking else limit
         ranked = self._select_ranked(fused, limit=pool_limit, include_superseded=include_superseded)
         if reranking:
             ranked = self._rerank(query, ranked, limit)
-        return self._hydrate(ranked)
+        return self._hydrate(ranked), stats
 
     def _reranking(self) -> bool:
         embedder = self._active_embedder()
@@ -462,6 +513,7 @@ class MemoryService:
         limit: int,
         *,
         include_superseded: bool = False,
+        stats: dict[str, list[float]] | None = None,
     ) -> Iterator[tuple[str, int, str, float | None, int]]:
         """(key, rank, how, similarity, best chunk_no) hits for one scope, lexical then semantic."""
         embedder = self._active_embedder()
@@ -476,6 +528,7 @@ class MemoryService:
             min_lexical_coverage=_MIN_LEXICAL_COVERAGE,
             chunk_penalty=self.chunk_penalty,
             similarity_floor=self.similarity_floor,
+            stats=stats,
         )
 
     def _duplicate_threshold_for(self, s: Scope, model_id: str) -> float:
@@ -487,31 +540,7 @@ class MemoryService:
         self, ranked: list[tuple[tuple[str, str], dict[str, Any]]]
     ) -> list[dict[str, Any]]:
         """Turn fused ranking rows into result dicts, recording a hit per returned entry."""
-        results = []
-        hits_by_scope: dict[str, list[str]] = {}
-        for (scope_name, key), row in ranked:
-            s = self.scopes[scope_name]
-            body = s.store.get(key)
-            if body is None:
-                continue
-            hits_by_scope.setdefault(scope_name, []).append(key)
-            result = {
-                "key": key,
-                "scope": scope_name,
-                "body": body,
-                "match": "+".join(row["match"]),
-            }
-            if "similarity" in row:
-                result["similarity"] = row["similarity"]
-            if "rerank" in row:
-                result["rerank"] = row["rerank"]
-            meta = self._scope_meta(s).get(key)
-            if meta is not None and meta.superseded_by:
-                result["superseded_by"] = meta.superseded_by
-            results.append(result)
-        for scope_name, keys in hits_by_scope.items():
-            self.scopes[scope_name].index.record_hits(keys)
-        return results
+        return hydrate_ranked(ranked, self.scopes, self._scope_meta)
 
     # -- duplicates --------------------------------------------------------
 

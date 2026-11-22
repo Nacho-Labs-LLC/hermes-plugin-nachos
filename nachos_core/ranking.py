@@ -8,10 +8,11 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping
 from typing import TYPE_CHECKING, Any, TypeVar
 
+from .calibration import assess_confidence, format_search_response
 from .chunking import embed_chunks
 from .index import dot
 from .lexical import jaccard
-from .validity import redirect_hits
+from .validity import redirect_hits, resolve_successor
 
 if TYPE_CHECKING:
     from .embeddings import Embedder
@@ -164,15 +165,15 @@ def scope_ranked_hits(
     min_lexical_coverage: float,
     chunk_penalty: float,
     similarity_floor: float | str | None,
+    stats: dict[str, list[float]] | None = None,
 ) -> Iterator[tuple[str, int, str, float | None, int]]:
     """Yield ``(key, rank, how, similarity, chunk)`` for one scope, redirecting superseded hits."""
     offset = 1 if qvec is not None else 0
     coverage = min_lexical_coverage if qvec is not None else 0.0
-    lex_hits = redirect_hits(
-        ((k, None, 0) for k in lexical_index.search(query, min_coverage=coverage)),
-        metas,
-        limit=limit * 3,
-    )
+    lex_scored = lexical_index.search_scored(query, min_coverage=coverage)
+    lex_hits = redirect_hits(((k, sc, 0) for k, sc in lex_scored), metas, limit=limit * 3)
+    if stats is not None:
+        stats["lex"].extend(sc for _k, sc, _ch in lex_hits[:5] if sc is not None)
     for rank, (key, _sim, _chunk) in enumerate(lex_hits):
         yield key, rank + offset, "lexical", None, 0
     if qvec is not None and model_id is not None:
@@ -182,8 +183,115 @@ def scope_ranked_hits(
         )
         floor = floor_for(index, model_id, similarity_floor)
         above = ((k, sim, ch) for k, sim, ch in raw_sem if sim >= floor)
-        for rank, (key, sim, chunk) in enumerate(redirect_hits(above, metas, limit=limit * 3)):
+        sem_hits = redirect_hits(above, metas, limit=limit * 3)
+        if stats is not None:
+            stats["sem"].extend(sim for _k, sim, _ch in sem_hits[:5] if sim is not None)
+        for rank, (key, sim, chunk) in enumerate(sem_hits):
             yield key, rank, "semantic", sim, chunk
+
+
+def _top_coverage(
+    lexical_index: LexicalIndex,
+    metas: Mapping[str, EntryMeta],
+    query: str,
+    key: str,
+) -> float:
+    best = lexical_index.oov_coverage(query, key)
+    for cand_key, meta in metas.items():
+        if meta.superseded_by and resolve_successor(cand_key, metas) == key:
+            best = max(best, lexical_index.oov_coverage(query, cand_key))
+    return best
+
+
+def evaluate_search_confidence(
+    query: str,
+    results: list[dict[str, Any]],
+    stats: Mapping[str, list[float]],
+    *,
+    top_lexical: LexicalIndex | None,
+    top_index: MemoryIndex | None,
+    top_metas: Mapping[str, EntryMeta] | None,
+    model_id: str | None,
+) -> dict[str, Any]:
+    """Compute per-query confidence and assemble the structured search response."""
+    if not results or top_lexical is None or top_index is None:
+        return format_search_response(
+            query, results, assess_confidence(has_results=False, lexical_coverage=0.0)
+        )
+    top = results[0]
+    lex_cov = _top_coverage(top_lexical, top_metas or {}, query, top["key"])
+    lex_scores = sorted(stats.get("lex") or (), reverse=True)
+    if len(lex_scores) >= 2 and lex_scores[0] > 0:
+        lex_margin = (lex_scores[0] - lex_scores[min(4, len(lex_scores) - 1)]) / lex_scores[0]
+    else:
+        lex_margin = 1.0 if lex_scores else 0.0
+    sem_scores = sorted(stats.get("sem") or (), reverse=True)
+    sem_top1 = sem_scores[0] if sem_scores else None
+    sem_topk = sem_scores[min(4, len(sem_scores) - 1)] if len(sem_scores) >= 2 else None
+    profile = (
+        top_index.similarity_profile(model_id) if (model_id and sem_top1 is not None) else None
+    )
+    assessment = assess_confidence(
+        has_results=True,
+        lexical_coverage=lex_cov,
+        lexical_margin=lex_margin,
+        semantic_top1=sem_top1,
+        semantic_topk=sem_topk,
+        profile=profile,
+        agreement="lexical+semantic" in str(top.get("match", "")),
+        rerank_score=top.get("rerank"),
+    )
+    return format_search_response(query, results, assessment)
+
+
+def fuse_scope_hits(
+    fused: dict[tuple[str, str], dict[str, Any]],
+    scope_name: str,
+    hits: Iterator[tuple[str, int, str, float | None, int]],
+    *,
+    rrf_k: int,
+) -> None:
+    """Accumulate one scope's ranked hits into the RRF ``fused`` map."""
+    for key, rank, how, similarity, chunk in hits:
+        row = fused.setdefault((scope_name, key), {"score": 0.0, "match": []})
+        row["score"] += 1.0 / (rrf_k + rank)
+        row["match"].append(how)
+        if similarity is not None:
+            row["similarity"] = round(similarity, 3)
+            row["chunk"] = chunk
+
+
+def hydrate_ranked(
+    ranked: list[tuple[tuple[str, str], dict[str, Any]]],
+    scopes: Mapping[str, Any],
+    scope_meta: Any,
+) -> list[dict[str, Any]]:
+    """Turn fused ranking rows into result dicts, recording a hit per returned entry."""
+    results: list[dict[str, Any]] = []
+    hits_by_scope: dict[str, list[str]] = {}
+    for (scope_name, key), row in ranked:
+        s = scopes[scope_name]
+        body = s.store.get(key)
+        if body is None:
+            continue
+        hits_by_scope.setdefault(scope_name, []).append(key)
+        result: dict[str, Any] = {
+            "key": key,
+            "scope": scope_name,
+            "body": body,
+            "match": "+".join(row["match"]),
+        }
+        if "similarity" in row:
+            result["similarity"] = row["similarity"]
+        if "rerank" in row:
+            result["rerank"] = row["rerank"]
+        meta = scope_meta(s).get(key)
+        if meta is not None and meta.superseded_by:
+            result["superseded_by"] = meta.superseded_by
+        results.append(result)
+    for scope_name, keys in hits_by_scope.items():
+        scopes[scope_name].index.record_hits(keys)
+    return results
 
 
 def find_similar_entries(
