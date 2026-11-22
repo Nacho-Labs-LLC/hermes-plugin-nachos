@@ -565,3 +565,16 @@ Identical to three decimals: the settings pass-through and the per-model index k
 
 **Switching models** (MiniLM q8 to gte-modernbert q8 on the 208-entry fixture, `reindex_budget_ms` 250): before this change the first recall after the switch blocked for **17.2 s** while all entries re-embedded. Now recalls during the switch are lexical-only and take a median **314 ms** (max 1.8 s: one long entry of up to 16 chunks; the first includes loading the model) and the switch completes after **43 recalls** (26.7 s of embedding spread across them). The old vectors stay until the last entry is done, then they are dropped and the new model's thresholds are recalibrated (0.16 s).
 
+## History search benchmark
+
+`python -m bench.history [--noise N] [--repeat R] [--json out.json]` builds throwaway checkpoint directories from `bench/data/history.json` (6 synthetic sessions, 29 queries: 22 answerable across exact / partial / context / tool, 7 unanswerable) and compares the previous rule (every query word must appear) with the IDF ranking, with and without context windows. `m@k` = the matched message holds the answer in the top k; `ctx@5` = the answer is anywhere in a returned result (match or neighbouring turn); `FP` = share of unanswerable queries that return anything. `--noise 200` adds 200 filler checkpoints to measure latency at the `max_snapshots` limit. The fixture was written by the same author as the ranking, so treat the absolute rates as a regression guard, not an independent eval.
+
+| variant | m@1 | m@5 | ctx@5 | FP | p50 ms | p50 ms (+200 checkpoints) |
+|---|---|---|---|---|---|---|
+| all terms required (before) | 0.318 | 0.318 | 0.318 | 0.143 | 0.6 | 21.4 |
+| IDF ranking, no context | 0.864 | 0.864 | 0.955 | 0.000 | 0.8 | 27.6 |
+| IDF ranking + context (default) | 0.864 | 0.864 | 1.000 | 0.000 | 0.8 | 33.3 |
+
+Cost is one extra pass of scoring plus re-reading the few checkpoints that hold surviving hits; still one gunzip pass over at most `max_snapshots` checkpoints.
+
+Memory recall bench (`python -m bench`, rerank off, q8 models; before = `a0001a8`, after = this branch): hit@1 / MRR@10 unchanged on every backend except gte-modernbert main set, 0.766 -> 0.773 / 0.847 -> 0.850 (run-to-run noise in the fusion, not a code path this change touches). Adversarial set unchanged (lexical 0.975/0.986, MiniLM 0.988/0.994, gte 1.000/1.000).

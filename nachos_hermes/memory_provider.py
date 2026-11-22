@@ -51,7 +51,7 @@ except ModuleNotFoundError:  # pragma: no cover - exercised outside Hermes
         """Fallback base so the module stays importable outside Hermes."""
 
 
-from nachos_core.history import prune_checkpoints, search_history
+from nachos_core.history import locate_quote, open_ref, parse_ref, prune_checkpoints, search_history
 from nachos_core.index import MemoryIndex, index_path_for
 from nachos_core.memory import PROFILE, SHARED, MemoryService, Scope
 from nachos_core.snapshots import SnapshotStore
@@ -372,10 +372,15 @@ class NachosMemoryProvider(MemoryProvider):
                 service,
                 llm or self._capture_llm,
                 capture_adapter.read_user_profile(self._hermes_home),
+                self._locate_quote,
             )
         except Exception as e:
             logger.debug("Nachos capture processing failed: %s", e)
             return dict(capture_adapter.IDLE_STATS)
+
+    def _locate_quote(self, session_id: str, quote: str) -> tuple[str, int] | None:
+        root = self._checkpoint_root
+        return locate_quote(root, session_id, quote) if root else None
 
     def _start_capture_thread(self) -> None:
         """Start the daemon worker if jobs are pending and none is running."""
@@ -556,21 +561,51 @@ class NachosMemoryProvider(MemoryProvider):
 
     def _history(self, args: dict[str, Any]) -> str:
         query = (args.get("query") or "").strip()
-        if not query:
-            return json.dumps({"error": "query is required"})
+        ref = (args.get("ref") or "").strip()
+        if not query and not ref:
+            return json.dumps({"error": "query or ref is required"})
         if not self._checkpoint_root:
             return json.dumps({"error": "Nachos checkpoint store is not initialized"})
-        sessions = None
-        if (args.get("scope") or "conversation") != "all":
-            sessions = list(self._lineage) or ([self._session_id] if self._session_id else [])
-        results = search_history(
-            self._checkpoint_root,
-            query,
-            limit=clamp_int(args.get("limit"), 8, 1, 25),
-            session_ids=sessions,
-        )
+        cfg = self._cfg
+        before = clamp_int(args.get("before"), int(cfg["history_context_before"]), 0, 10)
+        after = clamp_int(args.get("after"), int(cfg["history_context_after"]), 0, 10)
+        max_chars = max(500, int(cfg["history_max_chars"]))
+        session, checkpoint, _index = parse_ref(ref) if ref else ("", None, None)
+        if ref and checkpoint:
+            result = open_ref(
+                self._checkpoint_root, ref, before=before, after=after, max_chars=max_chars
+            )
+            if result is None:
+                return json.dumps(
+                    {
+                        "error": f"Checkpoint for ref {ref!r} is gone (checkpoints expire after "
+                        f"checkpoint_max_age_days); search the session with query instead.",
+                    }
+                )
+            results = [result]
+        elif not query:
+            return json.dumps(
+                {"error": "ref names no checkpoint message; add a query to search it"}
+            )
+        else:
+            sessions = None
+            if session:
+                sessions = [session]
+            elif (args.get("scope") or "conversation") != "all":
+                sessions = list(self._lineage) or ([self._session_id] if self._session_id else [])
+            results = search_history(
+                self._checkpoint_root,
+                query,
+                limit=clamp_int(args.get("limit"), 8, 1, 25),
+                session_ids=sessions,
+                before=before,
+                after=after,
+                max_chars=max_chars,
+            )
         for row in results:
             row["excerpt"] = self._redact(row["excerpt"])
+            for part in row["context"]:
+                part["text"] = self._redact(part["text"])
         return json.dumps({"query": query, "count": len(results), "results": results})
 
     def shutdown(self) -> None:

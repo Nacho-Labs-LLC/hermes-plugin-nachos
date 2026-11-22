@@ -43,6 +43,9 @@ DEFAULTS: dict[str, Any] = {
     "shared_store_path": "",
     "redact_secrets": "on",
     "checkpoint_max_age_days": 30,
+    "history_context_before": 1,
+    "history_context_after": 1,
+    "history_max_chars": 6000,
     "capture": "review",
 }
 
@@ -186,6 +189,21 @@ CONFIG_SCHEMA: list[dict[str, Any]] = [
         "key": "checkpoint_max_age_days",
         "type": "int",
         "description": "Delete pre-compression transcript checkpoints older than this (0 = keep forever).",
+    },
+    {
+        "key": "history_context_before",
+        "type": "int",
+        "description": "nachos_history_search: turns returned before each matched message (tool call/result pairs are kept whole).",
+    },
+    {
+        "key": "history_context_after",
+        "type": "int",
+        "description": "nachos_history_search: turns returned after each matched message.",
+    },
+    {
+        "key": "history_max_chars",
+        "type": "int",
+        "description": "nachos_history_search: cap on the total characters of text returned per call.",
     },
     {
         "key": "capture",

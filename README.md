@@ -67,6 +67,9 @@ Run `hermes memory setup` or edit `$HERMES_HOME/nachos/config.json`. Settings ar
 | `shared_store_path` | blank | Shared store directory (blank = `<hermes root>/nachos-shared`). |
 | `redact_secrets` | `on` | Redact secrets in everything written to memory. |
 | `checkpoint_max_age_days` | `30` | Delete pre-compression transcript checkpoints older than this; `0` keeps them. |
+| `history_context_before` | `1` | `nachos_history_search`: turns returned before each matched message (a tool call and its result are always kept together). |
+| `history_context_after` | `1` | Turns returned after each matched message. |
+| `history_max_chars` | `6000` | Cap on the total text one `nachos_history_search` call returns. |
 | `capture` | `review` | `review` suggests memories from finished sessions into a review inbox; `off` disables. |
 
 ## Embeddings
@@ -149,7 +152,7 @@ These are chat models, not embedding models, and use Hermes' own `auxiliary` set
 | `nachos_memory_recall` | Fetch an entry by `key` (returns a `superseded_by` note if superseded), or search with `query` (`limit`, optional `include_superseded`). |
 | `nachos_memory_put` | Add or update an entry (`title`, `body`, optional `summary`, `category`, `supersedes`); rejects low-signal text, lists `possible_duplicates` and `suggested_supersedes`. |
 | `nachos_memory_remove` | Delete an entry by `key` or `title`. |
-| `nachos_history_search` | Recover details compression removed from the current conversation, including subagent results (`query`, `scope`: `conversation` or `all`, `limit`). For past sessions use Hermes' `session_search`. |
+| `nachos_history_search` | Recover details compression removed from the current conversation, including subagent results (`query`, `scope`: `conversation` or `all`, `limit`, `before`/`after` context turns). Hits are ranked by IDF-weighted word match (no need for every word; one common word cannot match a multi-word query), newest first on ties, and come back with the neighbouring turns labelled by role and position. Every result has a stable `ref` (`<session>@<checkpoint>#<index>`); pass `ref` (or a memory entry's `source.ref`) to reopen that spot. For past sessions use Hermes' `session_search`. |
 
 With `shared_store: on`, recall, put and remove also take `scope: "shared"`; the default is the private profile scope. The provider follows session lineage across compression, `/resume` and `/branch`, so history search covers the whole logical conversation.
 
@@ -166,7 +169,11 @@ With `shared_store: on`, recall, put and remove also take `scope: "shared"`; the
 
 ## Session capture
 
-With `capture: review`, a finished session (3+ user messages, enough text) queues a trimmed transcript in `$HERMES_HOME/nachos/inbox/pending/`; no LLM runs at exit. A background worker later asks an auxiliary LLM for up to 5 durable facts, applies the quality gate and redaction, and stores them as suggestions. Nothing enters memory until you run `/nachos-memory-inbox approve`; the agent is told how many await review but cannot approve them.
+With `capture: review`, a finished session (3+ user messages, enough text) queues a trimmed transcript in `$HERMES_HOME/nachos/inbox/pending/`; no LLM runs at exit. A background worker later asks an auxiliary LLM for up to 5 durable facts, applies the quality gate and redaction, and stores them as suggestions. The extractor must give each suggestion a verbatim supporting quote; Nachos checks it against the transcript (whitespace/case-insensitive, `...` elisions allowed) and flags suggestions whose quote it cannot find as `[ungrounded]`. They are kept for you to judge, but `approve all` skips them (approve by id). Nothing enters memory until you run `/nachos-memory-inbox approve`; the agent is told how many await review but cannot approve them.
+
+### Provenance
+
+Every saved entry remembers where it came from, in a `provenance` table of the index (so both store backends work, entries saved earlier simply have none, and older index files migrate in place). A manual save records the session and time. An approved suggestion also keeps its verified supporting quote (redacted like everything else) and, when the quote can be found in a transcript checkpoint, a `<session>@<checkpoint>#<index>` ref. `nachos_memory_recall` shows a compact `source` (`session`, `date`, `ref`; `via: capture`; `ungrounded` when approved unverified) on search results and also the `evidence` quote on an exact-key read; pass `source.ref` to `nachos_history_search` to reopen the original context while the checkpoint still exists (`checkpoint_max_age_days`). `nachos-maintain provenance` lists entries with no recorded origin, as information only.
 
 The model comes from `auxiliary.nachos_capture.model` in `config.yaml`. **Cost warning:** if it is unset, Hermes may fall back to your main model, so pin a cheap one. If the call fails, jobs stay queued (dropped after 5 consecutive failures, or one retry on malformed output).
 
@@ -177,7 +184,7 @@ command with explicit profile selection:
 
 ```bash
 /path/to/venv/bin/nachos-maintain --profile-home /absolute/path/to/profile --json all
-# Independently schedulable: inbox | summaries | duplicates | unused | superseded | all
+# Independently schedulable: inbox | summaries | duplicates | unused | superseded | suspicious_supersedes | provenance | all
 /path/to/venv/bin/nachos-maintain --profile-home /absolute/path/to/profile --days 90 unused
 ```
 

@@ -1,0 +1,406 @@
+{
+ "sessions": [
+  {
+   "id": "s-deploy",
+   "age_days": 9,
+   "messages": [
+    {
+     "role": "user",
+     "content": "The staging deploy keeps failing, can you look at it?"
+    },
+    {
+     "role": "assistant",
+     "content": "",
+     "tool_calls": [
+      {
+       "id": "c1",
+       "function": {
+        "name": "terminal",
+        "arguments": "{\"cmd\": \"kubectl logs deploy/web -n staging --tail=20\"}"
+       }
+      }
+     ]
+    },
+    {
+     "role": "tool",
+     "tool_call_id": "c1",
+     "content": "Error: ECONNRESET talking to redis at 10.4.2.17:6380 after 30s"
+    },
+    {
+     "role": "assistant",
+     "content": "The pods crash because Redis resets the connection. Redis is listening on port 6380 here, not the default 6379."
+    },
+    {
+     "role": "user",
+     "content": "Right, we moved it. Update the config."
+    },
+    {
+     "role": "assistant",
+     "content": "Updated config/staging.yaml: redis.port set to 6380 and the connect timeout raised to 45 seconds."
+    },
+    {
+     "role": "user",
+     "content": "Thanks. Roll it out."
+    },
+    {
+     "role": "assistant",
+     "content": "Rollout finished, all three replicas healthy."
+    }
+   ]
+  },
+  {
+   "id": "s-billing",
+   "age_days": 21,
+   "messages": [
+    {
+     "role": "user",
+     "content": "Why did the invoice export job double count refunds last week?"
+    },
+    {
+     "role": "assistant",
+     "content": "The export joins refunds on order_id twice: once through payments and once directly. Deduplicate with SELECT DISTINCT refund_id."
+    },
+    {
+     "role": "user",
+     "content": "Which cron runs it?"
+    },
+    {
+     "role": "assistant",
+     "content": "It runs from the billing-export cron at 02:15 UTC nightly, defined in ops/cron/billing.yaml."
+    },
+    {
+     "role": "user",
+     "content": "Fine. Patch the query and add a regression test."
+    },
+    {
+     "role": "assistant",
+     "content": "Patched export_invoices.sql and added tests/test_refund_dedupe.py covering the double join."
+    }
+   ]
+  },
+  {
+   "id": "s-mobile",
+   "age_days": 3,
+   "messages": [
+    {
+     "role": "user",
+     "content": "Our iOS build fails on the provisioning profile step."
+    },
+    {
+     "role": "assistant",
+     "content": "",
+     "tool_calls": [
+      {
+       "id": "m1",
+       "function": {
+        "name": "terminal",
+        "arguments": "{\"cmd\": \"fastlane match appstore --readonly\"}"
+       }
+      }
+     ]
+    },
+    {
+     "role": "tool",
+     "tool_call_id": "m1",
+     "content": "Could not find a matching profile for bundle id com.acme.field with team 7Q2LX9P4ZD"
+    },
+    {
+     "role": "assistant",
+     "content": "The profile for com.acme.field is missing from the match repo. We need to regenerate it without --readonly."
+    },
+    {
+     "role": "user",
+     "content": "Do it."
+    },
+    {
+     "role": "assistant",
+     "content": "Regenerated the App Store profile; the build passed on the next run."
+    },
+    {
+     "role": "user",
+     "content": "Which Xcode version does CI use now?"
+    },
+    {
+     "role": "assistant",
+     "content": "CI is pinned to Xcode 16.2 on the macos-15 runners."
+    }
+   ]
+  },
+  {
+   "id": "s-infra",
+   "age_days": 40,
+   "messages": [
+    {
+     "role": "user",
+     "content": "Plan the postgres upgrade for the reporting database."
+    },
+    {
+     "role": "assistant",
+     "content": "Plan: upgrade reporting-db from postgres 14 to 16 using pg_upgrade with hard links, maintenance window Saturday 01:00-03:00 UTC."
+    },
+    {
+     "role": "user",
+     "content": "What is the rollback plan?"
+    },
+    {
+     "role": "assistant",
+     "content": "Keep the old 14 data directory untouched until Monday; rollback is switching the symlink back and restarting the service."
+    },
+    {
+     "role": "user",
+     "content": "Who approves the window?"
+    },
+    {
+     "role": "assistant",
+     "content": "Dana Whitfield from the data team has to approve the maintenance window before we announce it."
+    }
+   ]
+  },
+  {
+   "id": "s-docs",
+   "age_days": 6,
+   "messages": [
+    {
+     "role": "user",
+     "content": "Where do the API docs get built?"
+    },
+    {
+     "role": "assistant",
+     "content": "The docs site is built by the docs-publish workflow in .github/workflows/docs.yml and deployed to the gh-pages branch."
+    },
+    {
+     "role": "user",
+     "content": "And the service we deploy for that?"
+    },
+    {
+     "role": "assistant",
+     "content": "There is no separate service; the pages are static and served from the CDN bucket docs-prod-assets."
+    },
+    {
+     "role": "user",
+     "content": "Add the changelog page to the nav."
+    },
+    {
+     "role": "assistant",
+     "content": "Added changelog.md to mkdocs.yml nav under Reference."
+    }
+   ]
+  },
+  {
+   "id": "s-rust",
+   "age_days": 14,
+   "messages": [
+    {
+     "role": "user",
+     "content": "The ingest worker leaks memory after a few hours."
+    },
+    {
+     "role": "assistant",
+     "content": "",
+     "tool_calls": [
+      {
+       "id": "r1",
+       "function": {
+        "name": "terminal",
+        "arguments": "{\"cmd\": \"heaptrack ./target/release/ingest-worker\"}"
+       }
+      }
+     ]
+    },
+    {
+     "role": "tool",
+     "tool_call_id": "r1",
+     "content": "Top allocator: BatchBuffer::grow retained 1.8 GiB; the channel receiver is never drained on shutdown of a partition"
+    },
+    {
+     "role": "assistant",
+     "content": "The leak is the unbounded BatchBuffer. Cap it at 64 MiB and drain the partition receiver on shutdown."
+    },
+    {
+     "role": "user",
+     "content": "Ship that."
+    },
+    {
+     "role": "assistant",
+     "content": "Merged the fix; memory stays flat at about 400 MiB over a 12 hour soak."
+    }
+   ]
+  }
+ ],
+ "queries": [
+  {
+   "q": "ECONNRESET redis",
+   "category": "exact",
+   "session": "s-deploy",
+   "contains": "ECONNRESET"
+  },
+  {
+   "q": "kubectl logs staging",
+   "category": "exact",
+   "session": "s-deploy",
+   "contains": "kubectl logs"
+  },
+  {
+   "q": "billing-export cron",
+   "category": "exact",
+   "session": "s-billing",
+   "contains": "02:15 UTC"
+  },
+  {
+   "q": "fastlane match readonly",
+   "category": "exact",
+   "session": "s-mobile",
+   "contains": "fastlane match"
+  },
+  {
+   "q": "heaptrack ingest-worker",
+   "category": "exact",
+   "session": "s-rust",
+   "contains": "heaptrack"
+  },
+  {
+   "q": "pg_upgrade hard links",
+   "category": "exact",
+   "session": "s-infra",
+   "contains": "pg_upgrade"
+  },
+  {
+   "q": "docs-publish workflow gh-pages",
+   "category": "exact",
+   "session": "s-docs",
+   "contains": "docs-publish"
+  },
+  {
+   "q": "what port is redis running on in staging",
+   "category": "partial",
+   "session": "s-deploy",
+   "contains": "6380"
+  },
+  {
+   "q": "provisioning profile bundle id team",
+   "category": "partial",
+   "session": "s-mobile",
+   "contains": "7Q2LX9P4ZD"
+  },
+  {
+   "q": "how did we fix the refund double counting in the invoice export",
+   "category": "partial",
+   "session": "s-billing",
+   "contains": "DISTINCT refund_id"
+  },
+  {
+   "q": "what Xcode version does CI use",
+   "category": "context",
+   "session": "s-mobile",
+   "contains": "Xcode 16.2"
+  },
+  {
+   "q": "who has to approve the postgres maintenance window",
+   "category": "partial",
+   "session": "s-infra",
+   "contains": "Dana Whitfield"
+  },
+  {
+   "q": "memory leak cap for the batch buffer",
+   "category": "partial",
+   "session": "s-rust",
+   "contains": "64 MiB"
+  },
+  {
+   "q": "where are the static pages served from",
+   "category": "partial",
+   "session": "s-docs",
+   "contains": "docs-prod-assets"
+  },
+  {
+   "q": "rollback plan old data directory symlink",
+   "category": "partial",
+   "session": "s-infra",
+   "contains": "symlink"
+  },
+  {
+   "q": "refunds joined twice export",
+   "category": "partial",
+   "session": "s-billing",
+   "contains": "joins refunds"
+  },
+  {
+   "q": "connection timeout raised for staging config",
+   "category": "partial",
+   "session": "s-deploy",
+   "contains": "45 seconds"
+  },
+  {
+   "q": "soak test memory flat after the ingest fix",
+   "category": "partial",
+   "session": "s-rust",
+   "contains": "400 MiB"
+  },
+  {
+   "q": "ingest worker leak",
+   "category": "context",
+   "session": "s-rust",
+   "contains": "heaptrack"
+  },
+  {
+   "q": "bundle id missing profile match repo",
+   "category": "context",
+   "session": "s-mobile",
+   "contains": "regenerate"
+  },
+  {
+   "q": "logs for the staging web deploy",
+   "category": "tool",
+   "session": "s-deploy",
+   "contains": "10.4.2.17"
+  },
+  {
+   "q": "heaptrack the ingest worker",
+   "category": "tool",
+   "session": "s-rust",
+   "contains": "1.8 GiB"
+  },
+  {
+   "q": "kubernetes ingress certificate expiry",
+   "category": "negative",
+   "session": null,
+   "contains": null
+  },
+  {
+   "q": "terraform state lock dynamodb",
+   "category": "negative",
+   "session": null,
+   "contains": null
+  },
+  {
+   "q": "what is the weather in lisbon",
+   "category": "negative",
+   "session": null,
+   "contains": null
+  },
+  {
+   "q": "the",
+   "category": "negative",
+   "session": null,
+   "contains": null
+  },
+  {
+   "q": "how did the the migration to mongodb go",
+   "category": "negative",
+   "session": null,
+   "contains": null
+  },
+  {
+   "q": "slack webhook for pagerduty alerts in the staging cluster",
+   "category": "negative",
+   "session": null,
+   "contains": null
+  },
+  {
+   "q": "oauth refresh token rotation for the mobile client",
+   "category": "negative",
+   "session": null,
+   "contains": null
+  }
+ ]
+}

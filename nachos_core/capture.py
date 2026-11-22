@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .memory import PROFILE, MemoryService
+from .provenance import MAX_QUOTE_CHARS
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,9 @@ MAX_CANDIDATES = 5
 MAX_ATTEMPTS = 2  # malformed output: first try + one retry
 MAX_FAILURES = 5  # consecutive llm-call exceptions before a job is dropped
 STALE_PROCESSING_SECONDS = 3600
+MIN_QUOTE_CHARS = 12  # a grounded quote must carry at least this much verbatim text
+#: ``(session_id, quote) -> (checkpoint_id, message_index)`` when the quote is in a checkpoint.
+Locate = Callable[[str, str], "tuple[str, int] | None"]
 
 
 class CaptureUnavailable(Exception):
@@ -185,6 +189,9 @@ _SYSTEM = (
     'keys "title" (short), "summary" (one keyword-dense line), "category" '
     '(one word, e.g. project, decision, environment, procedure), "body" '
     '(the full fact, self-contained) and "reason" (why it is durable). '
+    'Every object also needs "quote": a SHORT (under 200 characters) excerpt copied '
+    "VERBATIM from the conversation that supports the fact, so a reviewer can check "
+    'it; you may use "..." to skip words inside the excerpt, but never reword it. '
     "An empty array [] is a good answer when nothing qualifies."
 )
 
@@ -233,6 +240,40 @@ def parse_candidates(raw: str) -> list[dict[str, Any]] | None:
     return [d for d in data if isinstance(d, dict)]
 
 
+_ELISION_RE = re.compile(r"\s*(?:\.{3,}|…|\[\.{3}\])\s*")
+_QUOTE_FIX = str.maketrans(
+    {"\u2018": "'", "\u2019": "'", "\u201c": '"', "\u201d": '"', "\u2013": "-", "\u2014": "-"}
+)
+
+
+def _norm(text: str) -> str:
+    return " ".join(text.translate(_QUOTE_FIX).lower().split())
+
+
+def ground_quote(quote: str, messages: list[dict[str, str]]) -> int | None:
+    """Index of the transcript message that verbatim contains ``quote``, or None.
+
+    Whitespace, case and curly quotes/dashes are normalised away. The quote may skip text
+    with "..." / "…" / "[...]" (small elisions): every fragment must then appear in the same
+    message, in order. At least ``MIN_QUOTE_CHARS`` of verbatim text are required so a
+    one-word "quote" cannot ground anything.
+    """
+    fragments = [f.strip(" \"'") for f in _ELISION_RE.split(_norm(quote or ""))]
+    fragments = [f for f in fragments if f]
+    if not fragments or sum(len(f) for f in fragments) < MIN_QUOTE_CHARS:
+        return None
+    for i, m in enumerate(messages):
+        haystack, pos = _norm(m.get("content", "")), 0
+        for fragment in fragments:
+            found = haystack.find(fragment, pos)
+            if found < 0:
+                break
+            pos = found + len(fragment)
+        else:
+            return i
+    return None
+
+
 def _field(service: MemoryService, item: dict[str, Any], name: str) -> str:
     value = item.get(name)
     return service.redact(value.strip()) if isinstance(value, str) else ""
@@ -256,7 +297,45 @@ def _duplicates(service: MemoryService, key: str, title: str, summary: str) -> l
     return dups
 
 
-def _clean_candidates(items: list[dict[str, Any]], service: MemoryService) -> list[dict[str, Any]]:
+def _evidence(
+    service: MemoryService,
+    item: dict[str, Any],
+    messages: list[dict[str, str]],
+    session_id: str,
+    locate: Locate | None,
+) -> dict[str, Any]:
+    """Grounding fields for a candidate: redacted ``quote``, ``grounded``, optional checkpoint ref.
+
+    The quote is checked against the (already redacted) transcript before redaction is applied to
+    it, so the stored text is both verified and safe. A candidate whose quote is missing or not in
+    the transcript is flagged ``grounded: False`` rather than dropped: the inbox is human-reviewed,
+    and small models often paraphrase a quote of a perfectly real fact.
+    """
+    raw = item.get("quote")
+    raw = raw.strip() if isinstance(raw, str) else ""
+    grounded = bool(raw) and ground_quote(raw, messages) is not None
+    out: dict[str, Any] = {
+        "quote": service.redact(raw)[:MAX_QUOTE_CHARS] if raw else "",
+        "grounded": grounded,
+    }
+    if grounded and locate is not None:
+        try:
+            found = locate(session_id, raw)
+        except Exception as e:
+            logger.debug("Nachos capture quote lookup failed: %s", e)
+            found = None
+        if found:
+            out["checkpoint_id"], out["message_index"] = found
+    return out
+
+
+def _clean_candidates(
+    items: list[dict[str, Any]],
+    service: MemoryService,
+    messages: list[dict[str, str]],
+    session_id: str = "",
+    locate: Locate | None = None,
+) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     seen = set()
     for item in items[:MAX_CANDIDATES]:
@@ -281,6 +360,7 @@ def _clean_candidates(items: list[dict[str, Any]], service: MemoryService) -> li
                 "body": draft.body,
                 "reason": _field(service, item, "reason"),
                 "duplicates": _duplicates(service, draft.key, draft.title, draft.summary),
+                **_evidence(service, item, messages, session_id, locate),
             }
         )
     return out
@@ -329,6 +409,7 @@ def process_job(
     service: MemoryService,
     llm: Callable[[list[dict[str, str]]], str],
     user_facts: list[str] | None = None,
+    locate: Locate | None = None,
 ) -> tuple[str, int]:
     """Process one claimed job file.
 
@@ -355,9 +436,10 @@ def process_job(
     items = parse_candidates(raw)
     if items is None:
         return _on_unparsed(path, inbox_dir, data, attempts)
-    candidates = _clean_candidates(items, service)
+    session_id = str(data.get("session_id") or "")
+    candidates = _clean_candidates(items, service, data["messages"], session_id, locate)
     for c in candidates:
-        service.profile.index.add_inbox(session_id=str(data.get("session_id") or ""), **c)
+        service.profile.index.add_inbox(session_id=session_id, **c)
     path.unlink(missing_ok=True)
     return "done", len(candidates)
 
@@ -368,6 +450,7 @@ def process_pending(
     llm: Callable[[list[dict[str, str]]], str],
     now: float | None = None,
     user_facts: list[str] | None = None,
+    locate: Locate | None = None,
 ) -> dict[str, int]:
     """Process every pending job once. Thread-free; safe against concurrent processes."""
     now = now if now is not None else time.time()
@@ -379,7 +462,7 @@ def process_pending(
         if claimed is None:
             continue
         try:
-            status, n = process_job(claimed, inbox_dir, service, llm, user_facts)
+            status, n = process_job(claimed, inbox_dir, service, llm, user_facts, locate)
         except Exception as e:  # never lose a job to an unexpected bug
             logger.warning("Nachos capture failed on %s: %s", job.name, e)
             with contextlib.suppress(OSError):

@@ -468,6 +468,7 @@ def restore_from_change(
         if current_exists:
             store.remove(key)
         index.delete_vector(key)
+        index.delete_provenance(key)
         return "removed"
     store.put(
         key,
@@ -479,6 +480,7 @@ def restore_from_change(
     if prev_superseded != (store.get_meta(key) or EntryMeta()).superseded_by:
         store.set_superseded_by(key, prev_superseded)
     index.delete_vector(key)
+    index.delete_provenance(key)  # the earlier content's origin is unknown
     index.record_seen([key])
     return "restored"
 
