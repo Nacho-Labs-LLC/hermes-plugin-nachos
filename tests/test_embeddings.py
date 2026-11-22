@@ -14,12 +14,18 @@ from nachos_core.embeddings import (
     Embedder,
     OpenAICompatEmbedder,
     make_embedder,
+    parse_cli_version,
 )
 
 _FAKE_CLI = """#!{python}
-import json, sys
+import json, os, sys
+if sys.argv[1:2] == ["--version"]:
+    ver = os.environ.get("FAKE_VERSION")
+    if ver is not None:
+        print(ver)
+        sys.exit(0)
+    sys.exit(1)
 assert sys.argv[1:4] == ["embed", "--stdin", "--json"], sys.argv
-import os
 if os.environ.get("FAKE_ARGS"):
     open(os.environ["FAKE_ARGS"], "w").write(" ".join(sys.argv[4:]))
 for line in sys.stdin.read().splitlines():
@@ -31,6 +37,12 @@ for line in sys.stdin.read().splitlines():
 # $FAKE_DIE_AFTER is set, the first process exits after that many requests.
 _FAKE_SERVE_CLI = """#!{python}
 import json, os, sys
+if sys.argv[1:2] == ["--version"]:
+    ver = os.environ.get("FAKE_VERSION")
+    if ver is not None:
+        print(ver)
+        sys.exit(0)
+    sys.exit(1)
 if sys.argv[1] != "serve":
     sys.exit(1)
 counter = os.environ["FAKE_COUNTER"]
@@ -581,3 +593,118 @@ def test_none_prefix_means_no_prefix_for_client_side_backends():
     )
     assert openai.query_prefix == ""  # the 'none' sentinel means no prefix here too
     assert openai.document_prefix == "passage: "
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("0.6.0", (0, 6, 0)),
+        ("v0.5.2\n", (0, 5, 2)),
+        ("nachos-embeddings 0.6.1-beta.1", (0, 6, 1)),
+        ("", None),
+        ("usage: nachos-embeddings\n  version 0.6.0", None),
+        ("not a version", None),
+    ],
+)
+def test_parse_cli_version(raw, expected):
+    assert parse_cli_version(raw) == expected
+
+
+def test_older_cli_version_degrades_gracefully_and_warns_once(
+    fake_serve_cli, monkeypatch, tmp_path, caplog
+):
+    path, _ = fake_serve_cli
+    args_file = tmp_path / "args.txt"
+    reqs_file = tmp_path / "reqs.txt"
+    monkeypatch.setenv("FAKE_VERSION", "nachos-embeddings 0.5.2")
+    monkeypatch.setenv("FAKE_TYPED", "1")
+    monkeypatch.setenv("FAKE_RERANK", "1")
+    monkeypatch.setenv("FAKE_ARGS", str(args_file))
+    monkeypatch.setenv("FAKE_REQS", str(reqs_file))
+    embedder = CliEmbedder(
+        str(path),
+        "org/m",
+        dtype="q8",
+        rerank=True,
+        pooling="cls",
+        max_length=256,
+        normalize=False,
+        query_prefix="Q: ",
+        document_prefix="D: ",
+    )
+    try:
+        with caplog.at_level("WARNING", logger="nachos_core.embeddings"):
+            assert embedder.embed(["hello"], input_type="query") == [[5.0, 2.0]]
+            assert embedder.embed(["world"], input_type="document") == [[5.0, 2.0]]
+            assert embedder.rerank("q", ["hit"]) is None
+        assert embedder.cli_version == (0, 5, 2)
+        assert embedder.supports_type is False
+        assert embedder.supports_rerank is False
+        assert args_file.read_text() == "--model org/m --dtype q8"
+        assert reqs_file.read_text().splitlines() == ["None", "None"]
+    finally:
+        embedder.close()
+    warnings = [r.message for r in caplog.records if "older than 0.6.0" in r.message]
+    assert len(warnings) == 1
+
+
+def test_older_cli_ready_line_version_disables_types_and_rerank(
+    fake_serve_cli, monkeypatch, tmp_path, caplog
+):
+    path, _ = fake_serve_cli
+    reqs_file = tmp_path / "reqs.txt"
+    monkeypatch.setenv("FAKE_TYPED", "1")
+    monkeypatch.setenv("FAKE_RERANK", "1")
+    monkeypatch.setenv("FAKE_READY_EXTRA", json.dumps({"version": "0.5.9"}))
+    monkeypatch.setenv("FAKE_REQS", str(reqs_file))
+    embedder = CliEmbedder(str(path), rerank=True)
+    try:
+        with caplog.at_level("WARNING", logger="nachos_core.embeddings"):
+            assert embedder.embed(["abc"], input_type="query") == [[3.0, 2.0]]
+            assert embedder.rerank("q", ["hit"]) is None
+        assert embedder.cli_version == (0, 5, 9)
+        assert embedder.supports_type is False
+        assert embedder.supports_rerank is False
+        assert reqs_file.read_text().splitlines() == ["None"]
+    finally:
+        embedder.close()
+    assert sum("older than 0.6.0" in r.message for r in caplog.records) == 1
+    assert not any("reranking disabled" in r.message for r in caplog.records)
+
+
+def test_older_oneshot_cli_strips_0_6_override_flags(fake_cli, monkeypatch, tmp_path, caplog):
+    args_file = tmp_path / "args.txt"
+    monkeypatch.setenv("FAKE_VERSION", "0.5.0")
+    monkeypatch.setenv("FAKE_ARGS", str(args_file))
+    embedder = CliEmbedder(str(fake_cli), "org/m", dtype="q8", pooling="cls", max_length=128)
+    with caplog.at_level("WARNING", logger="nachos_core.embeddings"):
+        assert embedder.embed(["abc"]) == [[3.0, 1.0]]
+        assert embedder.embed(["de"]) == [[2.0, 1.0]]
+    assert args_file.read_text() == "--model org/m --dtype q8"
+    assert sum("older than 0.6.0" in r.message for r in caplog.records) == 1
+
+
+def test_cli_version_0_6_0_keeps_full_features(fake_serve_cli, monkeypatch, tmp_path, caplog):
+    path, _ = fake_serve_cli
+    args_file = tmp_path / "args.txt"
+    reqs_file = tmp_path / "reqs.txt"
+    monkeypatch.setenv("FAKE_VERSION", "0.6.0")
+    monkeypatch.setenv("FAKE_TYPED", "1")
+    monkeypatch.setenv("FAKE_RERANK", "1")
+    monkeypatch.setenv("FAKE_ARGS", str(args_file))
+    monkeypatch.setenv("FAKE_REQS", str(reqs_file))
+    embedder = CliEmbedder(str(path), "org/m", rerank=True, pooling="cls", max_length=256)
+    try:
+        with caplog.at_level("WARNING", logger="nachos_core.embeddings"):
+            assert embedder.embed(["abc"], input_type="query") == [[3.0, 2.0]]
+            assert embedder.rerank("q", ["no", "hit hit"]) == [0.0, 2.0]
+        assert embedder.cli_version == (0, 6, 0)
+        assert embedder.supports_type is True
+        assert embedder.supports_rerank is True
+        assert "--pooling cls" in args_file.read_text()
+        assert "--max-length 256" in args_file.read_text()
+        assert "--rerank-model" in args_file.read_text()
+        assert reqs_file.read_text().splitlines() == ["query"]
+    finally:
+        embedder.close()
+    assert not caplog.records

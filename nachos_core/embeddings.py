@@ -34,6 +34,7 @@ import json
 import logging
 import os
 import queue
+import re
 import shutil
 import subprocess
 import threading
@@ -49,11 +50,42 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_RERANK_MODEL = "jinaai/jina-reranker-v1-tiny-en"
 EMBEDDING_BACKENDS = ("auto", "nachos", "openai", "sentence-transformers", "off")
+MIN_CLI_VERSION = (0, 6, 0)
+MIN_CLI_VERSION_STR = ".".join(str(part) for part in MIN_CLI_VERSION)
+_VERSION_RE = re.compile(r"\bv?(\d+)\.(\d+)\.(\d+)\b")
 
 _BATCH = 64
 _MAX_TEXT_CHARS = 2000
 QUERY = "query"
 DOCUMENT = "document"
+
+
+def parse_cli_version(text: str) -> tuple[int, int, int] | None:
+    """Parse a single-line semantic version string (e.g. ``0.6.0`` or ``nachos-embeddings 0.6.0``)."""
+    stripped = (text or "").strip()
+    if not stripped or "\n" in stripped or "\r" in stripped:
+        return None
+    match = _VERSION_RE.search(stripped)
+    if match is None:
+        return None
+    return (int(match.group(1)), int(match.group(2)), int(match.group(3)))
+
+
+def _probe_cli_version(command: str) -> tuple[int, int, int] | None:
+    """Ask ``command --version`` for its semver; return None if unsupported or unparseable."""
+    try:
+        proc = subprocess.run(  # noqa: S603 - argv list from operator config, no shell
+            [command, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=5.0,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0:
+        return None
+    return parse_cli_version(proc.stdout)
 
 
 class Embedder(ABC):
@@ -231,7 +263,44 @@ class CliEmbedder(Embedder):
         self._restarts = 0
         self._next_id = 0
         self._rerank_failed = False  # logged once, then reranking stays off for the process
+        #: Parsed semver of the nachos-embeddings CLI once probed (from --version or ready line).
+        self.cli_version: tuple[int, int, int] | None = None
+        self._version_checked = False
+        self._legacy_cli = False
+        self._version_warned = False
         atexit.register(_close_ref, weakref.ref(self))
+
+    # -- CLI version check ------------------------------------------------
+    def _ensure_cli_version(self) -> None:
+        if self._version_checked:
+            return
+        self._version_checked = True
+        self._apply_cli_version(_probe_cli_version(self.command))
+
+    def _apply_cli_version(self, version: tuple[int, int, int] | None) -> None:
+        if version is None:
+            return
+        self.cli_version = version
+        if version >= MIN_CLI_VERSION:
+            return
+        self._legacy_cli = True
+        self.supports_type = False
+        self.supports_rerank = False
+        self._rerank_failed = True
+        if not self._version_warned:
+            self._version_warned = True
+            found = ".".join(str(part) for part in version)
+            logger.warning(
+                "nachos-embeddings %s is older than %s; disabling input types, reranking, "
+                "and model overrides (upgrade with: npm i -g @nacho-labs/nachos-embeddings).",
+                found,
+                MIN_CLI_VERSION_STR,
+            )
+
+    def _check_ready_version(self, msg: dict[str, Any]) -> None:
+        ver = msg.get("version")
+        if isinstance(ver, str):
+            self._apply_cli_version(parse_cli_version(ver))
 
     # -- worker lifecycle -------------------------------------------------
     def _model_args(self) -> list[str]:
@@ -241,6 +310,8 @@ class CliEmbedder(Embedder):
             args += ["--model", self.model]
         if self.dtype:
             args += ["--dtype", self.dtype]
+        if self._legacy_cli:
+            return args
         if self.pooling:
             args += ["--pooling", self.pooling]
         if self.max_length > 0:
@@ -266,6 +337,7 @@ class CliEmbedder(Embedder):
         return cmd
 
     def _start_worker(self) -> _Worker:
+        self._ensure_cli_version()
         try:
             return self._launch(self._serve_cmd())
         except _WorkerError:
@@ -303,12 +375,15 @@ class CliEmbedder(Embedder):
         alone. The id is complete only after the worker has started (see :meth:`warm_up`); the
         ready line's own ``model`` string is not adopted because it would vary run to run.
         """
+        self._check_ready_version(msg)
         dim = msg.get("dimension")
         if isinstance(dim, int) and not isinstance(dim, bool) and dim > 0:
             self.dimension = dim
         # Type support shipped together with these fields; older CLIs lack all of them.
-        self.supports_type = any(k in msg for k in ("pooling", "queryPrefix", "documentPrefix"))
-        self.supports_rerank = isinstance(msg.get("rerank"), dict)
+        self.supports_type = (not self._legacy_cli) and any(
+            k in msg for k in ("pooling", "queryPrefix", "documentPrefix")
+        )
+        self.supports_rerank = (not self._legacy_cli) and isinstance(msg.get("rerank"), dict)
         pooling = msg.get("pooling") if isinstance(msg.get("pooling"), str) else "mean"
         doc_prefix = msg.get("documentPrefix") if isinstance(msg.get("documentPrefix"), str) else ""
         suffix = f":pooling={pooling}" if pooling != "mean" else ""
@@ -364,7 +439,8 @@ class CliEmbedder(Embedder):
         if not self.rerank_enabled or not passages:
             return None
         with self._lock:
-            if self._serve_disabled:
+            self._ensure_cli_version()
+            if self._serve_disabled or self._legacy_cli:
                 return None
             try:
                 if self._worker is None:
@@ -392,7 +468,7 @@ class CliEmbedder(Embedder):
             return [float(x) for x in scores]
 
     def _type_enabled(self) -> bool:
-        return self.supports_type and self.send_type
+        return self.supports_type and self.send_type and not self._legacy_cli
 
     def _serve_batch(self, texts: list[str], input_type: str) -> list[list[float]] | None:
         """Vectors from the worker, or None if serve mode is unusable."""
@@ -421,6 +497,8 @@ class CliEmbedder(Embedder):
         return self._embed_oneshot(texts, input_type)
 
     def _embed_oneshot(self, texts: list[str], input_type: str = DOCUMENT) -> list[list[float]]:
+        with self._lock:
+            self._ensure_cli_version()
         cmd = [self.command, "embed", "--stdin", "--json"]
         if self._type_enabled():
             cmd += ["--type", input_type]

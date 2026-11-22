@@ -19,10 +19,12 @@ The agent is told this split in the system prompt, and session capture skips any
 Into the Python environment that runs Hermes:
 
 ```bash
-python -m pip install "git+https://github.com/Nacho-Labs-LLC/hermes-plugin-nachos.git@v0.6.0"
+python -m pip install "git+https://github.com/Nacho-Labs-LLC/hermes-plugin-nachos.git@v0.7.0"
 ```
 
 Catalog alternative: keep the repository root at `$HERMES_HOME/plugins/nachos/`.
+
+Lexical-only recall works with zero extra dependencies. For local semantic recall, input types, cross-encoder reranking, and model overrides, install `nachos-embeddings >= 0.6.0` (`npm i -g @nacho-labs/nachos-embeddings`).
 
 ## Enable
 
@@ -90,7 +92,7 @@ Entries can reference each other. Write `[[key]]` (or `[[Entry Title]]`, or `[[k
 Semantic recall is optional; without it recall is lexical. A failing backend drops to lexical for the rest of the process.
 
 - `auto` picks the first available: `nachos-embeddings` on PATH, `sentence-transformers`, then an OpenAI-compatible URL (needs `embedding_base_url` and `embedding_model`).
-- The `nachos` backend keeps one `nachos-embeddings` worker alive (`npm i -g @nacho-labs/nachos-embeddings`). It needs 0.6.0 or newer; older versions fall back automatically to one process per call. The model-override settings below (`embedding_pooling`, `embedding_max_length`, prefixes, `rerank_max_length`) need a CLI release that has `--pooling`, `--max-length` and `--rerank-max-length`; settings you leave blank are never sent, so an older CLI keeps working with the others.
+- The `nachos` backend keeps one `nachos-embeddings` worker alive (`npm i -g @nacho-labs/nachos-embeddings`). **Minimum version: `nachos-embeddings >= 0.6.0`** for persistent `serve`, input types, cross-encoder reranking, and model overrides (`embedding_pooling`, `embedding_max_length`, prefixes, `rerank_max_length`). Older CLIs log a one-time warning and degrade gracefully to basic embeddings without input types, reranking, or 0.6+ override flags (and fall back to one process per call if `serve` is unavailable).
 
 ```bash
 npm i -g @nacho-labs/nachos-embeddings   # local model, found on PATH by `auto`
@@ -234,6 +236,18 @@ and `--path` (default `$HERMES_HOME/nachos/memory.db`):
 ## Privacy
 
 Data lives under `$HERMES_HOME/nachos/` (store, `memory.index.db`, `snapshots/`, `inbox/`). Memory writes are redacted; checkpoints are raw transcripts, like Hermes' own session DB. With `shared_store: on` and a path outside `$HERMES_HOME`, `hermes backup` includes the shared store.
+
+## Upgrading from 0.6.x
+
+Upgrading to 0.7.0 migrates existing stores and indexes in place automatically on first write/open:
+
+- **Store migrations (automatic):** SQLite (`memory.db`) adds `created_at`, `updated_at`, `superseded_by`, and `prev_superseded_by` columns (read-only operations tolerate pre-migration schemas). Flatfile (`memory.md`) keeps existing entries readable as-is and writes `<!-- created: ... | updated: ... | superseded_by: ... -->` HTML metadata comments on new/updated entries.
+- **Sidecar index migrations (automatic):** `memory.index.db` switches to WAL mode, migrates `vectors` to chunked multi-model primary keys `(key, chunk_no, model)`, and creates the `calibration`, `links`, and `provenance` tables. The entity index is rebuilt in memory from the store.
+- **Embeddings CLI:** `nachos-embeddings >= 0.6.0` is recommended for input types, reranking, and model overrides; older CLIs warn once and degrade gracefully to basic embeddings. Lexical-only mode still requires zero extra dependencies.
+- **New defaults:** `abstention: hint`, `duplicate_calibration: auto`, `similarity_floor: off`, `rerank: off`, `reindex_budget_ms: 250`, `related_per_hit: 3`, `history_context_before: 1`, `history_context_after: 1`, `history_max_chars: 6000`.
+- **New surfaces:** agent tool `nachos_memory_reconcile` (with companion `nachos-reconcile` skill) and console CLIs `nachos-maintain`, `nachos-models`, and `nachos-reconcile`.
+- **Renamed / omitted options:** `possible_updates` replaces `suggested_supersedes` in `nachos_memory_put` results (`suggested_supersedes` remains as a one-release alias in 0.7.0). `embedding_normalize` is not exposed because the index always L2-normalizes vectors.
+- **Downgrading:** Direct downgrade to 0.6.x against a migrated `memory.index.db` is unsupported because the `vectors` primary key changes to `(key, chunk_no, model)`. Back up `$HERMES_HOME/nachos/` before upgrading; to roll back to 0.6.x, either restore that backup or keep `memory.db`/`memory.md` and remove/rename `memory.index.db` (and any `-wal`/`-shm` sidecars) so 0.6.x rebuilds a fresh index (rebuilding drops change-log, telemetry, links, and provenance stored in the 0.7.0 index).
 
 ## Development
 
