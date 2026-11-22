@@ -53,6 +53,7 @@ from .linked import (
     link_report,
     merged_link_counts,
 )
+from .links import resolve_successor
 from .provenance import MANUAL, MAX_QUOTE_CHARS, source_view
 from .ranking import (
     DEFAULT_BLEND,
@@ -69,7 +70,6 @@ from .validity import (
     history_rows,
     normalize_supersedes,
     possible_updates_for,
-    resolve_successor,
     restore_from_change,
     scope_status,
     superseded_entries,

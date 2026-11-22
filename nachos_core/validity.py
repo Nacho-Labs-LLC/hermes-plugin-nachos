@@ -10,6 +10,7 @@ from typing import Any
 
 from .index import MemoryIndex
 from .lexical import LexicalIndex
+from .links import resolve_successor
 from .quality import qualifier_difference, update_signal
 from .store.base import EntryMeta, MemoryStore
 
@@ -104,19 +105,12 @@ def backfill_scope_timestamps(store: MemoryStore, index: MemoryIndex) -> int:
     return store.backfill_timestamps(to_fill)
 
 
-def resolve_successor(key: str, metas: Mapping[str, EntryMeta]) -> str | None:
-    """Follow ``superseded_by`` chains to the active successor; None on cycle or dangling link."""
-    cur = key
-    seen = {cur}
-    while True:
-        meta = metas.get(cur)
-        if meta is None or not meta.superseded_by:
-            return cur
-        nxt = meta.superseded_by
-        if nxt in seen or nxt not in metas:
-            return None
-        seen.add(nxt)
-        cur = nxt
+def active_key(key: str, metas: Mapping[str, EntryMeta]) -> str | None:
+    """The active entry ``key`` resolves to; a key unknown to ``metas`` counts as active itself.
+
+    None for a cyclic or dangling ``superseded_by`` chain (see ``links.resolve_successor``).
+    """
+    return resolve_successor(key, metas) if key in metas else key
 
 
 def redirect_hits(
@@ -135,7 +129,7 @@ def redirect_hits(
         return out
     seen: set[str] = set()
     for key, sim, chunk in hits:
-        resolved = resolve_successor(key, metas)
+        resolved = active_key(key, metas)
         if resolved is None or resolved in seen:
             continue
         seen.add(resolved)
@@ -325,7 +319,7 @@ def select_ranked(
     else:
         resolved: dict[tuple[str, str], dict[str, Any]] = {}
         for (scope_name, key), row in fused.items():
-            target = resolve_successor(key, metas_by_scope[scope_name])
+            target = active_key(key, metas_by_scope[scope_name])
             if target is None:
                 continue
             dest = (scope_name, target)
