@@ -32,7 +32,11 @@ V1 wire shapes (all fields required; [] allowed unless validated otherwise)::
     # Assessments bind the exact proposal revision; an edit or revision request
     # drops stale ones, and acceptance/export need every cited finding assessed
     # with all preserved == true (approval_safe).
-    # operation: edit (typed after) | disable (null after, proposal-only)
+    # operation: edit (typed after) | disable (null after) |
+    #   supersede / unlink (memory_record only; after = {superseded_by: <other key>};
+    #   the target must be another memory_record in the inventory, never itself)
+    # proposal may also carry optional kind (merge|supersede|unlink|rewrite|delete|
+    #   choose-one|other) and confidence (low|medium|high); both are hashed with it.
     inventory = {schema,profile,digest,sources: [source],coverage}
     packet = {schema,profile,digest,inventory,findings: [finding],
               proposals: [proposal]}  # Initial proposal revisions are exactly 1.
@@ -278,13 +282,29 @@ def _assessments(value: dict[str, Any], findings: dict[str, Any]) -> None:
         preservation(assessment["preservation_checklist"])
 
 
-def _change(change: Any, src: dict[str, Any]) -> None:
+PROPOSAL_KINDS = ("merge", "supersede", "unlink", "rewrite", "delete", "choose-one", "other")
+CONFIDENCE = ("low", "medium", "high")
+
+
+def _link_change(change: dict[str, Any], src: dict[str, Any], memory_keys: set[str]) -> None:
+    if src["kind"] != "memory_record":
+        raise ValueError("supersede/unlink apply to memory records only")
+    fields(change["after"], "superseded_by")
+    target = change["after"]["superseded_by"]
+    text(target)
+    if target == src["before"]["key"] or target not in memory_keys:
+        raise ValueError("link target must be another inventory memory record")
+
+
+def _change(change: Any, src: dict[str, Any], memory_keys: set[str]) -> None:
     fields(change, "source_id source_sha256 operation before after")
     if change["source_sha256"] != src["sha256"] or change["before"] != src["before"]:
         raise ValueError("source precondition mismatch")
     if change["operation"] == "disable":
         if change["after"] is not None:
-            raise ValueError("disable is proposal-only and requires null after")
+            raise ValueError("disable requires null after")
+    elif change["operation"] in ("supersede", "unlink"):
+        _link_change(change, src, memory_keys)
     elif change["operation"] == "edit":
         if src["kind"] == "memory_record":
             memory_sha256(change["after"])
@@ -296,8 +316,19 @@ def _change(change: Any, src: dict[str, Any]) -> None:
         raise ValueError("unsupported operation")
 
 
+def _optional_proposal_fields(value: Any) -> None:
+    if type(value) is not dict:
+        raise ValueError("proposal must be an object")
+    base = {k: v for k, v in value.items() if k not in ("kind", "confidence")}
+    fields(base, "id revision finding_ids depends_on changes assessments")
+    if "kind" in value and value["kind"] not in PROPOSAL_KINDS:
+        raise ValueError("unsupported proposal kind")
+    if "confidence" in value and value["confidence"] not in CONFIDENCE:
+        raise ValueError("unsupported confidence")
+
+
 def proposal(value: Any, packet: dict[str, Any]) -> None:
-    fields(value, "id revision finding_ids depends_on changes assessments")
+    _optional_proposal_fields(value)
     text(value["id"])
     if type(value["revision"]) is not int or value["revision"] < 1:
         raise ValueError("revision must be positive integer")
@@ -314,6 +345,7 @@ def proposal(value: Any, packet: dict[str, Any]) -> None:
         for fid in value["finding_ids"]
         for excerpt in findings[fid]["excerpts"]
     }
+    memory_keys = {s["before"]["key"] for s in sources.values() if s["kind"] == "memory_record"}
     sequence(value["changes"], nonempty=True)
     changed = set()
     for change in value["changes"]:
@@ -326,7 +358,7 @@ def proposal(value: Any, packet: dict[str, Any]) -> None:
         changed.add(sid)
         if sid not in excerpted:
             raise ValueError("each changed source requires an exact supported excerpt")
-        _change(change, sources[sid])
+        _change(change, sources[sid], memory_keys)
 
 
 def approval_safe(item: dict[str, Any]) -> bool:

@@ -15,22 +15,32 @@ import os
 import secrets
 import stat
 import sys
+from collections import OrderedDict
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from nachos_core.index import MemoryIndex, index_path_for
+from nachos_core.memory import PROFILE, MemoryService, Scope
 from nachos_core.reconciliation import dumps, export_plan, loads, new_session
 from nachos_core.reconciliation.acquire import SourceSpec
+from nachos_core.reconciliation.apply import apply_plan
 from nachos_core.reconciliation.boundary import AcquisitionError, SourceBoundary
 from nachos_core.reconciliation.cron import read_cron_evidence
+from nachos_core.reconciliation.findings import Generated, generate_findings
 from nachos_core.reconciliation.hashing import canonical_json
 from nachos_core.reconciliation.inventory import build_inventory
 from nachos_core.reconciliation.models import timestamp
 from nachos_core.reconciliation.packets import build_packet, heuristic_findings, load_findings_json
+from nachos_core.reconciliation.signals import collect_signals
 from nachos_core.reconciliation.validate import dumps_validation, validate_plan_sources
+from nachos_core.store import get_store
+from nachos_hermes.config import hermes_redactor
+from nachos_hermes.maintenance import open_readonly_service, resolve_profile_home
 
 _MAX_INPUT = 8 * 1024 * 1024
 _EXIT = {"valid_at_check": 0, "stale": 3, "unavailable": 4}
+_APPLY_EXIT = {"planned": 0, "applied": 0, "refused": 3, "partial_failure": 5}
 _CRON_LABEL = "cron/jobs.json"
 
 
@@ -104,6 +114,14 @@ def _parser() -> argparse.ArgumentParser:
     pkt.add_argument("--findings", type=Path, help="explicit findings JSON array")
     pkt.add_argument("--proposals", type=Path, help="explicit proposals JSON array")
     pkt.add_argument("--heuristics", action="store_true", help="add quality-heuristic findings")
+    pkt.add_argument(
+        "--audit",
+        action="store_true",
+        help="generate findings and proposals (merge, supersede, unlink, rewrite, delete, "
+        "choose-one) from the offline audit; needs --profile-home and --observed-at",
+    )
+    pkt.add_argument("--profile-home", type=Path, help="absolute profile home (with --audit)")
+    pkt.add_argument("--store", choices=("sqlite", "flatfile"), default="sqlite")
     pkt.add_argument("--observed-at", help="ISO 8601 time with timezone (required by --heuristics)")
     pkt.add_argument(
         "--attach-evidence",
@@ -123,6 +141,29 @@ def _parser() -> argparse.ArgumentParser:
     val.add_argument("--plan", type=Path, required=True)
     _source_args(val)
     val.add_argument("--out", type=Path, required=True)
+    app = commands.add_parser(
+        "apply",
+        help="apply an accepted plan through MemoryService (dry-run unless --run)",
+        description=(
+            "Re-validates the plan against current sources, refuses on any drift, "
+            "preflights every change, then (with --run) applies through MemoryService so "
+            "redaction, the quality gate and the change log apply. Undo with "
+            "`nachos-maintain`-adjacent history/revert (tools/memory_audit.py revert ID, "
+            "or /nachos-memory-revert). Memory records only."
+        ),
+    )
+    app.add_argument("--plan", type=Path, required=True)
+    _source_args(app)
+    app.add_argument("--run", action="store_true", help="write (default is a dry run)")
+    app.add_argument(
+        "--allow-remove", action="store_true", help="permit 'disable' changes (removes the entry)"
+    )
+    app.add_argument(
+        "--allow-unredacted",
+        action="store_true",
+        help="proceed when Hermes' secret redactor is unavailable (not recommended)",
+    )
+    app.add_argument("--out", type=Path, required=True, help="where to write the apply report")
     vwr = commands.add_parser("viewer", help="write the offline review viewer (one HTML file)")
     vwr.add_argument("--out", type=Path, required=True)
     vwr.add_argument("--profile-home", type=Path, help="refuse an --out inside this profile")
@@ -186,6 +227,20 @@ def _attach(
         target["evidence"] = [*target.get("evidence", []), *load_findings_json(read(Path(name)))]
 
 
+def _audit(args: argparse.Namespace, inventory: dict[str, Any]) -> Generated:
+    if args.profile_home is None or args.observed_at is None:
+        raise ValueError("--audit requires --profile-home and --observed-at")
+    home = resolve_profile_home(args.profile_home)
+    if str(home) != inventory["profile"]["root"]:
+        raise ValueError("--profile-home does not match the inventory's profile")
+    service, _path, _index = open_readonly_service(home, args.store)
+    try:
+        signals = collect_signals(service)
+    finally:
+        service.close()
+    return generate_findings(inventory, signals, observed_at=args.observed_at)
+
+
 def _cmd_packet(args: argparse.Namespace) -> int:
     inventory = loads(_read_input(args.inventory))
     findings: list[dict[str, Any]] = (
@@ -197,8 +252,19 @@ def _cmd_packet(args: argparse.Namespace) -> int:
         if args.observed_at is None:
             raise ValueError("--heuristics requires --observed-at")
         findings += heuristic_findings(inventory, observed_at=args.observed_at)
+    proposals: list[dict[str, Any]] = (
+        load_findings_json(_read_input(args.proposals)) if args.proposals else []
+    )
+    if args.audit:
+        found = _audit(args, inventory)
+        findings += found.findings
+        proposals += found.proposals
+        print(
+            f"audit: {len(found.findings)} findings, {len(found.proposals)} proposals, "
+            f"{len(found.skipped)} skipped",
+            file=sys.stderr,
+        )
     _attach(findings, args.attach_evidence, _read_input)
-    proposals = load_findings_json(_read_input(args.proposals)) if args.proposals else []
     packet = build_packet(inventory, findings=findings, proposals=proposals)
     _write_new(args.out, dumps(packet), _root(packet))
     return 0
@@ -230,6 +296,33 @@ def _cmd_validate(args: argparse.Namespace) -> int:
     return _EXIT[result["status"]]
 
 
+def _cmd_apply(args: argparse.Namespace) -> int:
+    boundary, profile, spec = _context(args)
+    plan = loads(_read_input(args.plan))
+    redact = hermes_redactor()
+    if redact is None and not args.allow_unredacted:
+        raise ValueError(
+            "Hermes' secret redactor is unavailable; run inside the Hermes environment "
+            "or pass --allow-unredacted"
+        )
+    home = _home(args).resolve()
+    path = home / "nachos" / ("memory.md" if args.store == "flatfile" else "memory.db")
+    if not path.is_file():
+        raise ValueError(f"no store at {path}")
+    scope = Scope(PROFILE, get_store(args.store, path), MemoryIndex(index_path_for(path)))
+    service = MemoryService(OrderedDict([(PROFILE, scope)]), redact=redact)
+    service.session_id = "nachos-reconcile"
+    try:
+        report = apply_plan(
+            plan, service, boundary, profile, spec, run=args.run, allow_remove=args.allow_remove
+        )
+    finally:
+        service.close()
+    _write_new(args.out, canonical_json(report), args.profile_home)
+    print(f"{report['status']} actions={len(report['actions'])} refusals={len(report['refusals'])}")
+    return _APPLY_EXIT[report["status"]]
+
+
 def _forbidden_home(args: argparse.Namespace) -> Path | None:
     return args.profile_home.expanduser() if args.profile_home else None
 
@@ -254,6 +347,7 @@ _COMMANDS: dict[str, Callable[[argparse.Namespace], int]] = {
     "session": _cmd_session,
     "export": _cmd_export,
     "validate": _cmd_validate,
+    "apply": _cmd_apply,
     "viewer": _cmd_viewer,
     "skill": _cmd_skill,
 }

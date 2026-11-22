@@ -70,6 +70,7 @@ from .config import (
     shared_dir,
     store_file,
 )
+from .reconcile_tool import RECONCILE_SCHEMA, handle_reconcile
 from .schemas import (
     HISTORY_SCHEMA,
     PUT_SCHEMA,
@@ -491,7 +492,7 @@ class NachosMemoryProvider(MemoryProvider):
         schemas = [RECALL_SCHEMA, PUT_SCHEMA, REMOVE_SCHEMA]
         if shared:
             schemas = [with_scope(s) for s in schemas]
-        return [*schemas, HISTORY_SCHEMA]
+        return [*schemas, HISTORY_SCHEMA, RECONCILE_SCHEMA]
 
     def handle_tool_call(self, tool_name: str, args: dict[str, Any], **kwargs) -> str:
         if tool_name == "nachos_history_search":
@@ -499,6 +500,10 @@ class NachosMemoryProvider(MemoryProvider):
         service = self._service
         if not service:
             return json.dumps({"error": "Nachos memory store not available"})
+        if tool_name == "nachos_memory_reconcile" and self._hermes_home is not None:
+            return handle_reconcile(
+                service, self._hermes_home, self._cfg["store"], self._primary, args
+            )
         handler = {
             "nachos_memory_recall": self._recall,
             "nachos_memory_put": self._put,

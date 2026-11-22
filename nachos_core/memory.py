@@ -69,6 +69,7 @@ from .validity import (
     history_rows,
     normalize_supersedes,
     possible_updates_for,
+    resolve_successor,
     restore_from_change,
     scope_status,
     select_ranked,
@@ -656,6 +657,7 @@ class MemoryService:
         summary: str = "",
         category: str = "general",
         scope: str = PROFILE,
+        key: str | None = None,
     ) -> Draft:
         """Normalise and gate a prospective write without touching any store.
 
@@ -680,7 +682,9 @@ class MemoryService:
         if not summary:
             summary = next((ln.strip() for ln in body.splitlines() if ln.strip()), "")
         category = (category or "general").strip() or "general"
-        draft = Draft(title, summary, category, body, slugify(title) if title else "", scope)
+        draft = Draft(
+            title, summary, category, body, key or (slugify(title) if title else ""), scope
+        )
         draft.error = self._gate(draft)
         return draft
 
@@ -725,9 +729,11 @@ class MemoryService:
         category: str = "general",
         scope: str = PROFILE,
         supersedes: str | list[str] | None = None,
+        key: str | None = None,
     ) -> dict[str, Any]:
+        """Write an entry; ``key`` (normally derived from the title) updates an existing key."""
         draft = self.prepare(
-            title=title, body=body, summary=summary, category=category, scope=scope
+            title=title, body=body, summary=summary, category=category, scope=scope, key=key
         )
         if draft.error:
             return {"error": draft.error}
@@ -827,6 +833,41 @@ class MemoryService:
                 s.index.delete(key)
                 return s.name
         return None
+
+    def link_supersede(self, old_key: str, new_key: str, scope: str = PROFILE) -> dict[str, Any]:
+        """Mark ``old_key`` superseded by ``new_key`` (logged, so ``revert`` undoes it)."""
+        target = self.scopes[scope]
+        old_meta = target.store.get_meta(old_key)
+        error = None
+        if old_key == new_key:
+            error = "an entry cannot supersede itself"
+        elif target.store.get(old_key) is None or target.store.get(new_key) is None:
+            error = "both entries must exist"
+        elif old_meta is not None and old_meta.superseded_by:
+            error = f"{old_key!r} is already superseded by {old_meta.superseded_by!r}"
+        elif resolve_successor(new_key, self._scope_meta(target)) in (None, old_key):
+            # new_key's chain must end at an active entry that is not old_key (no cycles)
+            error = f"{new_key!r} is superseded back to {old_key!r} or has no active successor"
+        if error:
+            return {"error": error}
+        return {"superseded": self._apply_supersedes(target, new_key, [old_key])}
+
+    def unlink_supersede(
+        self, key: str, expect: str | None = None, scope: str = PROFILE
+    ) -> dict[str, Any]:
+        """Clear ``key``'s supersede link (optionally only if it points at ``expect``)."""
+        target = self.scopes[scope]
+        meta = target.store.get_meta(key)
+        current = meta.superseded_by if meta is not None else None
+        if not current:
+            return {"error": f"{key!r} is not superseded"}
+        if expect is not None and current != expect:
+            return {"error": f"{key!r} is superseded by {current!r}, not {expect!r}"}
+        prev = self._snapshot(target, key)
+        self._log(target, key, "supersede", prev, prev_superseded_by=current)
+        target.store.set_superseded_by(key, None)
+        self._invalidate_lexical(target.name)
+        return {"unlinked": key, "was": current}
 
     # -- hygiene -----------------------------------------------------------
 

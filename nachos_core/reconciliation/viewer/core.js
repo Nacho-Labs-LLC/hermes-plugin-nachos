@@ -1148,15 +1148,32 @@
     }
   }
 
-  function changeCheck(change, src) {
+  var PROPOSAL_KINDS = ['merge', 'supersede', 'unlink', 'rewrite', 'delete', 'choose-one', 'other'];
+  var CONFIDENCE = ['low', 'medium', 'high'];
+
+  function linkChange(change, src, memoryKeys) {
+    if (src.kind !== 'memory_record') {
+      fail('supersede/unlink apply to memory records only');
+    }
+    fields(change.after, 'superseded_by');
+    var target = change.after.superseded_by;
+    text(target);
+    if (target === src.before.key || !memoryKeys.has(target)) {
+      fail('link target must be another inventory memory record');
+    }
+  }
+
+  function changeCheck(change, src, memoryKeys) {
     fields(change, 'source_id source_sha256 operation before after');
     if (change.source_sha256 !== src.sha256 || !deepEqual(change.before, src.before)) {
       fail('source precondition mismatch');
     }
     if (change.operation === 'disable') {
       if (change.after !== null) {
-        fail('disable is proposal-only and requires null after');
+        fail('disable requires null after');
       }
+    } else if (change.operation === 'supersede' || change.operation === 'unlink') {
+      linkChange(change, src, memoryKeys);
     } else if (change.operation === 'edit') {
       if (src.kind === 'memory_record') {
         checkMemoryRecord(change.after);
@@ -1171,8 +1188,27 @@
     }
   }
 
+  function optionalProposalFields(value) {
+    if (!isDict(value)) {
+      fail('proposal must be an object');
+    }
+    var base = {};
+    Object.keys(value).forEach(function (k) {
+      if (k !== 'kind' && k !== 'confidence') {
+        base[k] = value[k];
+      }
+    });
+    fields(base, 'id revision finding_ids depends_on changes assessments');
+    if (hasOwn.call(value, 'kind') && PROPOSAL_KINDS.indexOf(value.kind) < 0) {
+      fail('unsupported proposal kind');
+    }
+    if (hasOwn.call(value, 'confidence') && CONFIDENCE.indexOf(value.confidence) < 0) {
+      fail('unsupported confidence');
+    }
+  }
+
   function proposalCheck(value, packet) {
-    fields(value, 'id revision finding_ids depends_on changes assessments');
+    optionalProposalFields(value);
     text(value.id);
     if (!isInt(value.revision) || value.revision < 1) {
       fail('revision must be positive integer');
@@ -1198,6 +1234,12 @@
         excerpted.add(f.excerpts[c].source_id);
       }
     }
+    var memoryKeys = new Set();
+    sources.forEach(function (s) {
+      if (s.kind === 'memory_record') {
+        memoryKeys.add(s.before.key);
+      }
+    });
     sequence(value.changes, true);
     var changed = new Set();
     for (var k = 0; k < value.changes.length; k++) {
@@ -1214,7 +1256,7 @@
       if (!excerpted.has(sid)) {
         fail('each changed source requires an exact supported excerpt');
       }
-      changeCheck(change, sources.get(sid));
+      changeCheck(change, sources.get(sid), memoryKeys);
     }
   }
 

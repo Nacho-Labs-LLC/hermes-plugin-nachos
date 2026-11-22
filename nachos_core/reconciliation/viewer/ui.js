@@ -423,6 +423,8 @@
         on: { click: function () { selectProposal(rec.proposal_id); } } }, [
         el('div', { text: rec.proposal_id }),
         el('span', { class: 'tag', text: 'rev ' + p.revision }),
+        p.kind ? el('span', { class: 'tag', text: p.kind }) : null,
+        p.confidence ? el('span', { class: 'tag', text: p.confidence + ' confidence' }) : null,
         el('span', { class: 'tag', text: rec.decision }),
         led && led.status === 'blocked' ? el('span', { class: 'tag blocked', text: 'export blocked' }) : null
       ]);
@@ -536,8 +538,8 @@
     card.appendChild(dl([['source id', c.source_id], ['kind', s ? s.kind : '?'], ['identity', s ? s.identity : '?'], ['locator', s ? s.locator : '?'],
       ['source sha256 (precondition)', c.source_sha256], ['operation', c.operation]]));
     var fields = typeof c.before === 'string' ? [null] : MEMORY_FIELDS;
-    if (c.operation === 'disable') {
-      card.appendChild(el('p', { class: 'warn', text: 'Proposed disable - no writes' }));
+    if (c.operation !== 'edit') {
+      card.appendChild(el('p', { class: 'warn', text: 'Proposed ' + c.operation + (c.after ? ' (superseded_by ' + c.after.superseded_by + ')' : '') + ' - no writes here' }));
       fields.forEach(function (f) {
         card.appendChild(el('h4', { text: 'Before' + (f ? ' - ' + f : '') }));
         card.appendChild(el('pre', { text: f ? c.before[f] : c.before }));
@@ -571,6 +573,7 @@
     box.appendChild(el('h2', { tabindex: '-1', text: 'Proposal ' + p.id + ' (revision ' + p.revision + ')' }));
     var led = S.ledger[rec.proposal_id];
     box.appendChild(dl([['decision', rec.decision], ['accepted digest', rec.accepted_digest === null ? '(none)' : rec.accepted_digest],
+      ['kind', p.kind || '(unspecified)'], ['confidence', p.confidence || '(unspecified)'],
       ['depends on', p.depends_on.length ? p.depends_on.join(', ') : '(none)'],
       ['export', led ? led.status + (led.reason ? ' - ' + led.reason : '') : '(pending)']]));
 
