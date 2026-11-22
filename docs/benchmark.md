@@ -760,3 +760,22 @@ A `graph_boost` (add a share of a strong hit's fused score to entries it links t
 ### Cost and size
 
 `memory.py` stays at radon maintainability B (10.6, from 9.2): the link and entity logic lives in `links.py`, `graph.py` and `linked.py`, and the unchanged cache refresh and change-log snapshot helpers moved to `support.py`. `put()` re-scans one entry's text for entities and links; the entity index is rebuilt from the store only after an external edit.
+
+## Reconciliation branch check (no ranking change expected)
+
+The reconciliation work adds `MemoryService.link_supersede`/`unlink_supersede` and a `key`
+argument to `put`/`prepare`, and does not touch ranking. `python -m bench --repeat 3`, rerank
+off, memory-next before and this branch after (hit@1 / hit@5 / MRR@10):
+
+| Data set | Backend | Before | After |
+| --- | --- | --- | --- |
+| original (393 positive queries) | lexical | 0.695 / 0.812 / 0.748 | 0.695 / 0.812 / 0.748 |
+| original | MiniLM q8 | 0.758 / 0.924 / 0.832 | 0.758 / 0.924 / 0.832 |
+| original | gte-modernbert q8 | 0.766 / 0.949 / 0.847 | 0.773 / 0.949 / 0.850 |
+| adversarial | lexical | 0.975 / 1.000 / 0.986 | 0.975 / 1.000 / 0.986 |
+| adversarial | MiniLM q8 | 0.988 / 1.000 / 0.994 | 0.988 / 1.000 / 0.994 |
+| adversarial | gte-modernbert q8 | 1.000 / 1.000 / 1.000 | 1.000 / 1.000 / 1.000 |
+
+No backend regressed. The +0.007 hit@1 for gte-modernbert on the original set is not explained
+by any code change (ranking is untouched); I treat it as run-to-run variation in the embedding
+worker, not an improvement.

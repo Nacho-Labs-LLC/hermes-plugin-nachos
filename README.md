@@ -213,6 +213,16 @@ separate daily/weekly/monthly cron recipes, summary review/correction, human
 consolidation, safety boundaries, and recovery limitations. Nothing is scheduled
 automatically.
 
+### Reconciliation (review, then apply)
+
+`nachos-reconcile` (and the agent tool `nachos_memory_reconcile`) turns audit findings
+into reviewable proposals: merge duplicates, supersede outdated entries, unlink suspicious
+supersede links, rewrite or remove low-quality entries, and choose between conflicting
+facts. Proposals are generated deterministically (no LLM), reviewed by a human in an
+offline viewer or by naming them in chat, and applied only through the normal memory path
+(redaction, quality gate, change log, `/nachos-memory-revert`), as a dry run unless
+`--run`. See [reconciliation](docs/reconciliation.md).
+
 Existing **source-checkout** tools remain available with `--store {sqlite,flatfile}`
 and `--path` (default `$HERMES_HOME/nachos/memory.db`):
 

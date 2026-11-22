@@ -124,20 +124,19 @@ def _validate_profile_paths(home: Path, path: Path, store_kind: str) -> None:
             raise ValueError(f"path escapes selected profile: {target}")
 
 
-def _report(args):
-    if not math.isfinite(args.days) or args.days < 0:
-        raise ValueError("--days must be finite and nonnegative")
-    supplied = args.profile_home.expanduser()
-    if not supplied.is_absolute():
-        raise ValueError("--profile-home must be an absolute path")
-    home = supplied.resolve()
-    path = home / "nachos" / ("memory.md" if args.store == "flatfile" else "memory.db")
-    _validate_profile_paths(home, path, args.store)
+def open_readonly_service(home: Path, store_kind: str) -> tuple[MemoryService, Path, bool]:
+    """Read-only service over exactly one profile's store and index (WAL-safe, no writes).
+
+    Returns ``(service, store_path, index_available)``; the caller closes the service.
+    ``home`` must be an absolute, already-resolved profile home.
+    """
+    path = home / "nachos" / ("memory.md" if store_kind == "flatfile" else "memory.db")
+    _validate_profile_paths(home, path, store_kind)
     if not path.is_file():
         raise ValueError(f"no store at {path}")
     store = (
         SqliteStore(path, read_only=True)
-        if args.store == "sqlite"
+        if store_kind == "sqlite"
         else MDStore(path, read_only=True)
     )
     index_path = index_path_for(path)
@@ -151,6 +150,21 @@ def _report(args):
         getattr(store, "close", lambda: None)()
         raise
     service = MemoryService(OrderedDict([(PROFILE, Scope(PROFILE, store, index))]))
+    return service, path, index_path.exists()
+
+
+def resolve_profile_home(supplied: Path) -> Path:
+    expanded = supplied.expanduser()
+    if not expanded.is_absolute():
+        raise ValueError("--profile-home must be an absolute path")
+    return expanded.resolve()
+
+
+def _report(args):
+    if not math.isfinite(args.days) or args.days < 0:
+        raise ValueError("--days must be finite and nonnegative")
+    home = resolve_profile_home(args.profile_home)
+    service, path, index_available = open_readonly_service(home, args.store)
     try:
         selected = _CHECKS if args.check == "all" else (args.check,)
         return {
@@ -158,10 +172,9 @@ def _report(args):
             "report_only": True,
             "profile_home": str(home),
             "store_path": str(path),
-            "index_available": index_path.exists(),
+            "index_available": index_available,
             "checks": {
-                name: _check(name, service, home, args.days, index_path.exists())
-                for name in selected
+                name: _check(name, service, home, args.days, index_available) for name in selected
             },
         }
     finally:

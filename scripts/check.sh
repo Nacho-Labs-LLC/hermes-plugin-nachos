@@ -5,6 +5,8 @@
 # thresholds are the flags below (xenon has no config file).
 #
 #   bash scripts/check.sh            # run every check, stop at the first failure
+#   NACHOS_REQUIRE_BROWSER=1 NACHOS_BROWSER_PYTHON=/path/to/python-with-playwright \
+#       bash scripts/check.sh        # also run the real-browser viewer gate (scripts/browser_gate.sh)
 #
 # Install the pinned tools with:  uv sync --group dev   (or: pip install --group dev)
 # Uses .venv/bin/python3 when present, else python3.
@@ -60,7 +62,22 @@ step "pylint duplicate-code (min-similarity-lines from pyproject)"
 "$PY" -m pylint --disable=all --enable=duplicate-code "${SRC_DIRS[@]}" tests
 
 step "pytest"
-"$PY" -m pytest tests -q
+PYTEST_ARGS=(tests -q)
+if [ "${NACHOS_REQUIRE_BROWSER:-}" = "1" ]; then
+    # The browser gate below runs these under the browser-capable interpreter.
+    PYTEST_ARGS+=(--ignore=tests/browser --ignore=tests/test_viewer_core_node.py)
+fi
+"$PY" -m pytest "${PYTEST_ARGS[@]}"
+
+step "browser gate"
+if [ "${NACHOS_REQUIRE_BROWSER:-}" = "1" ]; then
+    bash scripts/browser_gate.sh
+    BROWSER_STATUS="browser gate passed"
+else
+    BROWSER_STATUS="BROWSER GATE NOT RUN"
+    echo "!!!! BROWSER GATE NOT RUN (set NACHOS_REQUIRE_BROWSER=1) !!!!"
+    echo "     Viewer browser tests were skipped; this is NOT a pass for the viewer."
+fi
 
 echo
-echo "── all checks passed ──"
+echo "── all checks passed (${BROWSER_STATUS}) ──"

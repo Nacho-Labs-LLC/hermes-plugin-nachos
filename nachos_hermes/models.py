@@ -20,7 +20,7 @@ from typing import Any
 
 from nachos_core.index import MemoryIndex, index_path_for
 from nachos_core.memory import PROFILE, MemoryService, Scope
-from nachos_core.store import MDStore, SqliteStore, get_store
+from nachos_core.store import get_store
 
 from .config import (
     AUXILIARY_TASKS,
@@ -30,6 +30,7 @@ from .config import (
     profile_config,
     store_file,
 )
+from .maintenance import open_readonly_service
 
 #: Every embedding / rerank / re-embed setting (none is a secret: the API key is only an env var name).
 _MODEL_KEYS = tuple(
@@ -61,32 +62,15 @@ def list_report(home: Path | None) -> dict[str, Any]:
     }
 
 
-def _open_read_only(home: Path, store_kind: str) -> tuple[Any, MemoryIndex, Path]:
-    path = home / "nachos" / store_file(Path("."), store_kind).name
-    if not path.is_file():
-        raise ValueError(f"no store at {path}")
-    store = (
-        SqliteStore(path, read_only=True)
-        if store_kind == "sqlite"
-        else MDStore(path, read_only=True)
-    )
-    index_path = index_path_for(path)
-    index = (
-        MemoryIndex(index_path, read_only=True) if index_path.exists() else MemoryIndex(":memory:")
-    )
-    return store, index, path
-
-
 def status_report(home: Path, store_kind: str) -> dict[str, Any]:
     """Vectors per model in the profile's index versus what the config asks for. Read-only."""
     cfg = profile_config(home)
-    store, index, path = _open_read_only(home, store_kind)
+    service, path, _index_ok = open_readonly_service(home.resolve(), store_kind)
     try:
-        entries = len(store.list())
-        counts = index.model_counts()
+        entries = len(service.profile.store.list())
+        counts = service.profile.index.model_counts()
     finally:
-        getattr(store, "close", lambda: None)()
-        index.close()
+        service.close()
     wanted = effective_embedding(cfg)
     prefix = f"nachos:{cfg['embedding_model'] or 'default'}"
     # The exact id also carries pooling/prefix details only the running CLI reports, so match

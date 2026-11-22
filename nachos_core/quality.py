@@ -471,3 +471,18 @@ def looks_like_update(
     """True when ``new_text`` shows an update cue, changed factual token, or temporal progression."""
     boost, _reason = update_signal(old_text, new_text, old_title=old_title, new_title=new_title)
     return boost > 0.0
+
+
+def fact_change(old_text: str, new_text: str) -> tuple[str, str] | None:
+    """The (old, new) fact pair when the two texts differ in one value, else None."""
+    return _changed_fact_pair(old_text, new_text)
+
+
+def has_update_cue(text: str) -> bool:
+    """True when ``text`` carries an explicit update cue ("now", "no longer", ...)."""
+    return bool(_STRONG_UPDATE_CUES_RE.search(text or ""))
+
+
+def temporal_progression(old_title: str, new_title: str) -> bool:
+    """True when the titles read as consecutive versions/periods of one subject."""
+    return _has_temporal_progression(old_title, new_title)
