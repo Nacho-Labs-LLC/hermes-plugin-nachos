@@ -8,9 +8,9 @@ import time
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-from .index import MemoryIndex, dot
-from .lexical import LexicalIndex, jaccard
-from .quality import update_signal
+from .index import MemoryIndex
+from .lexical import LexicalIndex
+from .quality import qualifier_difference, update_signal
 from .store.base import EntryMeta, MemoryStore
 
 # Recency tie-break tolerance on RRF scores: covers exact ties and symmetric (0,1)/(1,0)
@@ -273,6 +273,41 @@ def superseded_entries(
     return rows
 
 
+def suspicious_supersedes(
+    scopes: Mapping[str, tuple[MemoryStore, Mapping[str, EntryMeta]]],
+) -> list[dict[str, Any]]:
+    """Superseded links whose old and new entries differ in a facet qualifier (report only)."""
+    rows: list[dict[str, Any]] = []
+    for scope_name, (store, metas) in scopes.items():
+        by_key = {k: (title, summary, category) for k, title, summary, category in store.list()}
+        for old_key, meta in metas.items():
+            new_key = meta.superseded_by
+            if not new_key or old_key not in by_key or new_key not in by_key:
+                continue
+            old_title, old_summary, category = by_key[old_key]
+            new_title, new_summary, _ = by_key[new_key]
+            reason = qualifier_difference(
+                old_title,
+                f"{old_title}\n{old_summary}",
+                new_title,
+                f"{new_title}\n{new_summary}",
+            )
+            if reason is not None:
+                rows.append(
+                    {
+                        "scope": scope_name,
+                        "old_key": old_key,
+                        "old_title": old_title,
+                        "new_key": new_key,
+                        "new_title": new_title,
+                        "category": category,
+                        "reason": reason,
+                    }
+                )
+    rows.sort(key=lambda r: (r["scope"], r["old_key"]))
+    return rows
+
+
 def select_ranked(
     fused: Mapping[tuple[str, str], dict[str, Any]],
     metas_by_scope: Mapping[str, Mapping[str, EntryMeta]],
@@ -471,95 +506,3 @@ def history_rows(
             )
     rows.sort(key=lambda r: r["ts"], reverse=True)
     return rows[:limit]
-
-
-def find_similar_entries(
-    scopes: Mapping[str, tuple[LexicalIndex, MemoryIndex, Mapping[str, EntryMeta], float]],
-    title: str,
-    summary: str,
-    *,
-    exclude: tuple[str, str] | None,
-    vector: list[float] | None,
-    model_id: str | None,
-    lexical_threshold: float,
-    limit: int,
-) -> list[dict[str, Any]]:
-    """Existing active entries that look like the same memory, most similar first."""
-    found: dict[tuple[str, str], dict[str, Any]] = {}
-    label = f"{title} {summary}"
-    for scope_name, (lex, index, metas, duplicate_threshold) in scopes.items():
-        excluded_key = exclude[1] if exclude and exclude[0] == scope_name else None
-        for key, doc_title, score in lex.similar_labels(
-            label, threshold=lexical_threshold, exclude=excluded_key
-        ):
-            if metas.get(key) and metas[key].superseded_by:
-                continue
-            found[(scope_name, key)] = {
-                "key": key,
-                "scope": scope_name,
-                "title": doc_title,
-                "similarity": round(score, 3),
-                "match": "lexical",
-            }
-        if vector is not None and model_id is not None:
-            for key, sim in index.search(vector, model_id, top_k=limit + 1, head_only=True):
-                if (
-                    (scope_name, key) == exclude
-                    or sim < duplicate_threshold
-                    or (metas.get(key) and metas[key].superseded_by)
-                ):
-                    continue
-                prev = found.get((scope_name, key))
-                if prev is None or sim > prev["similarity"]:
-                    doc = lex.docs.get(key)
-                    found[(scope_name, key)] = {
-                        "key": key,
-                        "scope": scope_name,
-                        "title": doc.title if doc is not None else key,
-                        "similarity": round(sim, 3),
-                        "match": "semantic",
-                    }
-    return sorted(found.values(), key=lambda d: -d["similarity"])[:limit]
-
-
-def find_duplicate_pairs(
-    scopes: Mapping[str, tuple[MemoryStore, MemoryIndex, Mapping[str, EntryMeta]]],
-    *,
-    model_id: str | None,
-    duplicate_threshold: float,
-    lexical_threshold: float,
-) -> list[dict[str, Any]]:
-    """Compute all active near-duplicate entry pairs across scopes."""
-    flat: list[tuple[str, str, str, str]] = []
-    vecs: dict[tuple[str, str], list[float]] = {}
-    for scope_name, (store, index, metas) in scopes.items():
-        flat.extend(
-            (scope_name, k, t, sm)
-            for k, t, sm, _c in store.list()
-            if not (metas.get(k) and metas[k].superseded_by)
-        )
-        if model_id is not None:
-            for key, vec in index.vectors(model_id).items():
-                vecs[(scope_name, key)] = vec
-    pairs: list[dict[str, Any]] = []
-    for i, (sa, ka, ta, sma) in enumerate(flat):
-        for sb, kb, tb, smb in flat[i + 1 :]:
-            va, vb = vecs.get((sa, ka)), vecs.get((sb, kb))
-            if va is not None and vb is not None:
-                sim, how = dot(va, vb), "semantic"
-                if sim < duplicate_threshold:
-                    continue
-            else:
-                sim, how = jaccard(f"{ta} {sma}", f"{tb} {smb}"), "lexical"
-                if sim < lexical_threshold:
-                    continue
-            pairs.append(
-                {
-                    "a": {"scope": sa, "key": ka, "title": ta},
-                    "b": {"scope": sb, "key": kb, "title": tb},
-                    "similarity": round(sim, 3),
-                    "match": how,
-                }
-            )
-    pairs.sort(key=lambda p: -p["similarity"])
-    return pairs

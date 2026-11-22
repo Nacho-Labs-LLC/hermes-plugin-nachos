@@ -52,8 +52,11 @@ from .quality import low_signal_reason
 from .ranking import (
     DEFAULT_BLEND,
     duplicate_threshold_for,
+    find_duplicate_pairs,
+    find_similar_entries,
     rerank_rows,
     scope_ranked_hits,
+    update_threshold_for,
 )
 from .store.base import Entry, EntryMeta, MemoryStore
 from .store.md_store import slugify
@@ -62,8 +65,6 @@ from .validity import (
     RECENCY_TIE_EPS,
     backfill_scope_timestamps,
     entry_payload,
-    find_duplicate_pairs,
-    find_similar_entries,
     format_put_result,
     history_rows,
     normalize_supersedes,
@@ -72,6 +73,7 @@ from .validity import (
     scope_status,
     select_ranked,
     superseded_entries,
+    suspicious_supersedes,
     unused_entries,
 )
 
@@ -147,6 +149,7 @@ class MemoryService:
         chunk_penalty: float = CHUNK_PENALTY,
         similarity_floor: float | str | None = None,
         calibrate_duplicates: bool = False,
+        calibrate_updates: bool = True,
         rerank_candidates: int = 25,
         rerank_mode: str = DEFAULT_BLEND,
     ):
@@ -161,9 +164,11 @@ class MemoryService:
         #: None = no floor; a float = absolute cosine; a profile key such as "p95" = that
         #: percentile of the model's own random-pair cosine (see MemoryIndex.similarity_profile).
         self.similarity_floor = similarity_floor
-        #: Raise ``duplicate_threshold`` to the model's random-pair ``_DUP_PERCENTILE`` when higher.
+        #: Raise ``duplicate_threshold`` to the model's random-pair ``DUP_PERCENTILE`` when higher.
         #: Off by default so an explicitly configured threshold is used exactly as given.
         self.calibrate_duplicates = calibrate_duplicates
+        #: Raise the semantic ``possible_updates`` floor to the model's calibrated percentile.
+        self.calibrate_updates = calibrate_updates
         #: Fused results sent to the cross-encoder, when the embedder offers one.
         self.rerank_candidates = rerank_candidates
         self.rerank_mode = rerank_mode
@@ -767,6 +772,18 @@ class MemoryService:
         target.index.record_seen([key])
 
         applied = self._apply_supersedes(target, key, normalize_supersedes(supersedes, key))
+        base_update_threshold = max(0.45, self.duplicate_threshold - 0.17)
+        sem_threshold = (
+            update_threshold_for(
+                target.index,
+                embedder.model_id,
+                base_update_threshold,
+                calibrate=self.calibrate_updates,
+                similarity_floor=self.similarity_floor,
+            )
+            if vector is not None and embedder is not None
+            else base_update_threshold
+        )
         possible = possible_updates_for(
             target.store,
             self._lexical_index(target),
@@ -779,7 +796,7 @@ class MemoryService:
             summary=summary,
             body=body,
             already_superseded=set(applied),
-            semantic_threshold=max(0.45, self.duplicate_threshold - 0.17),
+            semantic_threshold=sem_threshold,
         )
 
         return format_put_result(
@@ -824,6 +841,11 @@ class MemoryService:
         """Superseded entries older than N days (candidates for removal)."""
         scope_map = {s.name: (s.store, self._scope_meta(s)) for s in self.scopes.values()}
         return superseded_entries(scope_map, older_than_days=older_than_days, now=now)
+
+    def suspicious_supersedes(self) -> list[dict[str, Any]]:
+        """Superseded links whose old and new entries differ in a facet qualifier."""
+        scope_map = {s.name: (s.store, self._scope_meta(s)) for s in self.scopes.values()}
+        return suspicious_supersedes(scope_map)
 
     def status(self) -> dict[str, Any]:
         model_id = self.embedder.model_id if self.embedder else None

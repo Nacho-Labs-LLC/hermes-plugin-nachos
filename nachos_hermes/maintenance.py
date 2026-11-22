@@ -16,7 +16,7 @@ from nachos_core.memory import PROFILE, MemoryService, Scope
 from nachos_core.quality import flag_reason
 from nachos_core.store import MDStore, SqliteStore
 
-_CHECKS = ("summaries", "duplicates", "unused", "superseded", "inbox")
+_CHECKS = ("summaries", "duplicates", "unused", "superseded", "suspicious_supersedes", "inbox")
 
 
 def _summaries(store):
@@ -49,6 +49,9 @@ def _check(name, service, home, days, index_available):
     if name == "superseded":
         rows = service.superseded(days)
         return {"count": len(rows), "items": rows, "days": days}
+    if name == "suspicious_supersedes":
+        rows = service.suspicious_supersedes()
+        return {"count": len(rows), "items": rows}
     inbox = home / "nachos" / "inbox"
     return {
         "pending_candidates": index.count_inbox() if index_available else None,

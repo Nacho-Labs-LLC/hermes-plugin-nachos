@@ -337,6 +337,8 @@ def ranking_options(opts: argparse.Namespace) -> dict[str, Any]:
         out["rerank_mode"] = opts.rerank_mode
     if getattr(opts, "calibrate_duplicates", False):
         out["calibrate_duplicates"] = True
+    if getattr(opts, "no_update_calibration", False):
+        out["calibrate_updates"] = False
     return out
 
 
@@ -596,7 +598,7 @@ def eval_suggest_backend(
     gt = {slugify(m["title"]): set(m["supersedes"]) for m in memories if m.get("supersedes")}
     near_dup_keys = {k for q in queries if q["category"] == "near-dup" for k in q["expect"]}
     with tempfile.TemporaryDirectory(prefix="nachos-suggest-") as tmp:
-        svc = build_service(Path(tmp), embedder)
+        svc = build_service(Path(tmp), embedder, **ranking_options(opts))
         try:
             scored = _score_suggestions(svc, memories, gt, near_dup_keys)
         finally:
@@ -697,6 +699,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     ap.add_argument("--chunk-penalty", type=float, default=None, help="body-chunk score penalty")
     ap.add_argument(
         "--floor", default="off", help="similarity floor: off, auto (p75) or a profile key (p90)"
+    )
+    ap.add_argument(
+        "--no-update-calibration",
+        action="store_true",
+        help="disable calibrated floor for possible_updates (measure uncalibrated baseline)",
     )
     ap.add_argument("--rerank", action="store_true", help="enable the nachos cross-encoder rerank")
     ap.add_argument("--rerank-model", default="", help="rerank_model passthrough")

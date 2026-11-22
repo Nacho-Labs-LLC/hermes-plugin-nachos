@@ -16,7 +16,8 @@ import pytest
 
 from nachos_core.index import MemoryIndex, index_path_for
 from nachos_core.memory import PROFILE, SHARED, MemoryService, Scope
-from nachos_core.quality import looks_like_update, update_signal
+from nachos_core.quality import looks_like_update, qualifier_difference, update_signal
+from nachos_core.ranking import update_threshold_for
 from nachos_core.store import MDStore, SqliteStore, get_store
 from nachos_core.toc import render_toc
 from nachos_hermes import commands
@@ -565,6 +566,81 @@ class TestSuggestionHeuristic:
         finally:
             svc.close()
 
+    def test_qualifier_difference_surfaces_in_possible_updates_reason(self, tmp_path: Path) -> None:
+        assert (
+            qualifier_difference(
+                "Database connection details: staging",
+                "Staging Postgres runs on port 5432.",
+                "Database connection details: production",
+                "Production Postgres runs on port 5433.",
+            )
+            == "different qualifier: staging vs production"
+        )
+        assert (
+            qualifier_difference(
+                "Backup schedule",
+                "Nightly Postgres backups run at 02:00 UTC.",
+                "Backup schedule for analytics",
+                "Nightly analytics warehouse backups run at 04:00 UTC.",
+            )
+            == "different qualifier: for analytics (only in new)"
+        )
+        assert (
+            qualifier_difference(
+                "Build guide",
+                "Build steps for the desktop application.",
+                "Build guide for macOS",
+                "macOS build steps using Xcode.",
+            )
+            == "different qualifier: for macOS (only in new)"
+        )
+        # Legitimate updates without conflicting qualifiers return None.
+        assert (
+            qualifier_difference(
+                "Deploy tooling (legacy)",
+                "Deploys use Spinnaker pipelines.",
+                "Deploy tooling (current)",
+                "Deploys now use the ferrule CLI.",
+            )
+            is None
+        )
+
+        svc = _make_service(tmp_path)
+        try:
+            svc.put(
+                title="Database connection details: staging",
+                summary="Staging Postgres runs on port 5432 at stage-pg-01",
+                body="Staging Postgres runs on port 5432 at stage-pg-01.",
+            )
+            res = svc.put(
+                title="Database connection details: production",
+                summary="Production Postgres runs on port 5433 at prod-pg-01",
+                body="Production Postgres runs on port 5433 at prod-pg-01.",
+            )
+            updates = res["possible_updates"]
+            assert updates[0]["key"] == "database-connection-details-staging"
+            assert "different qualifier: staging vs production" in updates[0]["reason"]
+        finally:
+            svc.close()
+
+    def test_possible_updates_uses_calibrated_floor_when_available(self, tmp_path: Path) -> None:
+        index = MemoryIndex(tmp_path / "idx.db")
+        try:
+            # Too few vectors (<30): no calibration, fallback base threshold kept.
+            for i in range(5):
+                index.upsert(f"k{i}", f"t{i}", "m", [1.0, float(i) * 0.01])
+            assert update_threshold_for(index, "m", 0.48) == pytest.approx(0.48)
+
+            # With >=30 tightly clustered vectors (high p99 cosine ~0.99+), calibrated floor rises.
+            for i in range(5, 35):
+                index.upsert(f"k{i}", f"t{i}", "m", [1.0, float(i) * 0.01])
+            profile = index.similarity_profile("m")
+            assert profile is not None
+            assert update_threshold_for(index, "m", 0.48) == pytest.approx(profile["p99"])
+            assert update_threshold_for(index, "m", 0.48, calibrate=False) == pytest.approx(0.48)
+        finally:
+            index.close()
+
 
 class TestRecencyTieBreak:
     def test_recency_breaks_ties_only_above_min_gap_and_never_overrides_clear_winner(
@@ -736,10 +812,35 @@ class TestSurfacesAndProvider:
             old_ts = time.time() - 45 * 86400
             svc.profile.store.set_superseded_by("old-policy", "new-policy", updated_at=old_ts)
 
+            # Add a suspicious supersede across conflicting qualifiers (staging -> production)
+            # and a one-sided "for analytics" qualifier.
+            svc.put(
+                title="Database host: staging",
+                body="Staging Postgres runs at stage-db.internal.",
+            )
+            svc.put(
+                title="Database host: production",
+                body="Production Postgres runs at prod-db.internal.",
+                supersedes="database-host-staging",
+            )
+            svc.put(
+                title="Backup schedule",
+                body="Core backups run nightly at 01:00 UTC.",
+            )
+            svc.put(
+                title="Backup schedule for analytics",
+                body="Analytics warehouse backups run nightly at 04:00 UTC.",
+                supersedes="backup-schedule",
+            )
+
             audit = commands.audit_text(svc, older_than_days=30)
             assert "Superseded > 30 days ago" in audit
             assert "old-policy" in audit
             assert "new-policy" in audit
+            assert "Suspicious supersedes: 2" in audit
+            assert "database-host-staging" in audit
+            assert "different qualifier: staging vs production" in audit
+            assert "different qualifier: for analytics (only in new)" in audit
         finally:
             svc.close()
 
@@ -768,6 +869,12 @@ class TestSurfacesAndProvider:
         assert sup["count"] == 1
         assert sup["items"][0]["key"] == "old-policy"
         assert sup["items"][0]["superseded_by"] == "new-policy"
+        susp = report["checks"]["suspicious_supersedes"]
+        assert susp["count"] == 2
+        susp_by_old = {item["old_key"]: item for item in susp["items"]}
+        assert "staging vs production" in susp_by_old["database-host-staging"]["reason"]
+        assert "for analytics" in susp_by_old["backup-schedule"]["reason"]
+        assert "old-policy" not in susp_by_old
         after = {
             str(p.relative_to(home)): (p.stat().st_mtime_ns, p.read_bytes())
             for p in home.rglob("*")

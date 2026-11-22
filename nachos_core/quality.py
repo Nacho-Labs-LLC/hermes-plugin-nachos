@@ -128,6 +128,214 @@ _OLD_TEMPORAL_WORDS = frozenset(
 )
 _NEW_TEMPORAL_WORDS = frozenset({"new", "current", "latest", "update", "updated", "revised"})
 
+_ENV_QUALIFIERS: dict[str, str] = {
+    "prod": "production",
+    "production": "production",
+    "staging": "staging",
+    "stage": "staging",
+    "dev": "development",
+    "development": "development",
+    "local": "local",
+    "qa": "qa",
+    "uat": "uat",
+    "sandbox": "sandbox",
+    "canary": "canary",
+    "preview": "preview",
+    "preprod": "preprod",
+}
+_OS_QUALIFIERS: dict[str, str] = {
+    "macos": "macOS",
+    "osx": "macOS",
+    "linux": "Linux",
+    "windows": "Windows",
+    "ios": "iOS",
+    "android": "Android",
+}
+_PLATFORM_QUALIFIERS: dict[str, str] = {
+    **_OS_QUALIFIERS,
+    "web": "web",
+    "mobile": "mobile",
+    "desktop": "desktop",
+    "arm64": "arm64",
+    "x86": "x86",
+}
+_REGION_LOWER_QUALIFIERS: dict[str, str] = {
+    "europe": "EU",
+    "americas": "US",
+    "asia": "APAC",
+    "apac": "APAC",
+    "emea": "EMEA",
+    "latam": "LATAM",
+    "us-east": "us-east",
+    "us-west": "us-west",
+    "eu-west": "eu-west",
+    "eu-central": "eu-central",
+    "ap-south": "ap-south",
+    "ap-southeast": "ap-southeast",
+    "ap-northeast": "ap-northeast",
+}
+_REGION_UPPER_RE = re.compile(r"\b(US|EU|UK|APAC|EMEA|LATAM|JP|CN|AU|CA|DE|FR|SG)\b")
+_TEAM_QUALIFIERS: dict[str, str] = {
+    "frontend": "frontend",
+    "backend": "backend",
+    "infra": "infra",
+    "infrastructure": "infra",
+    "sre": "sre",
+    "devops": "devops",
+    "support": "support",
+    "sales": "sales",
+    "finance": "finance",
+    "legal": "legal",
+    "marketing": "marketing",
+    "design": "design",
+    "analytics": "analytics",
+    "security": "security",
+    "mobile": "mobile",
+}
+_FOR_PHRASE_RE = re.compile(
+    r"\bfor\s+([a-z0-9][a-z0-9._+-]*(?:\s+[a-z0-9][a-z0-9._+-]*)?)\s*(?:$|[)\],;:\-—])",
+    re.IGNORECASE,
+)
+_FOR_IGNORE = frozenset(
+    {
+        "now",
+        "all",
+        "details",
+        "reference",
+        "example",
+        "the",
+        "a",
+        "an",
+        "this",
+        "that",
+        "new",
+        "current",
+        "legacy",
+        "old",
+        "update",
+        "updates",
+    }
+)
+_SUFFIX_SEP_RE = re.compile(r"[:(\-—]\s*([^:(\-—)]+?)\s*\)?$")
+_MIGRATION_FROM_RE = re.compile(
+    r"\b(?:moved from|migrated from|switched from|replaced|instead of|formerly)\b",
+    re.IGNORECASE,
+)
+_QUAL_TOKEN_RE = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
+
+
+def _extract_group(text: str, mapping: dict[str, str]) -> set[str]:
+    return {mapping[t] for t in _QUAL_TOKEN_RE.findall((text or "").lower()) if t in mapping}
+
+
+def _extract_regions(text: str) -> set[str]:
+    return _extract_group(text, _REGION_LOWER_QUALIFIERS) | set(
+        _REGION_UPPER_RE.findall(text or "")
+    )
+
+
+def _extract_for_phrases(title: str) -> list[str]:
+    out: list[str] = []
+    for match in _FOR_PHRASE_RE.finditer(title or ""):
+        phrase = match.group(1).strip()
+        words = _QUAL_TOKEN_RE.findall(phrase.lower())
+        if words and words[0] not in _FOR_IGNORE and phrase.lower() not in _FOR_IGNORE:
+            out.append(phrase)
+    return out
+
+
+def _for_phrase_difference(old_title: str, new_title: str) -> str | None:
+    old_for = _extract_for_phrases(old_title)
+    new_for = _extract_for_phrases(new_title)
+    if not old_for and not new_for:
+        return None
+    old_low = {p.lower(): p for p in old_for}
+    new_low = {p.lower(): p for p in new_for}
+    old_only = [old_low[k] for k in sorted(set(old_low) - set(new_low))]
+    new_only = [new_low[k] for k in sorted(set(new_low) - set(old_low))]
+    if old_only and new_only:
+        return f"different qualifier: for {old_only[0]} vs for {new_only[0]}"
+    if new_only and not (set(_QUAL_TOKEN_RE.findall(new_only[0].lower())) <= tokens(old_title)):
+        return f"different qualifier: for {new_only[0]} (only in new)"
+    if old_only and not (set(_QUAL_TOKEN_RE.findall(old_only[0].lower())) <= tokens(new_title)):
+        return f"different qualifier: for {old_only[0]} (only in old)"
+    return None
+
+
+def _compare_qualifier_sets(
+    old_q: set[str], new_q: set[str], *, allow_one_sided: bool
+) -> str | None:
+    old_only = sorted(old_q - new_q)
+    new_only = sorted(new_q - old_q)
+    if old_only and new_only:
+        return f"different qualifier: {old_only[0]} vs {new_only[0]}"
+    if allow_one_sided and new_only:
+        return f"different qualifier: {new_only[0]} (only in new)"
+    if allow_one_sided and old_only:
+        return f"different qualifier: {old_only[0]} (only in old)"
+    return None
+
+
+def _suffix_team_qualifiers(title: str) -> set[str]:
+    match = _SUFFIX_SEP_RE.search(title or "")
+    return _extract_group(match.group(1), _TEAM_QUALIFIERS) if match else set()
+
+
+def qualifier_difference(
+    old_title: str,
+    old_text: str,
+    new_title: str,
+    new_text: str,
+) -> str | None:
+    """Return a short description when old/new differ in facet qualifiers, else None.
+
+    Checks one-sided or conflicting ``for <X>`` phrases and environment, region, platform
+    and team qualifiers in titles, plus strictly opposite environment/OS qualifiers in
+    leading text (unless the new text explicitly describes a migration).
+    """
+    title_checks = (
+        _for_phrase_difference(old_title, new_title),
+        _compare_qualifier_sets(
+            _extract_group(old_title, _ENV_QUALIFIERS),
+            _extract_group(new_title, _ENV_QUALIFIERS),
+            allow_one_sided=True,
+        ),
+        _compare_qualifier_sets(
+            _extract_regions(old_title), _extract_regions(new_title), allow_one_sided=True
+        ),
+        _compare_qualifier_sets(
+            _extract_group(old_title, _PLATFORM_QUALIFIERS),
+            _extract_group(new_title, _PLATFORM_QUALIFIERS),
+            allow_one_sided=True,
+        ),
+        _compare_qualifier_sets(
+            _extract_group(old_title, _TEAM_QUALIFIERS),
+            _extract_group(new_title, _TEAM_QUALIFIERS),
+            allow_one_sided=False,
+        ),
+        _compare_qualifier_sets(
+            _suffix_team_qualifiers(old_title),
+            _suffix_team_qualifiers(new_title),
+            allow_one_sided=True,
+        ),
+    )
+    for diff in title_checks:
+        if diff is not None:
+            return diff
+    if _MIGRATION_FROM_RE.search(new_text or ""):
+        return None
+    old_head = "\n".join((old_text or "").splitlines()[:2])
+    new_head = "\n".join((new_text or "").splitlines()[:2])
+    for mapping in (_ENV_QUALIFIERS, _OS_QUALIFIERS):
+        diff = _compare_qualifier_sets(
+            _extract_group(old_head, mapping),
+            _extract_group(new_head, mapping),
+            allow_one_sided=False,
+        )
+        if diff is not None:
+            return diff
+    return None
+
 
 def _has_temporal_progression(old_title: str, new_title: str) -> bool:
     old_words = tokens(old_title)
@@ -221,8 +429,20 @@ def update_signal(
 
     Never gates candidates: when no update cue or factual diff fires, returns a zero boost
     and a neutral similarity reason so the calling agent can still inspect the candidate.
+    When old and new differ in a facet qualifier, suppresses the update boost and surfaces
+    the qualifier difference in the reason text.
     """
     fact_pair = _changed_fact_pair(old_text, new_text)
+    qual_diff = (
+        qualifier_difference(old_title, old_text, new_title, new_text)
+        if (old_title or new_title)
+        else None
+    )
+    if qual_diff is not None:
+        reason = (
+            f"{qual_diff}; changed: {fact_pair[0]} -> {fact_pair[1]}" if fact_pair else qual_diff
+        )
+        return 0.0, reason
     strong_cue = _STRONG_UPDATE_CUES_RE.search(new_text or "")
     weak_cue = None if strong_cue else _WEAK_UPDATE_CUE_RE.search(new_text or "")
     temporal = bool(

@@ -94,6 +94,7 @@ def audit_text(service: MemoryService | None, older_than_days: float = 30) -> st
     pairs = service.duplicate_pairs()
     unused = service.unused(older_than_days)
     superseded = service.superseded(older_than_days)
+    suspicious = service.suspicious_supersedes()
     lines = [f"Likely duplicates: {len(pairs)}"]
     lines.extend(
         f"  {p['similarity']:.2f} {p['match']:<8} {p['a']['scope']}:{p['a']['key']}"
@@ -110,6 +111,12 @@ def audit_text(service: MemoryService | None, older_than_days: float = 30) -> st
     lines.extend(
         f"  {row['age_days']:>6}d  {row['scope']}:{row['key']}  ->  {row['superseded_by']}"
         for row in superseded[:15]
+    )
+    lines.append("")
+    lines.append(f"Suspicious supersedes: {len(suspicious)}")
+    lines.extend(
+        f"  {row['scope']}:{row['old_key']}  ->  {row['new_key']}  ({row['reason']})"
+        for row in suspicious[:15]
     )
     return "\n".join(lines)
 
