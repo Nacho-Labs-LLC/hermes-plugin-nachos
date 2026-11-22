@@ -69,6 +69,18 @@ def is_redundant_summary(summary: str, title: str) -> bool:
     return bool(s) and s == t
 
 
+def flag_reason(title: str, summary: str, body: str) -> str | None:
+    """Shared audit heuristic; a flag is a review hint, not evidence of falsehood."""
+    reason = low_signal_reason(summary)
+    if reason:
+        return f"low-signal ({reason})"
+    if is_redundant_summary(summary, title):
+        return "redundant (just restates the title)"
+    if not shares_vocabulary(summary, body):
+        return "no shared vocabulary with body (likely stale)"
+    return None
+
+
 def shares_vocabulary(summary: str, body: str, *, min_overlap: int = 1) -> bool:
     """True if summary and body share at least `min_overlap` content words.
 

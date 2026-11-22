@@ -38,11 +38,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from nachos_core.quality import (
-    is_redundant_summary,
-    low_signal_reason,
-    shares_vocabulary,
-)
+from nachos_core.quality import flag_reason
 from nachos_core.store import get_store
 
 _API_DELAY_SECONDS = 1.5
@@ -54,24 +50,6 @@ _SYSTEM = (
     "nouns (tools, repos, people, error strings). No fluff. Output only the "
     "single line, no quotes, no prefix."
 )
-
-
-def flag_reason(title: str, summary: str, body: str) -> str | None:
-    """Why this entry needs LLM re-summarization, or None if it's fine.
-
-    Shared logic with the write-time gate (nachos_core.quality) plus two
-    audit-only checks that are too strict to enforce at write time
-    (redundant-with-title, zero-vocabulary-overlap-with-body) but are
-    still worth fixing on a periodic sweep.
-    """
-    reason = low_signal_reason(summary)
-    if reason:
-        return f"low-signal ({reason})"
-    if is_redundant_summary(summary, title):
-        return "redundant (just restates the title)"
-    if not shares_vocabulary(summary, body):
-        return "no shared vocabulary with body (likely stale)"
-    return None
 
 
 def _default_path(store_kind: str) -> Path:

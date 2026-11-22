@@ -21,6 +21,9 @@ classifiers = [
 Homepage = "https://github.com/Nacho-Labs-LLC/hermes-plugin-nachos"
 Issues = "https://github.com/Nacho-Labs-LLC/hermes-plugin-nachos/issues"
 
+[project.scripts]
+nachos-maintain = "nachos_hermes.maintenance:main"
+
 [project.entry-points."hermes_agent.memory_providers"]
 nachos = "nachos_hermes.memory_provider:register"
 

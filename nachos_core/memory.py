@@ -333,11 +333,16 @@ class MemoryService:
                         }
         return sorted(found.values(), key=lambda d: -d["similarity"])[:limit]
 
-    def duplicate_pairs(self) -> list[dict[str, Any]]:
-        """Every pair of entries above the duplicate threshold (audit use)."""
+    def duplicate_pairs(self, *, sync: bool = True) -> list[dict[str, Any]]:
+        """Every pair above the duplicate threshold; ``sync=False`` never updates the index.
+
+        Offline lexical audits use ``sync=False`` with no embedder. Normal callers
+        retain lazy reconciliation of vectors and removed-entry telemetry.
+        """
         pairs: list[dict[str, Any]] = []
-        for s in self.scopes.values():
-            self.sync_index(s)
+        if sync:
+            for s in self.scopes.values():
+                self.sync_index(s)
         flat: list[tuple[str, str, str, str]] = []
         for s in self.scopes.values():
             flat.extend((s.name, k, t, sm) for k, t, sm, _c in s.store.list())

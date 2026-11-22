@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import builtins
-import contextlib
 import os
 import sqlite3
+import tempfile
 from pathlib import Path
 
+from ..index import close_sqlite, open_read_only_sqlite
 from .base import Entry, MemoryStore
 
 
@@ -19,8 +20,13 @@ class SqliteStore(MemoryStore):
     semantic ranking is the Scorer's job, not the store's.
     """
 
-    def __init__(self, path: str | os.PathLike[str]) -> None:
+    def __init__(self, path: str | os.PathLike[str], *, read_only: bool = False) -> None:
         self._path = str(path)
+        self._temp_dir: tempfile.TemporaryDirectory[str] | None = None
+        if read_only:
+            self._conn, self._temp_dir = open_read_only_sqlite(path)
+            self._conn.row_factory = sqlite3.Row
+            return
         if self._path != ":memory:":
             Path(self._path).parent.mkdir(parents=True, exist_ok=True)
         # check_same_thread=False so callers from different host threads
@@ -100,5 +106,5 @@ class SqliteStore(MemoryStore):
         self._conn.commit()
 
     def close(self) -> None:
-        with contextlib.suppress(Exception):
-            self._conn.close()
+        close_sqlite(self._conn, self._temp_dir)
+        self._temp_dir = None
