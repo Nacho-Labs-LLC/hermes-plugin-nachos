@@ -31,7 +31,7 @@
 ### Removed
 - Nothing is removed. `embedding_normalize` is intentionally not exposed: the index always L2-normalizes vectors.
 
-## 0.6.1 (unreleased)
+## 0.6.1 (not released separately; included in 0.7.0)
 
 ### Fixed
 - Resolve OpenAI-compatible embedding credentials at request time through Hermes' active profile secret scope, including the audit CLI and auto-selected backend. Never fall back to direct process-environment credential reads; a configured missing key prevents the request and recall degrades to lexical matching.
